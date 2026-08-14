@@ -53,6 +53,17 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
             if declared and declared not in {"npm", "pnpm", "yarn", "bun"}:
                 report.findings.append(Finding("manager.unsupported", "warning", f"package.json declares unsupported package manager '{declared}'.", key))
 
+        if component.ecosystem == "python":
+            if len(component.lockfiles) > 1:
+                report.findings.append(Finding("lockfile.conflict", "error", f"Multiple Python manager lockfiles found: {', '.join(component.lockfiles)}", key, "Keep the lockfile for the Python package manager this project actually uses."))
+            declarations = component.metadata.get("manager_declarations")
+            if isinstance(declarations, list) and len(declarations) > 1:
+                report.findings.append(Finding("manager.conflict", "error", f"pyproject.toml contains configuration for multiple package managers: {', '.join(map(str, declarations))}.", key, "Choose one authoritative project manager or remove stale tool configuration."))
+            declared = component.metadata.get("manager_from_manifest")
+            locked = component.metadata.get("manager_from_lock")
+            if declared and locked and declared != locked:
+                report.findings.append(Finding("manager.mismatch", "error", f"pyproject.toml configures {declared}, but the lockfile belongs to {locked}.", key, "Align the Python tool configuration and checked-in lockfile."))
+
         if component.ecosystem in {"node", "rust"} and not component.lockfiles:
             report.findings.append(Finding("lockfile.missing", "warning", f"{component.ecosystem} component has no lockfile.", key, "Generate and commit the ecosystem's native lockfile for reproducible installs."))
         if component.ecosystem == "python" and component.manager in {"uv", "poetry", "pdm"} and not component.lockfiles:
