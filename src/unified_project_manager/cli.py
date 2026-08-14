@@ -8,6 +8,7 @@ from pathlib import Path
 from . import __version__
 from .discovery import discover
 from .doctor import diagnose
+from .initializer import InitializationError, execute_initialization, plan_initialization
 from .operations import OperationError, execute_plan, plan_operations, render_command
 from .query import duplicates as find_duplicates, why as find_why
 from .state import load_state, write_state
@@ -31,6 +32,15 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="upm", description="Unified Project Manager")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init_parser = subparsers.add_parser("init", help="Initialize a new project using a native generator")
+    init_parser.add_argument("target", nargs="?", default=".")
+    init_parser.add_argument("--ecosystem", required=True, choices=("node", "python", "rust"))
+    init_parser.add_argument("--manager", help="Native package manager/generator to delegate to")
+    init_parser.add_argument("--lib", action="store_true", dest="library", help="Initialize a library where the ecosystem supports it")
+    init_parser.add_argument("--apply", action="store_true", help="Execute the native initializer; otherwise only preview it")
+    init_parser.add_argument("--json", action="store_true", dest="as_json")
+    init_parser.add_argument("--no-verify", action="store_true", help="Skip post-initialization UPM doctor verification")
 
     discover_parser = subparsers.add_parser("discover", help="Discover supported project components")
     discover_parser.add_argument("path", nargs="?", default=".")
@@ -183,6 +193,44 @@ def _operation(args, graph) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.command == "init":
+        root = Path.cwd().resolve()
+        try:
+            plan = plan_initialization(root, args.target, args.ecosystem, args.manager, library=args.library)
+        except InitializationError as exc:
+            if args.as_json:
+                print(json.dumps({"error": str(exc)}, indent=2))
+            else:
+                print(f"upm: {exc}", file=sys.stderr)
+            return 2
+
+        if not args.apply:
+            if args.as_json:
+                print(json.dumps({"executed": False, "plan": plan.to_dict(root)}, indent=2, sort_keys=True))
+            else:
+                _print_plan(plan, root)
+                print("Preview only. Re-run with --apply to execute this native initializer.")
+            return 0
+
+        result = execute_initialization(plan, root, verify=not args.no_verify)
+        if args.as_json:
+            print(json.dumps(result.to_dict(root), indent=2, sort_keys=True))
+        else:
+            _print_plan(plan, root)
+            if result.stdout:
+                print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+            if result.stderr:
+                print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+            if result.verification:
+                print("\nPost-initialization verification:")
+                _print_report(result.verification)
+        if result.returncode not in (None, 0):
+            return result.returncode if result.returncode and 0 < result.returncode < 126 else 1
+        if result.verification and result.verification.errors:
+            return 1
+        return 0
+
     path = args.path
     try:
         graph = discover(path)
