@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 Severity = Literal["info", "warning", "error"]
+Operation = Literal["install", "sync", "add", "remove"]
 
 
 @dataclass(frozen=True)
@@ -36,10 +37,14 @@ class Component:
         location = "." if str(relative) == "." else relative.as_posix()
         return f"{location}:{self.ecosystem}"
 
+    def relative_path(self, root: Path) -> str:
+        relative = self.path.relative_to(root)
+        return "." if str(relative) == "." else relative.as_posix()
+
     def to_dict(self, root: Path) -> dict[str, Any]:
         data = asdict(self)
-        relative = self.path.relative_to(root)
-        data["path"] = "." if str(relative) == "." else relative.as_posix()
+        data["path"] = self.relative_path(root)
+        data["key"] = self.key(root)
         return data
 
 
@@ -81,6 +86,10 @@ class DoctorReport:
         return sum(item.severity == "warning" for item in self.findings)
 
     @property
+    def infos(self) -> int:
+        return sum(item.severity == "info" for item in self.findings)
+
+    @property
     def health_score(self) -> int:
         return max(0, 100 - (self.errors * 20) - (self.warnings * 5))
 
@@ -93,6 +102,55 @@ class DoctorReport:
             "root": str(self.root),
             "healthy": self.healthy,
             "health_score": self.health_score,
-            "summary": {"errors": self.errors, "warnings": self.warnings},
+            "summary": {"errors": self.errors, "warnings": self.warnings, "infos": self.infos},
             "findings": [finding.to_dict() for finding in self.findings],
+        }
+
+
+@dataclass(frozen=True)
+class CommandPlan:
+    operation: Operation
+    component: str
+    manager: str
+    argv: tuple[str, ...]
+    cwd: Path
+    packages: tuple[str, ...] = ()
+
+    def to_dict(self, root: Path) -> dict[str, Any]:
+        try:
+            cwd = self.cwd.relative_to(root).as_posix() or "."
+        except ValueError:
+            cwd = str(self.cwd)
+        return {
+            "operation": self.operation,
+            "component": self.component,
+            "manager": self.manager,
+            "argv": list(self.argv),
+            "cwd": cwd,
+            "packages": list(self.packages),
+        }
+
+
+@dataclass
+class CommandResult:
+    plan: CommandPlan
+    executed: bool
+    returncode: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    verification: DoctorReport | None = None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.executed and self.returncode == 0 and (self.verification is None or self.verification.errors == 0)
+
+    def to_dict(self, root: Path) -> dict[str, Any]:
+        return {
+            "plan": self.plan.to_dict(root),
+            "executed": self.executed,
+            "returncode": self.returncode,
+            "succeeded": self.succeeded,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "verification": self.verification.to_dict() if self.verification else None,
         }
