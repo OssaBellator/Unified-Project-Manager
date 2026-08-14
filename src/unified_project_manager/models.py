@@ -21,6 +21,14 @@ class ToolchainRequirement:
     requirement: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedPackage:
+    name: str
+    version: str
+    source: str | None = None
+    location: str | None = None
+
+
 @dataclass
 class Component:
     ecosystem: str
@@ -30,6 +38,7 @@ class Component:
     lockfiles: list[str] = field(default_factory=list)
     toolchains: list[ToolchainRequirement] = field(default_factory=list)
     dependencies: list[Dependency] = field(default_factory=list)
+    resolved_packages: list[ResolvedPackage] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def key(self, root: Path) -> str:
