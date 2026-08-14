@@ -55,8 +55,7 @@ class CliTests(unittest.TestCase):
             root = Path(temporary)
             node = root / "frontend"
             rust = root / "engine"
-            node.mkdir()
-            rust.mkdir()
+            node.mkdir(); rust.mkdir()
             (node / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
             (node / "package-lock.json").write_text("{}", encoding="utf-8")
             (rust / "Cargo.toml").write_text('[package]\nname="engine"\nversion="0.1.0"\n', encoding="utf-8")
@@ -80,6 +79,26 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(data["path"], ".upm/state.json")
             self.assertTrue((root / ".upm" / "state.json").is_file())
+
+    def test_resolved_duplicates_human_output_uses_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text(json.dumps({
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {},
+                    "node_modules/foo": {"version": "1.0.0"},
+                    "node_modules/parent/node_modules/foo": {"version": "2.0.0"},
+                },
+            }), encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["duplicates", str(root), "--resolved"])
+            self.assertEqual(code, 0)
+            self.assertIn("foo (multiple-resolved-versions", output.getvalue())
+            self.assertIn("1.0.0 @ node_modules/foo", output.getvalue())
+            self.assertIn("2.0.0 @ node_modules/parent/node_modules/foo", output.getvalue())
 
 
 if __name__ == "__main__":
