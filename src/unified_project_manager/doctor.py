@@ -5,6 +5,7 @@ import shutil
 from collections import defaultdict
 from collections.abc import Callable
 
+from .installed import installed_findings
 from .models import DoctorReport, Finding, ProjectGraph
 from .state import integrity_findings
 
@@ -22,11 +23,13 @@ def _normalized_dependency(ecosystem: str, name: str) -> str:
     return value
 
 
-def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.which) -> DoctorReport:
+def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.which, *, deep: bool = False) -> DoctorReport:
     report = DoctorReport(root=graph.root)
     if not graph.components:
         report.findings.append(Finding("project.empty", "warning", "No supported project manifests were discovered."))
         report.findings.extend(integrity_findings(graph))
+        if deep:
+            report.findings.extend(installed_findings(graph))
         return report
 
     checked_executables: set[tuple[str, str]] = set()
@@ -118,4 +121,6 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
             report.findings.append(Finding("dependency.version-divergence", "info", f"{ecosystem} dependency '{name}' uses different requirements across components: {rendered}."))
 
     report.findings.extend(integrity_findings(graph))
+    if deep:
+        report.findings.extend(installed_findings(graph))
     return report
