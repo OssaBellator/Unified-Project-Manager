@@ -98,6 +98,7 @@ class NodeAdapter(Adapter):
                 if isinstance(lock_data, dict):
                     locked_packages = lock_data.get("packages")
                     if isinstance(locked_packages, dict):
+                        metadata["lockfile_package_locations"] = sorted(str(path) for path in locked_packages if path)
                         for package_path, record in locked_packages.items():
                             if not package_path or not isinstance(record, dict):
                                 continue
