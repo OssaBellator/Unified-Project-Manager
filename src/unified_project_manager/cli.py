@@ -10,7 +10,7 @@ from .discovery import discover
 from .doctor import diagnose
 from .initializer import InitializationError, execute_initialization, plan_initialization
 from .operations import OperationError, execute_plan, plan_operations, render_command
-from .query import duplicates as find_duplicates, why as find_why
+from .query import duplicates as find_duplicates, resolved_duplicates as find_resolved_duplicates, why as find_why
 from .state import load_state, write_state
 
 
@@ -66,6 +66,7 @@ def _parser() -> argparse.ArgumentParser:
 
     duplicates_parser = subparsers.add_parser("duplicates", help="Find repeated direct dependency declarations")
     duplicates_parser.add_argument("path", nargs="?", default=".")
+    duplicates_parser.add_argument("--resolved", action="store_true", help="Inspect repeated packages from parseable native lockfiles")
     duplicates_parser.add_argument("--json", action="store_true", dest="as_json")
 
     install_parser = subparsers.add_parser("install", help="Install/bootstrap a component using its native manager")
@@ -262,22 +263,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No direct declarations found for {args.package!r}.")
         else:
             for match in matches:
-                requirement = f" {match['requirement']}" if match['requirement'] else ""
+                requirement = f" {match['requirement']}" if match["requirement"] else ""
                 print(f"{match['component']:<24} [{match['scope']}] {match['name']}{requirement}")
         return 0 if matches else 1
     if args.command == "duplicates":
-        groups = find_duplicates(graph)
+        groups = find_resolved_duplicates(graph) if args.resolved else find_duplicates(graph)
         if args.as_json:
             print(json.dumps({"duplicates": groups}, indent=2, sort_keys=True))
         elif not groups:
-            print("No repeated direct dependency declarations found.")
+            print("No repeated resolved packages found." if args.resolved else "No repeated direct dependency declarations found.")
         else:
             for group in groups:
                 divergence = " version-divergence" if group["version_divergence"] else ""
                 print(f"{group['ecosystem']}:{group['name']} ({group['classification']}{divergence})")
                 for occurrence in group["occurrences"]:
-                    requirement = occurrence["requirement"] or "*"
-                    print(f"  {occurrence['component']:<24} [{occurrence['scope']}] {requirement}")
+                    if args.resolved:
+                        location = f" @ {occurrence['location']}" if occurrence.get("location") else ""
+                        print(f"  {occurrence['component']:<24} {occurrence['version']}{location}")
+                    else:
+                        requirement = occurrence["requirement"] or "*"
+                        print(f"  {occurrence['component']:<24} [{occurrence['scope']}] {requirement}")
         return 0
     if args.command == "doctor":
         report = diagnose(graph)
