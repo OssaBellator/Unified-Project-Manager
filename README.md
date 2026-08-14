@@ -21,7 +21,7 @@ No GitHub Actions workflows are used. Validation is local and script-driven.
 Python 3.11+ is the only requirement.
 
 ```sh
-./scripts/check.sh
+sh ./scripts/check.sh
 ```
 
 Run the CLI without installing it:
