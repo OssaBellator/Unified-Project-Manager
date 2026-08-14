@@ -27,13 +27,14 @@ class NodeAdapter(Adapter):
         dependencies: list[Dependency] = []
         toolchains: list[ToolchainRequirement] = []
         manager_from_manifest: str | None = None
+        package_data: dict[str, object] | None = None
 
         try:
             data = json.loads(package_json.read_text(encoding="utf-8"))
-            if isinstance(data.get("name"), str):
-                metadata["name"] = data["name"]
-            if isinstance(data.get("version"), str):
-                metadata["version"] = data["version"]
+            if isinstance(data, dict):
+                package_data = data
+            if isinstance(data.get("name"), str): metadata["name"] = data["name"]
+            if isinstance(data.get("version"), str): metadata["version"] = data["version"]
 
             package_manager = data.get("packageManager")
             legacy_manager: str | None = None
@@ -48,8 +49,7 @@ class NodeAdapter(Adapter):
                 dev_package_manager = dev_engines.get("packageManager")
                 if isinstance(dev_package_manager, dict) and isinstance(dev_package_manager.get("name"), str):
                     dev_manager = dev_package_manager["name"]
-                    if isinstance(dev_package_manager.get("version"), str):
-                        dev_manager_version = dev_package_manager["version"]
+                    if isinstance(dev_package_manager.get("version"), str): dev_manager_version = dev_package_manager["version"]
                     metadata["dev_engines_package_manager"] = dict(dev_package_manager)
 
             if legacy_manager and dev_manager and legacy_manager != dev_manager:
@@ -67,35 +67,43 @@ class NodeAdapter(Adapter):
             else:
                 toolchains.append(ToolchainRequirement("node"))
 
-            sections = (
-                ("dependencies", "runtime"),
-                ("devDependencies", "development"),
-                ("optionalDependencies", "optional"),
-                ("peerDependencies", "peer"),
-            )
-            for section, scope in sections:
+            for section, scope in (("dependencies", "runtime"), ("devDependencies", "development"), ("optionalDependencies", "optional"), ("peerDependencies", "peer")):
                 values = data.get(section)
-                if not isinstance(values, dict):
-                    continue
-                for name, requirement in values.items():
-                    if isinstance(name, str):
-                        dependencies.append(Dependency(name, str(requirement), scope))
+                if isinstance(values, dict):
+                    for name, requirement in values.items():
+                        if isinstance(name, str): dependencies.append(Dependency(name, str(requirement), scope))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             metadata["parse_error"] = str(exc)
             toolchains.append(ToolchainRequirement("node"))
+
+        lockfile_parse_errors: list[str] = []
+        if len(lockfiles) == 1 and manager_from_lock == "npm":
+            lockfile_name = lockfiles[0]
+            try:
+                lock_data = json.loads((directory / lockfile_name).read_text(encoding="utf-8"))
+                if isinstance(lock_data, dict) and "lockfileVersion" in lock_data:
+                    metadata["lockfile_version"] = lock_data["lockfileVersion"]
+                if package_data is not None and isinstance(lock_data, dict):
+                    packages = lock_data.get("packages")
+                    root_package = packages.get("") if isinstance(packages, dict) else None
+                    if isinstance(root_package, dict):
+                        drift: list[str] = []
+                        for section in ("dependencies", "devDependencies", "optionalDependencies"):
+                            manifest_values = package_data.get(section)
+                            locked_values = root_package.get(section)
+                            if isinstance(manifest_values, dict) and isinstance(locked_values, dict):
+                                for name in sorted(set(manifest_values) | set(locked_values)):
+                                    if manifest_values.get(name) != locked_values.get(name): drift.append(f"{section}.{name}")
+                            elif bool(manifest_values) != bool(locked_values):
+                                drift.append(section)
+                        if drift: metadata["lockfile_manifest_drift"] = drift
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                lockfile_parse_errors.append(f"{lockfile_name}: {exc}")
+        if lockfile_parse_errors: metadata["lockfile_parse_errors"] = lockfile_parse_errors
 
         manager = manager_from_manifest or manager_from_lock
         metadata["manager_from_lock"] = manager_from_lock
         metadata["manager_from_manifest"] = manager_from_manifest
         metadata["manager_supported"] = manager in SUPPORTED_MANAGERS if manager else False
 
-        return Component(
-            ecosystem=self.ecosystem,
-            path=directory,
-            manager=manager,
-            manifests=["package.json"],
-            lockfiles=lockfiles,
-            toolchains=toolchains,
-            dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())),
-            metadata=metadata,
-        )
+        return Component(ecosystem=self.ecosystem, path=directory, manager=manager, manifests=["package.json"], lockfiles=lockfiles, toolchains=toolchains, dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())), metadata=metadata)
