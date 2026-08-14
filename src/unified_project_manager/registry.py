@@ -6,6 +6,7 @@ from typing import Any
 
 from .discovery import discover
 from .doctor import diagnose
+from .query import normalize_package_name
 
 REGISTRY_VERSION = 1
 
@@ -109,3 +110,40 @@ def project_statuses(path: str | Path | None = None, *, deep: bool = False) -> l
             "health": report.to_dict(),
         })
     return statuses
+
+
+def fleet_resolved_duplicates(path: str | Path | None = None) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for root in registered_paths(path):
+        if not root.is_dir():
+            continue
+        try:
+            graph = discover(root)
+        except (OSError, ValueError):
+            continue
+        for component in graph.components:
+            for package in component.resolved_packages:
+                key = (component.ecosystem, normalize_package_name(component.ecosystem, package.name))
+                groups.setdefault(key, []).append({
+                    "project": str(root),
+                    "component": component.key(graph.root),
+                    "name": package.name,
+                    "version": package.version,
+                    "source": package.source,
+                    "location": package.location,
+                })
+
+    result: list[dict[str, Any]] = []
+    for (ecosystem, name), occurrences in sorted(groups.items()):
+        projects = {item["project"] for item in occurrences}
+        versions = {item["version"] for item in occurrences}
+        if len(occurrences) < 2 or len(projects) < 2:
+            continue
+        result.append({
+            "ecosystem": ecosystem,
+            "name": name,
+            "projects": len(projects),
+            "occurrences": occurrences,
+            "version_divergence": len(versions) > 1,
+        })
+    return result
