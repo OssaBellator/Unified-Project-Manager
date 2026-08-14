@@ -43,6 +43,14 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
             for error in requirement_errors:
                 report.findings.append(Finding("manifest.read-error", "warning", str(error), key))
 
+        lockfile_errors = component.metadata.get("lockfile_parse_errors")
+        if isinstance(lockfile_errors, list):
+            for error in lockfile_errors:
+                report.findings.append(Finding("lockfile.invalid", "error", str(error), key, "Regenerate or restore the native lockfile with its authoritative package manager."))
+        lockfile_drift = component.metadata.get("lockfile_manifest_drift")
+        if isinstance(lockfile_drift, list) and lockfile_drift:
+            report.findings.append(Finding("lockfile.manifest-drift", "error", f"Native lockfile root metadata disagrees with the manifest for: {', '.join(map(str, lockfile_drift))}.", key, "Run the authoritative package manager to refresh the lockfile, then review the resulting diff."))
+
         if component.ecosystem == "node":
             if len(component.lockfiles) > 1:
                 report.findings.append(Finding("lockfile.conflict", "error", f"Multiple Node lockfiles found: {', '.join(component.lockfiles)}", key, "Keep the lockfile for the package manager this project actually uses."))
