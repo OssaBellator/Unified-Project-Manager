@@ -61,6 +61,19 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(finding.severity, "info")
             self.assertEqual(report.health_score, 100)
 
+    def test_reports_python_lockfile_and_manager_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text('[project]\nname="x"\n[tool.poetry]\n', encoding="utf-8")
+            (root / "uv.lock").write_text("", encoding="utf-8")
+            (root / "poetry.lock").write_text("", encoding="utf-8")
+
+            report = diagnose(discover(root), which=lambda _name: "/bin/tool")
+            codes = {finding.code for finding in report.findings}
+
+            self.assertIn("lockfile.conflict", codes)
+            self.assertGreaterEqual(report.errors, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
