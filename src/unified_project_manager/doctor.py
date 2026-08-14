@@ -1,43 +1,45 @@
 from __future__ import annotations
 
+import re
 import shutil
+from collections import defaultdict
 from collections.abc import Callable
 
 from .models import DoctorReport, Finding, ProjectGraph
 
 MANAGER_EXECUTABLES = {
-    "npm": "npm",
-    "pnpm": "pnpm",
-    "yarn": "yarn",
-    "bun": "bun",
-    "uv": "uv",
-    "pip": "python",
-    "poetry": "poetry",
-    "pdm": "pdm",
-    "cargo": "cargo",
+    "npm": "npm", "pnpm": "pnpm", "yarn": "yarn", "bun": "bun",
+    "uv": "uv", "pip": "python", "poetry": "poetry", "pdm": "pdm", "cargo": "cargo",
 }
+TOOLCHAIN_EXECUTABLES = {"node": "node", "python": "python", "rust": "rustc"}
 
-TOOLCHAIN_EXECUTABLES = {
-    "node": "node",
-    "python": "python",
-    "rust": "rustc",
-}
+
+def _normalized_dependency(ecosystem: str, name: str) -> str:
+    value = name.lower()
+    if ecosystem == "python":
+        value = re.sub(r"[-_.]+", "-", value)
+    return value
 
 
 def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.which) -> DoctorReport:
     report = DoctorReport(root=graph.root)
-
     if not graph.components:
         report.findings.append(Finding("project.empty", "warning", "No supported project manifests were discovered."))
         return report
 
     checked_executables: set[tuple[str, str]] = set()
+    dependency_locations: dict[tuple[str, str], list[tuple[str, str | None]]] = defaultdict(list)
 
     for component in graph.components:
         key = component.key(graph.root)
         parse_error = component.metadata.get("parse_error")
         if parse_error:
             report.findings.append(Finding("manifest.invalid", "error", f"Could not parse {component.manifests[0]}: {parse_error}", key, "Fix the native manifest before attempting repair."))
+
+        requirement_errors = component.metadata.get("requirements_errors")
+        if isinstance(requirement_errors, list):
+            for error in requirement_errors:
+                report.findings.append(Finding("manifest.read-error", "warning", str(error), key))
 
         if component.ecosystem == "node":
             if len(component.lockfiles) > 1:
@@ -46,6 +48,8 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
             locked = component.metadata.get("manager_from_lock")
             if declared and locked and declared != locked:
                 report.findings.append(Finding("manager.mismatch", "error", f"package.json declares {declared}, but the lockfile belongs to {locked}.", key, "Align packageManager and the checked-in lockfile."))
+            if declared and declared not in {"npm", "pnpm", "yarn", "bun"}:
+                report.findings.append(Finding("manager.unsupported", "warning", f"package.json declares unsupported package manager '{declared}'.", key))
 
         if component.ecosystem in {"node", "rust"} and not component.lockfiles:
             report.findings.append(Finding("lockfile.missing", "warning", f"{component.ecosystem} component has no lockfile.", key, "Generate and commit the ecosystem's native lockfile for reproducible installs."))
@@ -71,5 +75,22 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
             if which(executable) is None:
                 requirement = f" ({toolchain.requirement})" if toolchain.requirement else ""
                 report.findings.append(Finding("toolchain.unavailable", "warning", f"Toolchain '{toolchain.name}'{requirement} is not available on PATH.", key))
+
+        local: dict[str, list] = defaultdict(list)
+        for dependency in component.dependencies:
+            normalized = _normalized_dependency(component.ecosystem, dependency.name)
+            local[normalized].append(dependency)
+            dependency_locations[(component.ecosystem, normalized)].append((key, dependency.requirement))
+        for name, declarations in local.items():
+            if len(declarations) > 1:
+                rendered = ", ".join(f"{d.scope}={d.requirement or '*'}" for d in declarations)
+                report.findings.append(Finding("dependency.multiple-declarations", "info", f"Dependency '{name}' is declared more than once: {rendered}.", key))
+
+    for (ecosystem, name), declarations in sorted(dependency_locations.items()):
+        component_keys = {component for component, _requirement in declarations}
+        requirements = {requirement for _component, requirement in declarations if requirement}
+        if len(component_keys) > 1 and len(requirements) > 1:
+            rendered = ", ".join(f"{component}={requirement or '*'}" for component, requirement in declarations)
+            report.findings.append(Finding("dependency.version-divergence", "info", f"{ecosystem} dependency '{name}' uses different requirements across components: {rendered}."))
 
     return report
