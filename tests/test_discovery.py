@@ -65,6 +65,20 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn(("pendulum", "runtime"), found)
             self.assertEqual(component.manager, "poetry")
 
+    def test_node_dev_engines_package_manager_is_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text(json.dumps({
+                "devEngines": {
+                    "packageManager": {"name": "pnpm", "version": ">=11 <12", "onFail": "download"}
+                }
+            }), encoding="utf-8")
+
+            component = discover(root).components[0]
+            self.assertEqual(component.manager, "pnpm")
+            self.assertEqual(component.metadata["manager_from_manifest"], "pnpm")
+            self.assertEqual(component.metadata["package_manager_declared"], "pnpm@>=11 <12")
+
 
 if __name__ == "__main__":
     unittest.main()
