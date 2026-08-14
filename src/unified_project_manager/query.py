@@ -32,6 +32,25 @@ def why(graph: ProjectGraph, package: str) -> list[dict[str, Any]]:
     return matches
 
 
+def why_resolved(graph: ProjectGraph, package: str) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for component in graph.components:
+        expected = normalize_package_name(component.ecosystem, package)
+        for resolved in component.resolved_packages:
+            if normalize_package_name(component.ecosystem, resolved.name) != expected:
+                continue
+            matches.append({
+                "component": component.key(graph.root),
+                "ecosystem": component.ecosystem,
+                "manager": component.manager,
+                "name": resolved.name,
+                "version": resolved.version,
+                "source": resolved.source,
+                "location": resolved.location,
+            })
+    return matches
+
+
 def duplicates(graph: ProjectGraph) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for component in graph.components:
