@@ -7,7 +7,13 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.discovery import discover
-from unified_project_manager.operations import OperationError, execute_plan, plan_operation, render_command
+from unified_project_manager.operations import (
+    OperationError,
+    execute_plan,
+    plan_operation,
+    plan_operations,
+    render_command,
+)
 
 
 class OperationTests(unittest.TestCase):
@@ -100,6 +106,27 @@ class OperationTests(unittest.TestCase):
             (root / "package-lock.json").write_text("{}", encoding="utf-8")
             plan = plan_operation(discover(root), "add", packages=("a package",))
             self.assertEqual(render_command(plan), "npm install 'a package'")
+
+    def test_conflicting_manager_state_blocks_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"pnpm@10"}', encoding="utf-8")
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(OperationError, "manifest declares pnpm"):
+                plan_operation(discover(root), "add", packages=("react",))
+
+    def test_plan_operations_all_requires_every_component_to_be_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = root / "a"
+            python = root / "b"
+            node.mkdir()
+            python.mkdir()
+            (node / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (node / "package-lock.json").write_text("{}", encoding="utf-8")
+            (python / "requirements.txt").write_text("requests==2\n", encoding="utf-8")
+            with self.assertRaisesRegex(OperationError, "every component is safe"):
+                plan_operations(discover(root), "sync", all_components=True)
 
 
 if __name__ == "__main__":
