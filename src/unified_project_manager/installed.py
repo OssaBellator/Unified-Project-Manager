@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from email.parser import Parser
 from pathlib import Path
 
 from .models import Component, Finding, ProjectGraph
@@ -128,9 +130,97 @@ def _node_findings(component: Component, root: Path) -> list[Finding]:
     return findings
 
 
+def _python_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name.lower())
+
+
+def _python_findings(component: Component, root: Path) -> list[Finding]:
+    venv = component.path / ".venv"
+    if not venv.is_dir() or not component.resolved_packages:
+        return []
+
+    site_packages = []
+    windows = venv / "Lib" / "site-packages"
+    if windows.is_dir():
+        site_packages.append(windows)
+    lib = venv / "lib"
+    if lib.is_dir():
+        try:
+            for python_dir in lib.iterdir():
+                candidate = python_dir / "site-packages"
+                if candidate.is_dir():
+                    site_packages.append(candidate)
+        except OSError:
+            pass
+    if not site_packages:
+        return []
+
+    allowed: dict[str, set[str]] = {}
+    for package in component.resolved_packages:
+        allowed.setdefault(_python_name(package.name), set()).add(package.version)
+
+    findings: list[Finding] = []
+    component_key = component.key(root)
+    seen: set[tuple[str, str, str]] = set()
+    for site in site_packages:
+        try:
+            metadata_files = sorted(site.glob("*.dist-info/METADATA"))
+        except OSError:
+            continue
+        for metadata_file in metadata_files:
+            try:
+                metadata = Parser().parsestr(metadata_file.read_text(encoding="utf-8", errors="replace"))
+            except OSError as exc:
+                findings.append(Finding(
+                    "installed.metadata-invalid",
+                    "error",
+                    f"Could not read Python installed metadata {metadata_file}: {exc}",
+                    component_key,
+                    "Recreate or sync the local virtual environment.",
+                ))
+                continue
+            name = metadata.get("Name")
+            version = metadata.get("Version")
+            if not name or not version:
+                findings.append(Finding(
+                    "installed.metadata-invalid",
+                    "error",
+                    f"Python installed metadata lacks Name/Version: {metadata_file.relative_to(component.path)}.",
+                    component_key,
+                    "Recreate or sync the local virtual environment.",
+                ))
+                continue
+            marker = (_python_name(name), version, str(metadata_file))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            versions = allowed.get(_python_name(name))
+            relative = metadata_file.parent.relative_to(component.path).as_posix()
+            if versions is None:
+                findings.append(Finding(
+                    "installed.package-untracked",
+                    "warning",
+                    f"Installed Python package is not represented in the native lockfile: {name} {version} at {relative}.",
+                    component_key,
+                    "Remove the extraneous package or refresh the native lockfile if it is intentional.",
+                ))
+            elif version not in versions:
+                expected = ", ".join(sorted(versions))
+                findings.append(Finding(
+                    "installed.version-mismatch",
+                    "error",
+                    f"Installed Python package {name} is version {version}; lockfile allows resolved version(s) {expected}.",
+                    component_key,
+                    "Sync or recreate the local virtual environment from the native lockfile.",
+                ))
+    return findings
+
+
 def installed_findings(graph: ProjectGraph) -> list[Finding]:
     findings: list[Finding] = []
     for component in graph.components:
         if component.ecosystem == "node":
             findings.extend(_node_findings(component, graph.root))
+        elif component.ecosystem == "python":
+            findings.extend(_python_findings(component, graph.root))
     return findings
