@@ -100,6 +100,100 @@ class CliTests(unittest.TestCase):
             self.assertIn("1.0.0 @ node_modules/foo", output.getvalue())
             self.assertIn("2.0.0 @ node_modules/parent/node_modules/foo", output.getvalue())
 
+    def test_resolved_why_and_graph_human_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text(json.dumps({
+                "lockfileVersion": 3,
+                "packages": {"": {}, "node_modules/foo": {"version": "1.2.3"}},
+            }), encoding="utf-8")
+            why_output = io.StringIO()
+            with redirect_stdout(why_output):
+                why_code = main(["why", "foo", str(root), "--resolved"])
+            self.assertEqual(why_code, 0)
+            self.assertIn("foo 1.2.3 @ node_modules/foo", why_output.getvalue())
+
+            graph_output = io.StringIO()
+            with redirect_stdout(graph_output):
+                graph_code = main(["graph", str(root), "--resolved"])
+            self.assertEqual(graph_code, 0)
+            self.assertIn("foo 1.2.3 @ node_modules/foo", graph_output.getvalue())
+
+    def test_projects_registry_cli_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            registry = root / "registry.json"
+            (project / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (project / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+
+            added = io.StringIO()
+            with redirect_stdout(added):
+                add_code = main(["projects", "add", str(project), "--registry", str(registry), "--json"])
+            self.assertEqual(add_code, 0)
+            self.assertTrue(json.loads(added.getvalue())["added"])
+
+            listed = io.StringIO()
+            with redirect_stdout(listed):
+                list_code = main(["projects", "list", "--registry", str(registry), "--json"])
+            self.assertEqual(list_code, 0)
+            self.assertEqual(json.loads(listed.getvalue())["projects"], [str(project.resolve())])
+
+            status_output = io.StringIO()
+            with redirect_stdout(status_output):
+                status_code = main(["projects", "status", "--registry", str(registry), "--json"])
+            self.assertEqual(status_code, 0)
+            self.assertEqual(json.loads(status_output.getvalue())["projects"][0]["components"], 1)
+
+    def test_repair_previews_native_sync_for_installed_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text(json.dumps({
+                "lockfileVersion": 3,
+                "packages": {"": {}, "node_modules/foo": {"version": "1.0.0"}},
+            }), encoding="utf-8")
+            package = root / "node_modules" / "foo"
+            package.mkdir(parents=True)
+            (package / "package.json").write_text('{"name":"foo","version":"2.0.0"}', encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["repair", str(root)])
+            self.assertEqual(code, 0)
+            self.assertIn("npm ci", output.getvalue())
+            self.assertIn("Preview only", output.getvalue())
+
+    def test_repair_does_not_claim_structural_corruption_is_repairable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"pnpm@10"}', encoding="utf-8")
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["repair", str(root)])
+            self.assertEqual(code, 1)
+            self.assertIn("No safely repairable", output.getvalue())
+
+    def test_sbom_writes_cyclonedx_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text(json.dumps({
+                "lockfileVersion": 3,
+                "packages": {"": {}, "node_modules/foo": {"version": "1.0.0"}},
+            }), encoding="utf-8")
+            output = root / "bom.json"
+            captured = io.StringIO()
+            with redirect_stdout(captured):
+                code = main(["sbom", str(root), "--output", str(output)])
+            data = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(code, 0)
+            self.assertEqual(data["specVersion"], "1.7")
+            self.assertEqual(data["components"][0]["purl"], "pkg:npm/foo@1.0.0")
+            self.assertIn(str(output), captured.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
