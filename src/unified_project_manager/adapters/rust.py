@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from unified_project_manager.models import Component, Dependency, ToolchainRequirement
+from unified_project_manager.models import Component, Dependency, ResolvedPackage, ToolchainRequirement
 from .base import Adapter
 
 
@@ -23,6 +23,7 @@ class RustAdapter(Adapter):
         cargo_toml = directory / "Cargo.toml"
         metadata: dict[str, object] = {}
         dependencies: list[Dependency] = []
+        resolved_packages: list[ResolvedPackage] = []
         toolchains = [ToolchainRequirement("rust")]
 
         try:
@@ -31,26 +32,54 @@ class RustAdapter(Adapter):
             if isinstance(package, dict):
                 if isinstance(package.get("name"), str): metadata["name"] = package["name"]
                 if isinstance(package.get("version"), str): metadata["version"] = package["version"]
-                if isinstance(package.get("rust-version"), str): toolchains = [ToolchainRequirement("rust", package["rust-version"])]
+                if isinstance(package.get("rust-version"), str):
+                    toolchains = [ToolchainRequirement("rust", package["rust-version"])]
 
             for section, scope in (("dependencies", "runtime"), ("dev-dependencies", "development"), ("build-dependencies", "build")):
                 values = data.get(section, {})
                 if isinstance(values, dict):
-                    for name, requirement in values.items(): dependencies.append(Dependency(str(name), _render_requirement(requirement), scope))
+                    for name, requirement in values.items():
+                        dependencies.append(Dependency(str(name), _render_requirement(requirement), scope))
 
             workspace = data.get("workspace")
             if isinstance(workspace, dict):
                 metadata["workspace"] = True
                 values = workspace.get("dependencies")
                 if isinstance(values, dict):
-                    for name, requirement in values.items(): dependencies.append(Dependency(str(name), _render_requirement(requirement), "workspace"))
+                    for name, requirement in values.items():
+                        dependencies.append(Dependency(str(name), _render_requirement(requirement), "workspace"))
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
             metadata["parse_error"] = str(exc)
 
         if (directory / "Cargo.lock").is_file():
             try:
-                tomllib.loads((directory / "Cargo.lock").read_text(encoding="utf-8"))
+                lock_data = tomllib.loads((directory / "Cargo.lock").read_text(encoding="utf-8"))
+                packages = lock_data.get("package")
+                if isinstance(packages, list):
+                    for record in packages:
+                        if not isinstance(record, dict):
+                            continue
+                        name = record.get("name")
+                        version = record.get("version")
+                        if isinstance(name, str) and isinstance(version, str):
+                            source = record.get("source")
+                            resolved_packages.append(ResolvedPackage(
+                                name=name,
+                                version=version,
+                                source=source if isinstance(source, str) else None,
+                                location="Cargo.lock",
+                            ))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
                 metadata["lockfile_parse_errors"] = [f"Cargo.lock: {exc}"]
 
-        return Component(ecosystem=self.ecosystem, path=directory, manager="cargo", manifests=["Cargo.toml"], lockfiles=["Cargo.lock"] if (directory / "Cargo.lock").is_file() else [], toolchains=toolchains, dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())), metadata=metadata)
+        return Component(
+            ecosystem=self.ecosystem,
+            path=directory,
+            manager="cargo",
+            manifests=["Cargo.toml"],
+            lockfiles=["Cargo.lock"] if (directory / "Cargo.lock").is_file() else [],
+            toolchains=toolchains,
+            dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())),
+            resolved_packages=sorted(resolved_packages, key=lambda item: (item.name.lower(), item.version, item.source or "")),
+            metadata=metadata,
+        )
