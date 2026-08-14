@@ -54,6 +54,20 @@ def _yarn_sync_flag(component: Component) -> str:
     return "--frozen-lockfile"
 
 
+def _validate_component(component: Component, operation: Operation) -> None:
+    if component.metadata.get("parse_error"):
+        raise OperationError(f"Cannot {operation}: the component manifest is invalid.")
+    if len(component.lockfiles) > 1:
+        raise OperationError(f"Cannot {operation}: multiple native lockfiles make the authoritative package manager ambiguous ({', '.join(component.lockfiles)}).")
+    declarations = component.metadata.get("manager_declarations")
+    if isinstance(declarations, list) and len(declarations) > 1:
+        raise OperationError(f"Cannot {operation}: multiple package managers are configured in the manifest ({', '.join(map(str, declarations))}).")
+    declared = component.metadata.get("manager_from_manifest")
+    locked = component.metadata.get("manager_from_lock")
+    if declared and locked and declared != locked:
+        raise OperationError(f"Cannot {operation}: manifest declares {declared} but the lockfile belongs to {locked}.")
+
+
 def _require_lockfile(component: Component, operation: Operation) -> None:
     if operation == "sync" and not component.lockfiles:
         raise OperationError(
@@ -65,8 +79,7 @@ def _plan_argv(component: Component, operation: Operation, packages: tuple[str, 
     manager = component.manager
     if not manager:
         raise OperationError(f"Cannot {operation}: package manager is unknown for this component.")
-    if component.metadata.get("parse_error"):
-        raise OperationError(f"Cannot {operation}: the component manifest is invalid.")
+    _validate_component(component, operation)
 
     if operation in {"add", "remove"} and not packages:
         raise OperationError(f"{operation} requires at least one package.")
@@ -158,6 +171,40 @@ def plan_operation(
         cwd=component.path,
         packages=package_tuple,
     )
+
+
+def plan_operations(
+    graph: ProjectGraph,
+    operation: Operation,
+    selector: str | None = None,
+    packages: Sequence[str] = (),
+    dev: bool = False,
+    all_components: bool = False,
+) -> list[CommandPlan]:
+    if not all_components:
+        return [plan_operation(graph, operation, selector=selector, packages=packages, dev=dev)]
+    if selector is not None:
+        raise OperationError("--all cannot be combined with --component.")
+    if operation not in {"install", "sync"}:
+        raise OperationError("--all is only supported for install and sync.")
+    if not graph.components:
+        raise OperationError("No supported project components were discovered.")
+
+    plans: list[CommandPlan] = []
+    errors: list[str] = []
+    for component in graph.components:
+        key = component.key(graph.root)
+        try:
+            argv = _plan_argv(component, operation, (), False)
+        except OperationError as exc:
+            errors.append(f"{key}: {exc}")
+            continue
+        assert component.manager is not None
+        plans.append(CommandPlan(operation=operation, component=key, manager=component.manager, argv=argv, cwd=component.path))
+    if errors:
+        joined = "; ".join(errors)
+        raise OperationError(f"Cannot plan {operation} --all until every component is safe: {joined}")
+    return plans
 
 
 def render_command(plan: CommandPlan) -> str:
