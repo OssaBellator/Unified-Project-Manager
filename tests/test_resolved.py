@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.discovery import discover
-from unified_project_manager.query import resolved_duplicates
+from unified_project_manager.query import resolved_duplicates, why_resolved
 
 
 class ResolvedInventoryTests(unittest.TestCase):
@@ -63,6 +63,22 @@ version = "4.2.0"
             groups = resolved_duplicates(discover(root))
             self.assertEqual(groups[0]["ecosystem"], "python")
             self.assertTrue(groups[0]["version_divergence"])
+
+    def test_resolved_why_returns_versions_and_locations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text(json.dumps({
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {},
+                    "node_modules/foo": {"version": "1.2.3", "resolved": "https://registry.example/foo.tgz"},
+                },
+            }), encoding="utf-8")
+            matches = why_resolved(discover(root), "foo")
+            self.assertEqual(matches[0]["version"], "1.2.3")
+            self.assertEqual(matches[0]["location"], "node_modules/foo")
+            self.assertEqual(matches[0]["source"], "https://registry.example/foo.tgz")
 
 
 if __name__ == "__main__":
