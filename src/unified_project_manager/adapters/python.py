@@ -41,19 +41,19 @@ class PythonAdapter(Adapter):
         dependencies: list[Dependency] = []
         toolchains = [ToolchainRequirement("python")]
 
-        manager = None
-        if (directory / "uv.lock").is_file(): manager = "uv"
-        elif (directory / "poetry.lock").is_file(): manager = "poetry"
-        elif (directory / "pdm.lock").is_file(): manager = "pdm"
-        elif requirement_files: manager = "pip"
+        lockfile_managers = {"uv.lock": "uv", "poetry.lock": "poetry", "pdm.lock": "pdm"}
+        manager_from_lock = lockfile_managers[lockfiles[0]] if len(lockfiles) == 1 else None
+        manager_from_manifest: str | None = None
 
         if pyproject.is_file():
             try:
                 data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
                 project = data.get("project", {})
                 if isinstance(project, dict):
-                    if isinstance(project.get("name"), str): metadata["name"] = project["name"]
-                    if isinstance(project.get("version"), str): metadata["version"] = project["version"]
+                    if isinstance(project.get("name"), str):
+                        metadata["name"] = project["name"]
+                    if isinstance(project.get("version"), str):
+                        metadata["version"] = project["version"]
                     requires_python = project.get("requires-python")
                     if isinstance(requires_python, str):
                         toolchains = [ToolchainRequirement("python", requires_python)]
@@ -70,9 +70,11 @@ class PythonAdapter(Adapter):
 
                 tool = data.get("tool", {})
                 if isinstance(tool, dict):
-                    if "uv" in tool and manager is None: manager = "uv"
-                    elif "poetry" in tool and manager is None: manager = "poetry"
-                    elif "pdm" in tool and manager is None: manager = "pdm"
+                    declared_managers = [name for name in ("uv", "poetry", "pdm") if name in tool]
+                    if len(declared_managers) == 1:
+                        manager_from_manifest = declared_managers[0]
+                    elif len(declared_managers) > 1:
+                        metadata["manager_declarations"] = declared_managers
 
                     poetry = tool.get("poetry")
                     if isinstance(poetry, dict):
@@ -88,14 +90,20 @@ class PythonAdapter(Adapter):
                         poetry_groups = poetry.get("group")
                         if isinstance(poetry_groups, dict):
                             for group, group_data in poetry_groups.items():
-                                if not isinstance(group_data, dict): continue
+                                if not isinstance(group_data, dict):
+                                    continue
                                 group_deps = group_data.get("dependencies")
-                                if not isinstance(group_deps, dict): continue
+                                if not isinstance(group_deps, dict):
+                                    continue
                                 for name, requirement in group_deps.items():
                                     rendered = requirement if isinstance(requirement, str) else None
                                     dependencies.append(Dependency(str(name), rendered, f"development:{group}"))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
                 metadata["parse_error"] = str(exc)
+
+        manager = manager_from_manifest or manager_from_lock or ("pip" if requirement_files else None)
+        metadata["manager_from_lock"] = manager_from_lock
+        metadata["manager_from_manifest"] = manager_from_manifest
 
         for requirements_name in requirement_files:
             try:
