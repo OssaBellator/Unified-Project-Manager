@@ -34,7 +34,7 @@ class CliTests(unittest.TestCase):
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
             self.assertFalse(data["executed"])
-            self.assertEqual(data["plan"]["argv"], ["cargo", "fetch", "--locked"])
+            self.assertEqual(data["plans"][0]["argv"], ["cargo", "fetch", "--locked"])
 
     def test_ambiguous_component_is_user_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -49,6 +49,37 @@ class CliTests(unittest.TestCase):
                 code = main(["install", "--path", str(root)])
             self.assertEqual(code, 2)
             self.assertIn("--component", error.getvalue())
+
+    def test_sync_all_previews_every_component(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = root / "frontend"
+            rust = root / "engine"
+            node.mkdir()
+            rust.mkdir()
+            (node / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (node / "package-lock.json").write_text("{}", encoding="utf-8")
+            (rust / "Cargo.toml").write_text('[package]\nname="engine"\nversion="0.1.0"\n', encoding="utf-8")
+            (rust / "Cargo.lock").write_text("", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["sync", "--all", "--path", str(root), "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual([plan["component"] for plan in data["plans"]], ["engine:rust", "frontend:node"])
+
+    def test_snapshot_command_writes_integrity_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["snapshot", str(root), "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(data["path"], ".upm/state.json")
+            self.assertTrue((root / ".upm" / "state.json").is_file())
 
 
 if __name__ == "__main__":
