@@ -47,6 +47,20 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(report.errors, 1)
             self.assertEqual(report.findings[0].code, "manifest.invalid")
 
+    def test_dependency_divergence_is_informational(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, version in (("a", "^1"), ("b", "^2")):
+                directory = root / name
+                directory.mkdir()
+                (directory / "package.json").write_text(json.dumps({"packageManager": "npm@11", "dependencies": {"zod": version}}), encoding="utf-8")
+                (directory / "package-lock.json").write_text("{}", encoding="utf-8")
+
+            report = diagnose(discover(root), which=lambda _name: "/bin/tool")
+            finding = next(item for item in report.findings if item.code == "dependency.version-divergence")
+            self.assertEqual(finding.severity, "info")
+            self.assertEqual(report.health_score, 100)
+
 
 if __name__ == "__main__":
     unittest.main()
