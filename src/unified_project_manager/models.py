@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 Severity = Literal["info", "warning", "error"]
-Operation = Literal["install", "sync", "add", "remove"]
+Operation = Literal["init", "install", "sync", "add", "remove"]
 
 
 @dataclass(frozen=True)
