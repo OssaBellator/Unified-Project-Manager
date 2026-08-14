@@ -31,32 +31,26 @@ class RustAdapter(Adapter):
             if isinstance(package, dict):
                 if isinstance(package.get("name"), str): metadata["name"] = package["name"]
                 if isinstance(package.get("version"), str): metadata["version"] = package["version"]
-                if isinstance(package.get("rust-version"), str):
-                    toolchains = [ToolchainRequirement("rust", package["rust-version"])]
+                if isinstance(package.get("rust-version"), str): toolchains = [ToolchainRequirement("rust", package["rust-version"])]
 
             for section, scope in (("dependencies", "runtime"), ("dev-dependencies", "development"), ("build-dependencies", "build")):
                 values = data.get(section, {})
                 if isinstance(values, dict):
-                    for name, requirement in values.items():
-                        dependencies.append(Dependency(str(name), _render_requirement(requirement), scope))
+                    for name, requirement in values.items(): dependencies.append(Dependency(str(name), _render_requirement(requirement), scope))
 
             workspace = data.get("workspace")
             if isinstance(workspace, dict):
                 metadata["workspace"] = True
                 values = workspace.get("dependencies")
                 if isinstance(values, dict):
-                    for name, requirement in values.items():
-                        dependencies.append(Dependency(str(name), _render_requirement(requirement), "workspace"))
+                    for name, requirement in values.items(): dependencies.append(Dependency(str(name), _render_requirement(requirement), "workspace"))
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
             metadata["parse_error"] = str(exc)
 
-        return Component(
-            ecosystem=self.ecosystem,
-            path=directory,
-            manager="cargo",
-            manifests=["Cargo.toml"],
-            lockfiles=["Cargo.lock"] if (directory / "Cargo.lock").is_file() else [],
-            toolchains=toolchains,
-            dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())),
-            metadata=metadata,
-        )
+        if (directory / "Cargo.lock").is_file():
+            try:
+                tomllib.loads((directory / "Cargo.lock").read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                metadata["lockfile_parse_errors"] = [f"Cargo.lock: {exc}"]
+
+        return Component(ecosystem=self.ecosystem, path=directory, manager="cargo", manifests=["Cargo.toml"], lockfiles=["Cargo.lock"] if (directory / "Cargo.lock").is_file() else [], toolchains=toolchains, dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())), metadata=metadata)
