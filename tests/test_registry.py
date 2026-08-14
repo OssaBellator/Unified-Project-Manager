@@ -7,6 +7,7 @@ from pathlib import Path
 
 from unified_project_manager.registry import (
     RegistryError,
+    fleet_resolved_duplicates,
     project_statuses,
     register_project,
     registered_paths,
@@ -75,6 +76,25 @@ class RegistryTests(unittest.TestCase):
             registry = root / "registry.json"
             with self.assertRaisesRegex(RegistryError, "No supported project"):
                 register_project(root, registry)
+
+    def test_fleet_resolved_duplicates_reports_cross_project_version_divergence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            registry = root / "registry.json"
+            for index, version in enumerate(("1.0.0", "2.0.0")):
+                project = root / f"project-{index}"
+                project.mkdir()
+                (project / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+                (project / "package-lock.json").write_text(json.dumps({
+                    "lockfileVersion": 3,
+                    "packages": {"": {}, "node_modules/foo": {"version": version}},
+                }), encoding="utf-8")
+                register_project(project, registry)
+            groups = fleet_resolved_duplicates(registry)
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0]["name"], "foo")
+            self.assertEqual(groups[0]["projects"], 2)
+            self.assertTrue(groups[0]["version_divergence"])
 
 
 if __name__ == "__main__":
