@@ -26,6 +26,19 @@ def _append_list(target: list[Dependency], values: object, scope: str) -> None:
             target.append(dependency)
 
 
+def _render_source(source: object) -> str | None:
+    if isinstance(source, str):
+        return source
+    if isinstance(source, dict):
+        for kind in ("registry", "git", "url", "path", "editable", "virtual"):
+            value = source.get(kind)
+            if isinstance(value, str):
+                return f"{kind}:{value}"
+        if source:
+            return repr(source)
+    return None
+
+
 class PythonAdapter(Adapter):
     ecosystem = "python"
 
@@ -89,11 +102,9 @@ class PythonAdapter(Adapter):
                         poetry_groups = poetry.get("group")
                         if isinstance(poetry_groups, dict):
                             for group, group_data in poetry_groups.items():
-                                if not isinstance(group_data, dict):
-                                    continue
+                                if not isinstance(group_data, dict): continue
                                 group_deps = group_data.get("dependencies")
-                                if not isinstance(group_deps, dict):
-                                    continue
+                                if not isinstance(group_deps, dict): continue
                                 for name, requirement in group_deps.items():
                                     rendered = requirement if isinstance(requirement, str) else None
                                     dependencies.append(Dependency(str(name), rendered, f"development:{group}"))
@@ -112,9 +123,8 @@ class PythonAdapter(Adapter):
                         name = record.get("name")
                         version = record.get("version")
                         if isinstance(name, str) and isinstance(version, str):
-                            source = record.get("source")
-                            rendered_source = str(source) if source is not None else None
-                            resolved_packages.append(ResolvedPackage(name=name, version=version, source=rendered_source, location=lockfile_name))
+                            source = _render_source(record.get("source"))
+                            resolved_packages.append(ResolvedPackage(name=name, version=version, source=source, location=lockfile_name))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
                 lockfile_parse_errors.append(f"{lockfile_name}: {exc}")
         if lockfile_parse_errors:
