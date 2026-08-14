@@ -58,3 +58,32 @@ def duplicates(graph: ProjectGraph) -> list[dict[str, Any]]:
             "version_divergence": len(requirements) > 1,
         })
     return result
+
+
+def resolved_duplicates(graph: ProjectGraph) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for component in graph.components:
+        for package in component.resolved_packages:
+            normalized = normalize_package_name(component.ecosystem, package.name)
+            groups[(component.ecosystem, normalized)].append({
+                "component": component.key(graph.root),
+                "name": package.name,
+                "version": package.version,
+                "source": package.source,
+                "location": package.location,
+            })
+
+    result: list[dict[str, Any]] = []
+    for (ecosystem, normalized), occurrences in sorted(groups.items()):
+        if len(occurrences) < 2:
+            continue
+        versions = {item["version"] for item in occurrences}
+        components = {item["component"] for item in occurrences}
+        result.append({
+            "ecosystem": ecosystem,
+            "name": normalized,
+            "occurrences": occurrences,
+            "classification": "multiple-resolved-versions" if len(versions) > 1 else ("cross-component" if len(components) > 1 else "repeated-resolution"),
+            "version_divergence": len(versions) > 1,
+        })
+    return result
