@@ -61,6 +61,28 @@ class InstalledStateTests(unittest.TestCase):
             report = diagnose(discover(root), which=lambda _name: "/bin/tool")
             self.assertFalse(any(finding.code.startswith("installed.") for finding in report.findings))
 
+    def test_deep_doctor_detects_python_venv_version_mismatch_and_untracked_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text('[project]\nname="x"\n[tool.uv]\n', encoding="utf-8")
+            (root / "uv.lock").write_text('''version = 1
+
+[[package]]
+name = "httpx"
+version = "0.28.0"
+''', encoding="utf-8")
+            site = root / ".venv" / "lib" / "python3.13" / "site-packages"
+            httpx = site / "httpx-0.27.0.dist-info"
+            extra = site / "extra-1.0.0.dist-info"
+            httpx.mkdir(parents=True)
+            extra.mkdir(parents=True)
+            (httpx / "METADATA").write_text("Name: httpx\nVersion: 0.27.0\n", encoding="utf-8")
+            (extra / "METADATA").write_text("Name: extra\nVersion: 1.0.0\n", encoding="utf-8")
+            report = diagnose(discover(root), which=lambda _name: "/bin/tool", deep=True)
+            codes = {finding.code for finding in report.findings}
+            self.assertIn("installed.version-mismatch", codes)
+            self.assertIn("installed.package-untracked", codes)
+
 
 if __name__ == "__main__":
     unittest.main()
