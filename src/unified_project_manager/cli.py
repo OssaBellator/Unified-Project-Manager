@@ -50,6 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("path", nargs="?", default=".")
     doctor_parser.add_argument("--json", action="store_true", dest="as_json")
     doctor_parser.add_argument("--strict", action="store_true", help="Exit non-zero for warnings as well as errors")
+    doctor_parser.add_argument("--deep", action="store_true", help="Inspect installed environments in addition to structural project state")
 
     graph_parser = subparsers.add_parser("graph", help="Print normalized direct dependency information")
     graph_parser.add_argument("path", nargs="?", default=".")
@@ -285,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  {occurrence['component']:<24} [{occurrence['scope']}] {requirement}")
         return 0
     if args.command == "doctor":
-        report = diagnose(graph)
+        report = diagnose(graph, deep=args.deep)
         if args.as_json: print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
         else: _print_report(report)
         return 1 if report.errors or (args.strict and report.warnings) else 0
