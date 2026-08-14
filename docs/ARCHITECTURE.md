@@ -2,152 +2,185 @@
 
 ## Product boundary
 
-UPM is a control plane over native package managers, runtimes, manifests, lockfiles, installed environments, and caches. It should not become a universal dependency resolver.
+UPM is a control plane over native package managers, runtimes, manifests, lockfiles, installed environments, and local project inventory. It is deliberately **not** a universal dependency resolver.
 
 ```text
 CLI
-  |
-  +-- discovery ------> normalized ProjectGraph
-  |                         |
-  |                         +-- components
-  |                         +-- managers
-  |                         +-- manifests/lockfiles
-  |                         +-- direct dependencies
-  |                         +-- toolchain requirements
-  |
-  +-- graph queries ----> graph / why / duplicates
-  |
-  +-- doctor -----------> structural + integrity findings
-  |
-  +-- snapshot ---------> .upm/state.json checksums
-  |
-  +-- planner ----------> explicit native CommandPlan(s)
-  |                         |
-  |                         +-- preview by default
-  |                         +-- refuse ambiguous state
-  |
-  +-- executor ---------> npm / pnpm / yarn / bun / uv / poetry / pdm / pip / cargo
-                            |
-                            +-- re-discover
-                            +-- doctor verification
+ |
+ +-- discovery ------------> normalized ProjectGraph
+ |                              |
+ |                              +-- components / managers
+ |                              +-- manifests / lockfiles
+ |                              +-- direct dependencies
+ |                              +-- resolved packages
+ |                              +-- toolchain requirements
+ |
+ +-- graph queries --------> graph / why / duplicates
+ |
+ +-- doctor ---------------> structural + snapshot findings
+ |                              +-- --deep installed-state findings
+ |
+ +-- snapshot -------------> .upm/state.json checksums
+ |
+ +-- planner --------------> explicit native CommandPlan(s)
+ |                              +-- preview by default
+ |                              +-- refuse ambiguous state
+ |
+ +-- repair planner -------> safe locked/frozen sync plans only
+ |
+ +-- executor -------------> npm / pnpm / yarn / bun / uv / poetry / pdm / pip / cargo
+ |                              +-- re-discover
+ |                              +-- doctor verification
+ |
+ +-- registry -------------> ~/.upm/projects.json
+ |                              +-- explicit registered roots
+ |                              +-- fleet health / resolved inventory
+ |
+ +-- exporters ------------> CycloneDX 1.7
 ```
 
-## Adapter contract
+## Core model
 
-Ecosystem adapters own detection and inspection:
-
-- `detect(directory)`: decide whether the directory is a project root for the ecosystem;
-- `inspect(directory)`: translate native files into the normalized `Component` model.
-
-Execution is deliberately separate from inspection. The operation planner converts a normalized component into an explicit native command, while the runner owns executable lookup, process execution, captured output, and post-operation verification. This prevents subprocess behavior from becoming entangled with manifest parsing.
-
-## Normalized model
-
-The model stores information that can be represented without pretending ecosystems are identical:
+The normalized model stores only information that can be represented without pretending ecosystems are identical:
 
 - ecosystem and component path/key;
 - inferred native package manager and manager provenance;
 - native manifest and lockfile names;
-- runtime/toolchain requirement;
-- normalized direct dependency name, native requirement text, and scope;
+- runtime/toolchain requirements;
+- direct dependency name, native requirement text, and scope;
+- resolved package name/version/source/location parsed from supported native locks;
 - adapter metadata and parse/read errors;
 - structured doctor findings;
 - explicit `CommandPlan` and `CommandResult` objects.
 
 Native lockfiles remain the source of truth for exact resolution.
 
+## Adapter boundary
+
+Ecosystem adapters own detection and inspection:
+
+- `detect(directory)`: decide whether a directory is a project root for the ecosystem;
+- `inspect(directory)`: translate native files into a normalized `Component`.
+
+Execution is separate. The operation planner converts a component into an explicit native command; the runner owns executable lookup, subprocess execution, captured output, and post-operation verification. This keeps resolver/CLI behavior out of parsers.
+
+Current adapters:
+
+- Node: `package.json`; npm/pnpm/Yarn/Bun manager ownership; npm v2/v3 lock inventory;
+- Python: `pyproject.toml`, dependency groups, Poetry tables, requirements files; uv/Poetry/PDM TOML lock inventory;
+- Rust: Cargo manifests/workspace dependencies and Cargo.lock inventory.
+
 ## Manager ownership and ambiguity
 
-UPM must not guess which manager is authoritative when native project state disagrees. Current mutation preflight blocks:
+UPM never guesses which native manager is authoritative when project state disagrees. Mutation preflight blocks:
 
 - malformed manifests;
-- multiple lockfiles for the same ecosystem component;
-- Node `packageManager` vs lockfile mismatch;
+- multiple manager-specific lockfiles for one component;
+- Node package-manager declaration vs lockfile mismatch;
+- contradictory Node `packageManager` and `devEngines.packageManager` declarations;
 - multiple Python manager configurations in one `pyproject.toml`;
 - Python manager configuration vs lockfile mismatch;
 - unknown/unsupported delegated managers;
-- lock-required sync operations without a lockfile.
+- sync operations that require a native lock but have none.
 
-A mixed repository also requires explicit component selection for single-component operations unless there is exactly one component. `install --all` and `sync --all` validate every component before producing a batch; UPM does not silently omit components it cannot safely plan.
+A mixed repository also requires explicit component selection for single-component operations unless discovery finds exactly one component. `install --all` and `sync --all` validate every component before producing a batch.
 
-## Initialization
+## Native lockfile integrity
 
-`upm init` delegates to native project generators rather than maintaining templates. The current native paths are:
+Where the native format is safely parseable with the standard library, adapters validate syntax during inspection:
 
-- Node: npm, pnpm, Bun;
-- Python: uv;
-- Rust: Cargo.
+- npm `package-lock.json` / `npm-shrinkwrap.json`: JSON;
+- uv/Poetry/PDM lockfiles: TOML;
+- Cargo.lock: TOML.
 
-Initialization is preview-first, requires `--apply` for execution, and currently accepts only new or empty targets inside the selected root. This conservative boundary prevents additive native init behavior from unexpectedly modifying an existing project. Adoption/force semantics should be designed separately rather than inferred.
+The npm adapter additionally compares root manifest dependency sections with v2/v3 package-lock root metadata and raises `lockfile.manifest-drift` when they disagree.
+
+UPM does not pretend to parse pnpm/Yarn/Bun formats without an appropriate parser/native verification path. Unsupported lock internals remain opaque rather than being heuristically interpreted.
+
+## Resolved inventory and duplication
+
+Parseable locks populate `ResolvedPackage(name, version, source, location)` records. Queries expose two separate concepts:
+
+- **direct duplication**: repeated declarations/requirements in manifests;
+- **resolved duplication**: repeated concrete package versions/locations in native locks.
+
+`duplicates --resolved` reports version divergence and physical npm lock locations where known. Duplication is informational: two versions may be required by incompatible constraints, platform conditions, or intentional isolation.
+
+The local registry also has a fleet aggregation primitive that can compare resolved package versions across explicitly registered project roots. A public fleet-duplicates CLI can build on that primitive without changing the core graph.
 
 ## Integrity snapshot
 
-`.upm/state.json` is a UPM observation snapshot, not a replacement dependency lockfile. Version 1 stores:
+`.upm/state.json` is an observation snapshot, not a dependency lockfile. Version 1 stores:
 
-- normalized component identity, ecosystem, and manager;
+- component identity, ecosystem, and manager;
 - root-relative native manifest/lockfile paths;
 - file kind;
 - SHA-256 digest;
 - file size.
 
-`upm doctor` compares the current repository against the snapshot and reports changed, missing, untracked, invalid, or unsupported snapshot state. Snapshot changes are accepted explicitly with `upm snapshot`.
+`doctor` compares current repository state against this baseline and reports changed, missing, untracked, invalid, or unsupported state. `snapshot` explicitly accepts a reviewed new baseline.
 
-Future state versions can add environment fingerprints and native verification results without embedding a second dependency resolver.
+## Deep installed-state checks
 
-## Doctor model
+Normal `doctor` stays structural and fast. `doctor --deep` opts into installed-environment traversal.
 
-Health findings have a stable code, severity, optional component, message, and repair hint. Human and JSON output consume the same model.
+Current deep checks:
 
-Current checks include:
+- npm v2/v3: compare lockfile physical package locations and versions with `node_modules/*/package.json`, including nested installs;
+- local Python `.venv`: inspect `*.dist-info/METADATA` and compare installed Name/Version pairs with versions present in uv/Poetry/PDM resolved inventory.
 
-- malformed/unreadable native manifests;
-- conflicting Node and Python lockfiles;
-- manifest package-manager vs lockfile mismatch;
-- multiple Python manager configurations;
-- missing lockfiles where reproducibility is expected;
-- unresolved package manager inference;
-- manager/toolchain executable availability;
-- repeated direct declarations inside a component;
-- direct dependency requirement divergence across components;
-- integrity snapshot changed/missing/new/corrupt state.
+Python deep checks intentionally do not classify every absent lockfile package as missing because lockfiles can contain optional/platform/group-specific resolutions. Avoiding false corruption reports is more important than forcing symmetry with npm.
 
-Informational dependency duplication/divergence does not lower the health score because duplication is not automatically an error.
+## Repair boundary
 
-Planned checks include:
+`repair` starts from a deep doctor report and only considers installed-state finding codes. A finding is repairable only if its component can produce an existing safe `sync` plan through the normal operation planner.
 
-- native lock/manifest verification without mutation;
-- installed-state drift and undeclared packages;
-- toolchain version satisfaction, not merely executable presence;
-- cache integrity and artifact checksums;
-- physical duplicate installations and reclaimable disk usage;
-- package provenance, advisories, and SBOM export.
+Current examples:
 
-## Mutation safety
+- npm installed drift -> `npm ci`;
+- pnpm -> frozen install;
+- modern Yarn -> immutable install;
+- uv -> `uv sync --locked`;
+- Cargo -> `cargo fetch --locked` where applicable.
 
-Every delegated mutation follows this shape:
+Structural corruption is not guessed away. Malformed manifests, lockfile conflicts, manager mismatches, and snapshot changes remain diagnosis-only until a repair can be defined without destroying user intent.
 
-1. discover all relevant components;
-2. resolve the selected component(s) and native manager;
-3. reject ambiguous or structurally unsafe manager state;
-4. construct exact native `CommandPlan` objects;
-5. show those plans without executing by default;
-6. require explicit `--apply`;
-7. invoke the native manager with an explicit working directory;
-8. stop a multi-component batch on the first native failure;
-9. re-discover the repository;
-10. run doctor verification and surface structured results.
+UPM does not promise transactional rollback after a native manager begins changing files.
 
-UPM does not roll back a package manager after it has started mutating files. Future repair/transaction work should use native snapshots and explicit recovery plans rather than pretending arbitrary ecosystem operations are atomically reversible.
+## Initialization
 
-## Query model
+`init` delegates to native generators rather than maintaining project templates. The first supported generic paths are:
 
-The current common dependency graph intentionally starts with direct declarations. It supports:
+- Node: npm, pnpm, Bun;
+- Python: uv;
+- Rust: Cargo.
 
-- `upm graph`: all normalized direct declarations;
-- `upm why <name>`: components/scopes that directly declare a package;
-- `upm duplicates`: repeated declarations and requirement divergence.
+Initialization is preview-first and only accepts new/empty targets inside the current root. Adoption/force semantics should be separate explicit features.
 
-Python names are normalized for comparison across `-`, `_`, and `.` spelling variants. A later graph layer should ingest native lockfiles/SBOMs to answer transitive `why` and impact questions without parsing every resolver format in the first core model.
+## Local project registry
+
+The default user-level registry is `~/.upm/projects.json`. It stores only roots explicitly registered by the user.
+
+Capabilities:
+
+- idempotent add/remove/list;
+- stale/missing-root handling;
+- re-discovery and current health summaries;
+- optional deep health;
+- fleet-level resolved-duplicate aggregation primitive.
+
+There is intentionally no automatic home-directory crawler.
+
+## SBOM interoperability
+
+The first exporter emits deterministic CycloneDX 1.7 JSON from concrete resolved inventory.
+
+- registry npm/PyPI/Cargo resolutions get Package URLs;
+- repeated identical PURLs are deduplicated while occurrences are retained;
+- Git/path/local resolutions receive deterministic UPM `bom-ref` identifiers without fabricated registry PURLs;
+- direct requirements without a concrete resolved version are not converted into fake SBOM versions.
+
+SPDX is a planned exporter, not an alias for the CycloneDX data structure. Its richer object/relationship model should be implemented explicitly.
 
 ## Milestones
 
@@ -155,56 +188,60 @@ Python names are normalized for comparison across `-`, `_`, and `.` spelling var
 
 - Node/Python/Rust adapters;
 - recursive mixed-project discovery;
-- normalized project graph;
+- normalized direct/resolved project graph;
 - structured doctor findings;
-- local-only test/check scripts.
+- local-only validation scripts.
 
 ### M2 — Delegation — implemented first slice
 
 - native command planner/runner;
-- preview-first `install`, `add`, `remove`, and `sync`;
+- preview-first install/add/remove/sync;
 - explicit `--apply`;
 - component selection;
 - `install --all` / `sync --all`;
-- post-operation discovery and doctor verification;
-- preview-first native project initialization.
+- post-operation verification;
+- preview-first native initialization.
 
-### M3 — Integrity — in progress
-
-Implemented:
+### M3 — Integrity — substantial first slice implemented
 
 - portable manifest/lockfile SHA-256 snapshots;
-- changed/missing/new snapshot findings;
-- native manager ownership/conflict preflight;
-- direct dependency duplication/divergence diagnostics.
+- native lockfile syntax checks for parseable formats;
+- npm manifest/lock drift check;
+- manager ownership/conflict preflight;
+- opt-in npm/Python installed-state drift detection;
+- preview-first safe repair plans.
 
-Next:
+Next integrity work:
 
-- native frozen/locked verification as a read-only doctor mode;
-- installed-state drift detection;
-- runtime/toolchain version matching;
-- cache/artifact integrity;
-- repair plans that are previewed before execution.
+- native manager verification modes for opaque lock formats;
+- runtime/toolchain **version satisfaction**, not only executable presence;
+- cache/artifact checksums and reclaimable storage accounting;
+- richer Python installed-state/environment markers;
+- explicit repair classes beyond environment resync.
 
 ### M4 — Cross-project intelligence — started
 
 Implemented:
 
-- direct cross-component `why`;
-- duplicate declaration classification.
+- direct/resolved `why`;
+- direct/resolved duplicate classification;
+- explicit local project registry;
+- fleet health summaries;
+- fleet resolved-duplicate aggregation primitive;
+- CycloneDX export.
 
 Next:
 
-- transitive native dependency graph ingestion;
-- machine-level project registry;
-- physical duplicate/cache accounting;
+- public fleet duplicate/inventory commands;
+- transitive relationship ingestion, not only resolved inventory;
 - impact analysis;
-- vulnerability/provenance integration;
-- CycloneDX/SPDX export.
+- machine-wide disk/cache accounting;
+- advisory/provenance integration;
+- SPDX export.
 
 ### M5 — Project workflows
 
 - normalized task/run abstraction;
-- project-level `dev`, `test`, and `build` orchestration;
+- project-level dev/test/build orchestration;
 - environment/toolchain bootstrap integration;
-- optional machine-wide project health views.
+- broader ecosystem adapters.
