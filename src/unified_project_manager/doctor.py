@@ -52,6 +52,9 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
                 report.findings.append(Finding("manager.mismatch", "error", f"package.json declares {declared}, but the lockfile belongs to {locked}.", key, "Align packageManager and the checked-in lockfile."))
             if declared and declared not in {"npm", "pnpm", "yarn", "bun"}:
                 report.findings.append(Finding("manager.unsupported", "warning", f"package.json declares unsupported package manager '{declared}'.", key))
+            declarations = component.metadata.get("manager_declarations")
+            if isinstance(declarations, list) and len(declarations) > 1:
+                report.findings.append(Finding("manager.conflict", "error", f"package.json contains conflicting package-manager declarations: {', '.join(map(str, declarations))}.", key, "Align packageManager and devEngines.packageManager."))
 
         if component.ecosystem == "python":
             if len(component.lockfiles) > 1:
