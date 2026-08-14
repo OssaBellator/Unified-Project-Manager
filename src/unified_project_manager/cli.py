@@ -9,6 +9,7 @@ from . import __version__
 from .discovery import discover
 from .doctor import diagnose
 from .operations import OperationError, execute_plan, plan_operation, render_command
+from .state import load_state, write_state
 
 
 def _add_operation_options(parser: argparse.ArgumentParser, *, packages: bool = False, dev: bool = False) -> None:
@@ -40,6 +41,10 @@ def _parser() -> argparse.ArgumentParser:
     graph_parser = subparsers.add_parser("graph", help="Print normalized direct dependency information")
     graph_parser.add_argument("path", nargs="?", default=".")
     graph_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    snapshot_parser = subparsers.add_parser("snapshot", help="Record manifest and lockfile integrity checksums")
+    snapshot_parser.add_argument("path", nargs="?", default=".")
+    snapshot_parser.add_argument("--json", action="store_true", dest="as_json")
 
     install_parser = subparsers.add_parser("install", help="Install/bootstrap a component using its native manager")
     _add_operation_options(install_parser)
@@ -157,6 +162,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "graph":
         if args.as_json: print(json.dumps(graph.to_dict(), indent=2, sort_keys=True))
         else: _print_graph(graph)
+        return 0
+    if args.command == "snapshot":
+        target = write_state(graph)
+        state = load_state(graph.root) or {}
+        if args.as_json:
+            print(json.dumps({"path": target.relative_to(graph.root).as_posix(), "state": state}, indent=2, sort_keys=True))
+        else:
+            print(f"Integrity snapshot updated: {target.relative_to(graph.root).as_posix()} ({len(state.get('files', {}))} files, {len(graph.components)} components)")
         return 0
     if args.command == "doctor":
         report = diagnose(graph)
