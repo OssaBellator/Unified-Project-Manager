@@ -7,8 +7,23 @@ from pathlib import Path
 from unified_project_manager.models import Component, Dependency, ToolchainRequirement
 from .base import Adapter
 
-
 PYTHON_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _dependency(value: object, scope: str) -> Dependency | None:
+    if not isinstance(value, str):
+        return None
+    match = PYTHON_NAME.match(value)
+    return Dependency(match.group(1), value, scope) if match else None
+
+
+def _append_list(target: list[Dependency], values: object, scope: str) -> None:
+    if not isinstance(values, list):
+        return
+    for value in values:
+        dependency = _dependency(value, scope)
+        if dependency:
+            target.append(dependency)
 
 
 class PythonAdapter(Adapter):
@@ -27,40 +42,58 @@ class PythonAdapter(Adapter):
         toolchains = [ToolchainRequirement("python")]
 
         manager = None
-        if (directory / "uv.lock").is_file():
-            manager = "uv"
-        elif (directory / "poetry.lock").is_file():
-            manager = "poetry"
-        elif (directory / "pdm.lock").is_file():
-            manager = "pdm"
-        elif requirement_files:
-            manager = "pip"
+        if (directory / "uv.lock").is_file(): manager = "uv"
+        elif (directory / "poetry.lock").is_file(): manager = "poetry"
+        elif (directory / "pdm.lock").is_file(): manager = "pdm"
+        elif requirement_files: manager = "pip"
 
         if pyproject.is_file():
             try:
                 data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
                 project = data.get("project", {})
                 if isinstance(project, dict):
+                    if isinstance(project.get("name"), str): metadata["name"] = project["name"]
+                    if isinstance(project.get("version"), str): metadata["version"] = project["version"]
                     requires_python = project.get("requires-python")
                     if isinstance(requires_python, str):
                         toolchains = [ToolchainRequirement("python", requires_python)]
-                    values = project.get("dependencies", [])
-                    if isinstance(values, list):
-                        for value in values:
-                            if not isinstance(value, str):
-                                continue
-                            match = PYTHON_NAME.match(value)
-                            if match:
-                                dependencies.append(Dependency(match.group(1), value, "runtime"))
+                    _append_list(dependencies, project.get("dependencies"), "runtime")
+                    optional = project.get("optional-dependencies")
+                    if isinstance(optional, dict):
+                        for group, values in optional.items():
+                            _append_list(dependencies, values, f"optional:{group}")
+
+                groups = data.get("dependency-groups")
+                if isinstance(groups, dict):
+                    for group, values in groups.items():
+                        _append_list(dependencies, values, f"development:{group}")
 
                 tool = data.get("tool", {})
                 if isinstance(tool, dict):
-                    if "uv" in tool and manager is None:
-                        manager = "uv"
-                    elif "poetry" in tool and manager is None:
-                        manager = "poetry"
-                    elif "pdm" in tool and manager is None:
-                        manager = "pdm"
+                    if "uv" in tool and manager is None: manager = "uv"
+                    elif "poetry" in tool and manager is None: manager = "poetry"
+                    elif "pdm" in tool and manager is None: manager = "pdm"
+
+                    poetry = tool.get("poetry")
+                    if isinstance(poetry, dict):
+                        poetry_deps = poetry.get("dependencies")
+                        if isinstance(poetry_deps, dict):
+                            for name, requirement in poetry_deps.items():
+                                if str(name).lower() == "python":
+                                    if isinstance(requirement, str) and toolchains[0].requirement is None:
+                                        toolchains = [ToolchainRequirement("python", requirement)]
+                                    continue
+                                rendered = requirement if isinstance(requirement, str) else None
+                                dependencies.append(Dependency(str(name), rendered, "runtime"))
+                        poetry_groups = poetry.get("group")
+                        if isinstance(poetry_groups, dict):
+                            for group, group_data in poetry_groups.items():
+                                if not isinstance(group_data, dict): continue
+                                group_deps = group_data.get("dependencies")
+                                if not isinstance(group_deps, dict): continue
+                                for name, requirement in group_deps.items():
+                                    rendered = requirement if isinstance(requirement, str) else None
+                                    dependencies.append(Dependency(str(name), rendered, f"development:{group}"))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
                 metadata["parse_error"] = str(exc)
 
@@ -70,9 +103,9 @@ class PythonAdapter(Adapter):
                     line = raw_line.strip()
                     if not line or line.startswith("#") or line.startswith(("-r", "--")):
                         continue
-                    match = PYTHON_NAME.match(line)
-                    if match:
-                        dependencies.append(Dependency(match.group(1), line, "runtime"))
+                    dependency = _dependency(line, f"requirements:{requirements_name}")
+                    if dependency:
+                        dependencies.append(dependency)
             except (OSError, UnicodeDecodeError) as exc:
                 metadata.setdefault("requirements_errors", []).append(f"{requirements_name}: {exc}")
 
@@ -83,6 +116,6 @@ class PythonAdapter(Adapter):
             manifests=manifests,
             lockfiles=lockfiles,
             toolchains=toolchains,
-            dependencies=sorted(dependencies, key=lambda item: item.name.lower()),
+            dependencies=sorted(dependencies, key=lambda item: (item.name.lower(), item.scope)),
             metadata=metadata,
         )
