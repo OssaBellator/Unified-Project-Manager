@@ -6,15 +6,11 @@ from pathlib import Path
 from unified_project_manager.models import Component, Dependency, ToolchainRequirement
 from .base import Adapter
 
-
 LOCKFILE_MANAGERS = {
-    "pnpm-lock.yaml": "pnpm",
-    "yarn.lock": "yarn",
-    "bun.lock": "bun",
-    "bun.lockb": "bun",
-    "package-lock.json": "npm",
-    "npm-shrinkwrap.json": "npm",
+    "pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lock": "bun",
+    "bun.lockb": "bun", "package-lock.json": "npm", "npm-shrinkwrap.json": "npm",
 }
+SUPPORTED_MANAGERS = frozenset(LOCKFILE_MANAGERS.values())
 
 
 class NodeAdapter(Adapter):
@@ -34,6 +30,11 @@ class NodeAdapter(Adapter):
 
         try:
             data = json.loads(package_json.read_text(encoding="utf-8"))
+            if isinstance(data.get("name"), str):
+                metadata["name"] = data["name"]
+            if isinstance(data.get("version"), str):
+                metadata["version"] = data["version"]
+
             package_manager = data.get("packageManager")
             if isinstance(package_manager, str) and package_manager:
                 manager_from_manifest = package_manager.split("@", 1)[0]
@@ -45,7 +46,13 @@ class NodeAdapter(Adapter):
             else:
                 toolchains.append(ToolchainRequirement("node"))
 
-            for section, scope in (("dependencies", "runtime"), ("devDependencies", "development"), ("optionalDependencies", "optional")):
+            sections = (
+                ("dependencies", "runtime"),
+                ("devDependencies", "development"),
+                ("optionalDependencies", "optional"),
+                ("peerDependencies", "peer"),
+            )
+            for section, scope in sections:
                 values = data.get(section)
                 if not isinstance(values, dict):
                     continue
@@ -59,6 +66,7 @@ class NodeAdapter(Adapter):
         manager = manager_from_manifest or manager_from_lock
         metadata["manager_from_lock"] = manager_from_lock
         metadata["manager_from_manifest"] = manager_from_manifest
+        metadata["manager_supported"] = manager in SUPPORTED_MANAGERS if manager else False
 
         return Component(
             ecosystem=self.ecosystem,
@@ -67,6 +75,6 @@ class NodeAdapter(Adapter):
             manifests=["package.json"],
             lockfiles=lockfiles,
             toolchains=toolchains,
-            dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name)),
+            dependencies=sorted(dependencies, key=lambda item: (item.scope, item.name.lower())),
             metadata=metadata,
         )
