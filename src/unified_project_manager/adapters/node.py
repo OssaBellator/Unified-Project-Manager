@@ -36,9 +36,30 @@ class NodeAdapter(Adapter):
                 metadata["version"] = data["version"]
 
             package_manager = data.get("packageManager")
+            legacy_manager: str | None = None
             if isinstance(package_manager, str) and package_manager:
-                manager_from_manifest = package_manager.split("@", 1)[0]
+                legacy_manager = package_manager.split("@", 1)[0]
                 metadata["package_manager_declared"] = package_manager
+
+            dev_manager: str | None = None
+            dev_manager_version: str | None = None
+            dev_engines = data.get("devEngines")
+            if isinstance(dev_engines, dict):
+                dev_package_manager = dev_engines.get("packageManager")
+                if isinstance(dev_package_manager, dict) and isinstance(dev_package_manager.get("name"), str):
+                    dev_manager = dev_package_manager["name"]
+                    if isinstance(dev_package_manager.get("version"), str):
+                        dev_manager_version = dev_package_manager["version"]
+                    metadata["dev_engines_package_manager"] = dict(dev_package_manager)
+
+            if legacy_manager and dev_manager and legacy_manager != dev_manager:
+                metadata["manager_declarations"] = [legacy_manager, dev_manager]
+                manager_from_manifest = legacy_manager
+            elif legacy_manager:
+                manager_from_manifest = legacy_manager
+            elif dev_manager:
+                manager_from_manifest = dev_manager
+                metadata["package_manager_declared"] = f"{dev_manager}@{dev_manager_version}" if dev_manager_version else dev_manager
 
             engines = data.get("engines")
             if isinstance(engines, dict) and isinstance(engines.get("node"), str):
