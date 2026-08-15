@@ -51,6 +51,21 @@ reclaimable = false
 
 npm, pnpm, and uv physical package-cache provenance remains deliberately unsupported instead of heuristically reverse-engineering opaque cache/store layouts merely to claim coverage.
 
+## Go relationship execution boundary
+
+Component-scoped Go relationship execution is intentionally isolated from both network fallback and ambient workspace context:
+
+```text
+GOPROXY = off
+GOWORK = off
+```
+
+This applies to the native selected-module/requirement graph and `go mod why -m` path queries. Explicit Go workspace commands remain on their separate workspace-owned path.
+
+The Go `why` implementation also sets the module loader's explicit-write guard. Go documents that this prevents package/module loading from updating `go.mod` and `go.sum` unless the command later explicitly writes them; `go mod why` does not. A real local Go 1.23.2 regression additionally confirms byte-for-byte `go.mod` / `go.sum` immutability for the isolated query.
+
+Reviewers should therefore treat this relationship/source-query boundary as project-state read-only, offline, and single-module scoped. Missing local module/package data is an explicit query/provider failure rather than a reason to contact a proxy or inherit an ambient `go.work`.
+
 ## Go package-import advisory reachability
 
 The first public stronger-than-dependency reachability layer is Go-only and explicit:
@@ -64,13 +79,13 @@ upm projects audit --native --go-import-reachability --apply
 
 The flag requires full `--native` inventory. It is not accepted with compatibility-only `--native-go`, because source evidence must be tied to vulnerable Go module impacts already correlated to the retained native scan inventory.
 
-After an applied scan, UPM uses `go mod why -m` through the existing `GOPROXY=off` wrapper. Source-query states are explicit:
+After an applied scan, UPM uses component-scoped `go mod why -m`. Source-query states are explicit:
 
 - `package-import-reachable`;
 - `not-package-import-reachable`;
 - `query-failed`.
 
-Query failure is never converted to a successful negative. Multiple advisories for the same component/module share one source query.
+Query failure is never converted to a successful negative. Multiple advisories for the same component/logical-module pair share one source query.
 
 ### Build-constraint boundary
 
@@ -87,6 +102,18 @@ persisted = false
 ```
 
 A positive result is not relabeled as reachability in the current production build. A negative result is likewise only a negative in Go's queried any-build-tag package graph; it is not an exploitability verdict.
+
+### Replacement boundary
+
+For versioned Go replacements, UPM retains both identities. `go mod why -m` queries the logical required/original module path used by imports, while advisory/package correlation can retain the effective replacement module identity separately:
+
+```text
+queried_module = <logical required module>
+effective_module = <replacement identity>
+replacement_active = true
+```
+
+The replacement-aware reachability regression prevents future code from silently querying the replacement module path as if it were the import-path namespace.
 
 ### Execution/persistence boundary
 
@@ -144,7 +171,9 @@ Focused reconstructed/local validation in this execution environment includes:
 - additional Cargo multi-crate checkout/noncanonical-object checks passed;
 - cache provenance report semantics: **7/7**;
 - separate cache identity-precision checks passed;
-- Go package-import reachability core: **6/6**, including the any-build-tag/current-build-not-evaluated evidence contract.
+- Go package-import reachability core: **7/7**, including any-build-tag and replacement-aware logical/effective identity semantics;
+- Go relationship execution environment: **3/3** reconstructed checks passed for `GOPROXY=off`, `GOWORK=off`, and unrelated-environment preservation;
+- real local Go 1.23.2 source-query immutability: **1/1** isolated check passed with `go.mod` and `go.sum` unchanged.
 
 The project/fleet Go import-reachability CLI regressions are committed and included in local scripts, but they are not represented as having run end-to-end in this constrained runtime. The full private checkout still cannot be materialized here.
 
