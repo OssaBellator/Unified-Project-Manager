@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -13,6 +12,7 @@ from typing import Any
 
 from .models import Component, ProjectGraph
 from .node_workspace import NodeWorkspaceError, inspect_node_workspace
+from .yarn_execution_policy import yarn_base_environment
 
 
 class YarnGraphError(ValueError):
@@ -332,13 +332,7 @@ def execute_yarn_graph(
     if executable is None:
         return YarnGraphResult(plan, [], [], 127, stderr="Executable 'yarn' is not available on PATH.")
 
-    base_env = os.environ.copy()
-    base_env.update({
-        "YARN_ENABLE_NETWORK": "0",
-        "YARN_ENABLE_TELEMETRY": "0",
-        "YARN_ENABLE_IMMUTABLE_CACHE": "1",
-        "YARN_ENABLE_COLORS": "0",
-    })
+    base_env = yarn_base_environment()
     try:
         version_result = run(
             [executable, "--version"], cwd=plan.cwd, env=base_env,
