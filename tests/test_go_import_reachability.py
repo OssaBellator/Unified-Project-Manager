@@ -26,7 +26,7 @@ class GoImportReachabilityTests(unittest.TestCase):
             "evidence": {"module": module, "effective_name": module},
         }
 
-    def test_reachable_import_path_is_separate_from_runtime_and_exploitability(self) -> None:
+    def test_reachable_import_path_is_separate_from_build_runtime_and_exploitability(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph = self._graph(Path(temporary))
 
@@ -47,11 +47,14 @@ class GoImportReachabilityTests(unittest.TestCase):
             self.assertEqual(data["scope"], "package-import-graph")
             self.assertEqual(data["import_path"], ["example.com/app/pkg", "example.com/dep/subpkg"])
             self.assertEqual(data["dependency_paths"], [["example.com/app", "example.com/dep"]])
+            self.assertEqual(data["build_constraints"], "any-tags")
+            self.assertEqual(data["current_build_configuration_reachability"], "not-evaluated")
             self.assertEqual(data["api_reachability"], "not-evaluated")
             self.assertEqual(data["runtime_reachability"], "not-evaluated")
             self.assertEqual(data["exploitability"], "not-established")
             self.assertTrue(data["test_imports_may_contribute"])
             self.assertFalse(data["persisted"])
+            self.assertIn("any-build-tag", data["interpretation"])
 
     def test_not_import_reachable_is_an_explicit_successful_negative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -65,6 +68,9 @@ class GoImportReachabilityTests(unittest.TestCase):
             self.assertEqual(row.returncode, 0)
             self.assertEqual(row.import_path, ())
             self.assertIsNone(row.error)
+            data = row.to_dict()
+            self.assertEqual(data["build_constraints"], "any-tags")
+            self.assertEqual(data["current_build_configuration_reachability"], "not-evaluated")
 
     def test_failed_query_is_not_converted_to_not_reachable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
