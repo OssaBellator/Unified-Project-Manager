@@ -142,6 +142,7 @@ def fleet_audit_command(argv: list[str]) -> int:
     vulnerability_ids: set[str] = set()
     inventory_failures = 0
     scanner_failures = 0
+    evidence_failures = 0
     vulnerable_projects = 0
     clean_projects = 0
 
@@ -172,7 +173,13 @@ def fleet_audit_command(argv: list[str]) -> int:
                 vulnerable_projects += 1
             else:
                 clean_projects += 1
-            if result.bom is not None:
+            if result.bom is None:
+                evidence_error = (
+                    "OSV-Scanner completed but UPM did not retain the exact scanned SBOM; "
+                    "refusing to persist unverifiable evidence."
+                )
+                evidence_failures += 1
+            else:
                 try:
                     evidence = build_audit_evidence(
                         result.bom,
@@ -182,6 +189,7 @@ def fleet_audit_command(argv: list[str]) -> int:
                     evidence_path = write_audit_evidence(root, evidence)
                 except (AuditEvidenceError, OSError, ValueError) as exc:
                     evidence_error = str(exc)
+                    evidence_failures += 1
         else:
             scanner_failures += 1
 
@@ -202,6 +210,7 @@ def fleet_audit_command(argv: list[str]) -> int:
         "vulnerable_projects": vulnerable_projects,
         "inventory_failures": inventory_failures,
         "scanner_failures": scanner_failures,
+        "evidence_failures": evidence_failures,
         "planning_failures": len(planning_failures),
         "missing_projects": len(missing),
         "unique_vulnerabilities": len(vulnerability_ids),
@@ -240,13 +249,13 @@ def fleet_audit_command(argv: list[str]) -> int:
             if item["evidence_path"]:
                 print(f"    evidence: {item['evidence_path']}")
             if item["evidence_error"]:
-                print(f"    evidence persistence warning: {item['evidence_error']}")
+                print(f"    evidence persistence error: {item['evidence_error']}")
         for item in planning_failures:
             print(f"- {item['project']}: not scanned ({item['error']})")
         if missing:
             print(f"Skipped {len(missing)} missing registered project(s).")
 
-    if inventory_failures or scanner_failures or planning_failures:
+    if inventory_failures or scanner_failures or evidence_failures or planning_failures:
         return 2
     return 1 if vulnerable_projects else 0
 
