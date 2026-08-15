@@ -16,6 +16,7 @@ Current public behavior includes:
 - public read-only Go/Cargo physical cache provenance for explicitly registered projects;
 - CycloneDX 1.7 and SPDX 2.3 export with deterministic mixed-project application topology;
 - preview-first OSV-Scanner advisory scanning with exact scanned-SBOM evidence retention;
+- opt-in Go package-import advisory reachability kept separate from dependency/runtime/exploitability claims;
 - relationship-provider coverage surfaced in local status without hidden provider execution.
 
 No GitHub Actions workflows are used. Validation remains local and script-driven. The aggregate entrypoint is:
@@ -35,6 +36,7 @@ sh ./scripts/test-python-lock-native-validated.sh
 sh ./scripts/test-fleet-providers.sh
 sh ./scripts/test-sbom-project-components.sh
 sh ./scripts/test-cache-provenance.sh
+sh ./scripts/test-go-import-reachability.sh
 ```
 
 ## Native relationship providers
@@ -60,11 +62,7 @@ Unsupported structured-lock semantics fail closed rather than falling back to an
 
 ## Fleet native inventory and duplicate correlation
 
-`projects inventory --native` and `projects duplicates --native` route all eight public provider families.
-
-Provider-specific occurrence meaning remains visible. npm/pnpm retain logical occurrence evidence, Yarn includes only active-root-reachable stored locators, Cargo uses locked package IDs, uv uses universal-lock package identity, and Poetry/PDM use certainty-aware reachable structured-lock inventory while excluding orphan lock records.
-
-Duplicate grouping remains observation-only. `reclaimable=false` is explicit.
+`projects inventory --native` and `projects duplicates --native` route all eight public provider families while retaining provider-specific occurrence meaning. Duplicate grouping remains observation-only with `reclaimable=false`.
 
 ## SBOM interoperability and project topology
 
@@ -72,7 +70,7 @@ CycloneDX 1.7 and SPDX 2.3 are public formats. Registry PURLs are emitted only w
 
 Aggregate SBOMs represent mixed-project topology explicitly:
 
-- CycloneDX has one deterministic aggregate `metadata.component` application root plus one application anchor per discovered UPM component;
+- CycloneDX has one deterministic aggregate application root plus one application anchor per discovered UPM component;
 - SPDX has one aggregate `APPLICATION` package plus one `APPLICATION` package per component and aggregate `CONTAINS` relationships;
 - anchor identity and aggregate naming are clone-location-independent;
 - provider merges preserve the topology;
@@ -82,51 +80,63 @@ Application anchors are topology-only and are excluded from advisory package cou
 
 See `SBOM_PROJECT_COMPONENTS.md`.
 
-## Advisory model
+## Advisory and reachability model
 
-Advisory scanning is explicit because OSV scanning may use network access. Implemented layers include preview-first project/fleet plans, provider-backed `audit --native`, exact scanned CycloneDX retention/fingerprinting, dependency-path correlation across all eight public provider families, structured-lock conditional/ambiguity evidence, and local evidence/policy states. Ordinary status/policy evaluation does not perform hidden scans or hidden provider execution.
+Advisory scanning is explicit because OSV scanning may use network access. Implemented layers include preview-first project/fleet plans, provider-backed `audit --native`, exact scanned CycloneDX retention/fingerprinting, dependency-path correlation across all eight public provider families, structured-lock conditional/ambiguity evidence, and local evidence/policy states.
+
+### Go package-import reachability
+
+A stronger source/import layer is now public for Go as an explicit audit enrichment:
+
+```sh
+upm audit . --native --go-import-reachability
+upm audit . --native --go-import-reachability --apply
+upm projects audit --native --go-import-reachability
+upm projects audit --native --go-import-reachability --apply
+```
+
+The flag requires full `--native` inventory so source evidence is queried only for vulnerable Go module impacts already correlated to the retained native scan inventory.
+
+The enrichment uses `go mod why -m` through UPM's `GOPROXY=off` wrapper and emits separate states:
+
+- `package-import-reachable`;
+- `not-package-import-reachable`;
+- `query-failed`.
+
+The Go command's package graph is any-build-tag and can include test imports, so each row records:
+
+```text
+build_constraints = any-tags
+current_build_configuration_reachability = not-evaluated
+test_imports_may_contribute = true
+api_reachability = not-evaluated
+runtime_reachability = not-evaluated
+exploitability = not-established
+persisted = false
+```
+
+Preview never executes the import query. Applied queries are report-only and are not written into `.upm/audits/osv.json`; ordinary status does not replay them as durable evidence. Query failures do not invalidate independently valid OSV scan evidence.
+
+See `REACHABILITY_EVIDENCE.md`.
+
+### Reachability classes still not implemented
+
+UPM does **not** currently provide a public provider for:
+
+- current-build-configuration reachability;
+- vulnerable API/symbol reachability;
+- runtime/data-flow reachability;
+- exploitability determination.
+
+Dependency presence, dependency paths, and Go package-import paths must not be promoted into those stronger claims.
+
+Ordinary status/policy evaluation does not perform hidden scans, dependency-provider execution, or source/import queries.
 
 ## Cache/storage safety and provenance
 
-The cache subsystem separates:
+The cache subsystem separates storage measurement, physical provenance, integrity checks, maintenance verification, prune, and clean.
 
-- `storage` — physical measurement only;
-- `provenance` — package-to-cache attribution without reclamation inference;
-- `check` — non-mutating integrity checks where available;
-- `verify` — verification that may perform manager maintenance;
-- `prune` — manager-defined removal of unused/unreferenced data;
-- `clean` — explicit full-cache removal.
-
-### Public physical cache provenance
-
-```sh
-upm cache provenance
-upm cache provenance --manager go
-upm cache provenance --manager cargo
-upm cache provenance --closed-universe --json
-```
-
-The command operates over explicitly registered projects and supports only managers where current native evidence gives sufficiently trustworthy physical package identity.
-
-**Go**:
-
-- source attribution begins from selected module directories reported by the offline native graph;
-- the directory must resolve under measured `GOMODCACHE`;
-- selected-version `.info`, `.mod`, `.zip`, and `.ziphash` download artifacts are derived by reusing the already-escaped native physical path;
-- UPM does not reimplement Go path escaping;
-- noncanonical physical layouts are not guessed;
-- `GOCACHE` build bytes remain measured storage but outside selected-module package attribution.
-
-**Cargo**:
-
-- attribution begins from `manifest_path` returned by `cargo metadata --locked --offline`;
-- physical registry objects are rooted at `CARGO_HOME/registry/src/<index>/<crate-version>`;
-- physical git objects are rooted at `CARGO_HOME/git/checkouts/<repo>/<revision>`;
-- a multi-crate git checkout is measured once and can legitimately carry several package identities;
-- a registry source object observed as multiple package identities is an explicit identity conflict;
-- `registry/index`, `registry/cache`, `git/db`, workspace/path dependencies, shallow noncanonical objects, and unrelated locations are not package-source attribution.
-
-The report distinguishes user-asserted project-universe closure from whether the current storage/native observation completed successfully. Missing projects, provider failures, uncovered applicable provider plans, missing/ambiguous cache roots, contradictory physical identities, or inconsistent byte measurements prevent a complete-observation claim.
+`upm cache provenance` is public for Go and Cargo only. Go attribution uses native-reported module directories plus selected-version download artifacts derived from the already-escaped physical path. Cargo attribution uses canonical `registry/src/<index>/<crate-version>` and `git/checkouts/<repo>/<revision>` physical source objects. Legitimate multi-crate Cargo git containers are measured once; conflicting registry identities or competing Go physical identities make an observation incomplete.
 
 Safety fields remain invariant:
 
@@ -137,8 +147,6 @@ reclaimable = false
 ```
 
 npm, pnpm, and uv cache/store internals remain without per-package physical attribution rather than being heuristically parsed merely to claim coverage.
-
-Implemented maintenance plans continue to prefer manager-defined operations; provenance does not create direct deletion targets.
 
 See `CACHE_PROVENANCE.md`.
 
@@ -156,18 +164,18 @@ Focused reconstructed/local validation completed for:
 - all-provider fleet core (**4/4 reconstructed checks passed**);
 - mixed-project SBOM anchors (**5/5 reconstructed checks passed**);
 - initial cache physical mapping (**5/5 reconstructed filesystem checks passed**);
-- additional Cargo physical-object checks passed for one-object multi-crate git checkout grouping and noncanonical shallow-checkout refusal;
-- cache provenance report semantics (**7/7 reconstructed checks passed**) after adding physical-identity inconsistency to totals/build-cache exclusion, no-reclaim invariants, closure invalidation, provider failure/skip incompleteness, and measurement inconsistency;
-- separate identity-precision checks passed for legitimate multi-package Cargo git containers, conflicting Cargo registry-source identities, and competing Go PURLs on one physical path.
+- additional Cargo physical-object checks for one-object multi-crate git checkout grouping and noncanonical shallow-checkout refusal;
+- cache provenance report semantics (**7/7 reconstructed checks passed**), plus separate identity-precision checks;
+- Go package-import reachability core (**6/6 reconstructed checks passed**) including any-build-tag evidence semantics, positive/negative results, query failure/skip, deduplication, and non-Go filtering.
 
-Committed local regressions extend beyond those reconstructed slices and are included by `check-all-local-latest.sh`. The latest full branch has not been materialized and executed end-to-end in this runtime.
+Project/fleet Go import-reachability CLI regressions are committed and included in the native-security/aggregate local scripts, but the full private checkout has not been executed end-to-end in this runtime.
 
 ## Important remaining gaps
 
 The next highest-value work is now:
 
-1. deepen physical cache provenance only where a manager-native identity contract can support it; do not reverse-engineer opaque npm/pnpm/uv internals merely to inflate coverage;
-2. model source/API/runtime reachability separately from dependency-graph impact rather than upgrading dependency evidence into exploitability claims;
+1. add stronger source/API/runtime reachability only where an ecosystem-native evidence contract can support it; the existing Go package-import layer must not be upgraded into current-build, symbol, runtime, or exploitability claims;
+2. deepen physical cache provenance only where a manager-native identity contract can support it; Cargo's documented cache internals are not treated as a stable reverse-engineering API, and opaque npm/pnpm/uv internals remain unsupported;
 3. validate more of the very large branch in one materialized checkout when the execution environment can expose private branch bytes;
 4. eventually add SPDX 3.x as a dedicated model, not a shallow 2.3 translation.
 
