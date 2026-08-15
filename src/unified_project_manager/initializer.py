@@ -15,11 +15,13 @@ class InitializationError(ValueError):
 
 
 DEFAULT_MANAGERS = {
+    "go": "go",
     "node": "npm",
     "python": "uv",
     "rust": "cargo",
 }
 SUPPORTED_MANAGERS = {
+    "go": {"go"},
     "node": {"npm", "pnpm", "bun"},
     "python": {"uv"},
     "rust": {"cargo"},
@@ -46,6 +48,7 @@ def plan_initialization(
     manager: str | None = None,
     *,
     library: bool = False,
+    module: str | None = None,
 ) -> CommandPlan:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
@@ -73,8 +76,14 @@ def plan_initialization(
             argv = ("bun", "init", "--yes")
     elif ecosystem == "python":
         argv = ("uv", "init", *(("--lib",) if library else ()), ".")
-    else:
+    elif ecosystem == "rust":
         argv = ("cargo", "init", ".", "--vcs", "none", *(("--lib",) if library else ()))
+    else:
+        if library:
+            raise InitializationError("--lib is not defined for Go module initialization.")
+        if not module or not module.strip():
+            raise InitializationError("Go initialization requires an explicit module path.")
+        argv = ("go", "mod", "init", module.strip())
 
     return CommandPlan(
         operation="init",
