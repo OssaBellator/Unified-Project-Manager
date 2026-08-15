@@ -16,6 +16,10 @@ from .npm_impact import analyze_npm_impact
 from .pnpm_graph import PnpmGraphError, execute_pnpm_graph, plan_pnpm_graphs
 from .pnpm_impact import analyze_pnpm_impact
 from .provider_ownership import provider_owned_component_keys
+from .python_lock_graph import PythonLockGraphError, plan_python_lock_graphs
+from .python_lock_provider import python_lock_provider_name
+from .python_lock_queries import query_python_lock_result
+from .python_lock_validation import execute_validated_python_lock_graph
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
 from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
@@ -48,6 +52,7 @@ def impact_command(argv: list[str]) -> int:
         yarn_plans = plan_yarn_graphs(graph, selector=args.component)
         cargo_plans = plan_cargo_graphs(graph, selector=args.component)
         uv_plans = plan_uv_graphs(graph, selector=args.component)
+        python_lock_plans = plan_python_lock_graphs(graph, selector=args.component)
     except (
         FileNotFoundError,
         NotADirectoryError,
@@ -57,6 +62,7 @@ def impact_command(argv: list[str]) -> int:
         YarnGraphError,
         CargoGraphError,
         UvGraphError,
+        PythonLockGraphError,
         ValueError,
     ) as exc:
         if args.as_json:
@@ -72,6 +78,7 @@ def impact_command(argv: list[str]) -> int:
         yarn_plans=yarn_plans,
         cargo_plans=cargo_plans,
         uv_plans=uv_plans,
+        python_lock_plans=python_lock_plans,
     )
     skips = [skip for skip in go_skips if skip.component not in handled_components]
     impacts: list[dict[str, object]] = []
@@ -135,6 +142,16 @@ def impact_command(argv: list[str]) -> int:
         for impact in analyze_uv_impact(result, args.package):
             impacts.append({"provider": "uv-lock", "scope": "universal-lock-graph", **impact.to_dict()})
 
+    for plan in python_lock_plans:
+        result = execute_validated_python_lock_graph(graph, plan)
+        provider = python_lock_provider_name(plan)
+        if not result.succeeded:
+            failures.append({"provider": provider, "component": plan.component, "returncode": None, "error": result.error})
+            continue
+        query = query_python_lock_result(result, args.package)
+        if query.matched:
+            impacts.append(query.to_dict())
+
     impacts.sort(key=lambda item: (
         str(item["provider"]), str(item["component"]), str(item.get("workspace_project", "")),
         str(item.get("ref", "")), str(item.get("locator", "")), str(item.get("module", "")),
@@ -178,6 +195,20 @@ def impact_command(argv: list[str]) -> int:
                 print(f"{impact['component']} [cargo]: {impact['name']}@{impact['version']}")
                 for path in impact.get("workspace_paths", []):
                     print("  workspace path: " + " -> ".join(path))
+            elif impact["provider"] in {"poetry-lock", "pdm-lock"}:
+                print(f"{impact['component']} [{impact['provider']} structured-lock]")
+                for package in impact.get("packages", []):
+                    certainty = "unconditional" if package.get("unconditional") else "conditional"
+                    print(f"  {package['name']}@{package['version']} [{certainty}]")
+                    for path in package.get("paths", []):
+                        print("    project path: " + " -> ".join(path.get("nodes", [])))
+                        if path.get("markers"):
+                            print("    markers: " + " && ".join(path["markers"]))
+                        if path.get("optional_edges"):
+                            print(f"    optional edges: {path['optional_edges']}")
+                for ambiguity in impact.get("ambiguities", []):
+                    candidates = ", ".join(ambiguity.get("candidate_ids", []))
+                    print(f"  ? {ambiguity['source']} -> {ambiguity['dependency_name']} [ambiguous: {candidates}]")
             else:
                 print(f"{impact['component']} [uv]: {impact['name']}@{impact['version']}")
                 for path in impact.get("project_paths", []):
