@@ -106,7 +106,7 @@ class PublicProviderIntegrationTests(unittest.TestCase):
             root = Path(temporary)
             self._uv_project(root)
 
-            code, document = self._json(["sbom", str(root), "--native", "--json"])
+            code, document = self._json(["sbom", str(root), "--native"])
 
             self.assertEqual(code, 0)
             bar = next(item for item in document["components"] if item.get("purl") == "pkg:pypi/bar@1.0.0")
