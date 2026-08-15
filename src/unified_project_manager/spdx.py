@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .models import Component, ProjectGraph, ResolvedPackage
 from .sbom import purl_for
+from .sbom_project_components import add_spdx_project_anchors
 from .uv_scope import uv_scope_package_ids
 
 SPDX_VERSION = "SPDX-2.3"
@@ -226,7 +227,7 @@ def spdx_document(
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     created_text = timestamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
+    document = {
         "spdxVersion": SPDX_VERSION,
         "dataLicense": SPDX_DATA_LICENSE,
         "SPDXID": "SPDXRef-DOCUMENT",
@@ -239,6 +240,7 @@ def spdx_document(
         "packages": package_list,
         "relationships": relationship_list,
     }
+    return add_spdx_project_anchors(document, graph)
 
 
 def write_spdx(document: dict[str, Any], output: str | Path) -> Path:
