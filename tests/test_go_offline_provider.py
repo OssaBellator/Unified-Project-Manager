@@ -12,7 +12,7 @@ from unified_project_manager.native_graph import plan_native_graph
 
 
 class GoOfflineProviderTests(unittest.TestCase):
-    def test_graph_wrapper_forces_goproxy_off_and_preserves_go_work_scope(self) -> None:
+    def test_graph_wrapper_forces_goproxy_off_and_gowork_off(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'go.mod').write_text('module example.com/app\ngo 1.24\n', encoding='utf-8')
@@ -33,8 +33,9 @@ class GoOfflineProviderTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             for _argv, kwargs in calls:
                 self.assertEqual(kwargs['env']['GOPROXY'], 'off')
+                self.assertEqual(kwargs['env']['GOWORK'], 'off')
 
-    def test_why_wrapper_forces_goproxy_off(self) -> None:
+    def test_why_wrapper_forces_goproxy_off_and_gowork_off(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'go.mod').write_text('module example.com/app\ngo 1.24\n', encoding='utf-8')
@@ -48,8 +49,9 @@ class GoOfflineProviderTests(unittest.TestCase):
             self.assertEqual(skips, [])
             self.assertTrue(results[0].needed)
             self.assertEqual(calls[0][1]['env']['GOPROXY'], 'off')
+            self.assertEqual(calls[0][1]['env']['GOWORK'], 'off')
 
-    def test_existing_environment_is_preserved_except_proxy(self) -> None:
+    def test_existing_environment_is_preserved_except_provider_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'go.mod').write_text('module example.com/app\ngo 1.24\n', encoding='utf-8')
@@ -62,7 +64,11 @@ class GoOfflineProviderTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, output, '')
 
             old = os.environ.get('UPM_TEST_SENTINEL')
+            old_proxy = os.environ.get('GOPROXY')
+            old_work = os.environ.get('GOWORK')
             os.environ['UPM_TEST_SENTINEL'] = 'present'
+            os.environ['GOPROXY'] = 'https://example.invalid/proxy'
+            os.environ['GOWORK'] = '/tmp/ambient-go.work'
             try:
                 execute_native_graph_offline(plan, run=run, which=lambda _name: '/tools/go')
             finally:
@@ -70,8 +76,17 @@ class GoOfflineProviderTests(unittest.TestCase):
                     os.environ.pop('UPM_TEST_SENTINEL', None)
                 else:
                     os.environ['UPM_TEST_SENTINEL'] = old
+                if old_proxy is None:
+                    os.environ.pop('GOPROXY', None)
+                else:
+                    os.environ['GOPROXY'] = old_proxy
+                if old_work is None:
+                    os.environ.pop('GOWORK', None)
+                else:
+                    os.environ['GOWORK'] = old_work
             self.assertEqual(observed[0]['UPM_TEST_SENTINEL'], 'present')
             self.assertEqual(observed[0]['GOPROXY'], 'off')
+            self.assertEqual(observed[0]['GOWORK'], 'off')
 
 
 if __name__ == '__main__':
