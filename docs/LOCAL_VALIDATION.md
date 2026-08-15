@@ -80,8 +80,10 @@ sh ./scripts/test-go-import-reachability.sh
 
 The dedicated driver runs:
 
+- `tests/test_go_offline_provider.py`;
 - `tests/test_go_import_reachability.py`;
-- `tests/test_go_import_reachability_audit.py`.
+- `tests/test_go_import_reachability_audit.py`;
+- `tests/test_go_mod_why_readonly.py`.
 
 These regressions cover:
 
@@ -92,14 +94,14 @@ These regressions cover:
 - non-Go dependency impacts never triggering Go source queries;
 - Go's `why` graph being emitted explicitly as `build_constraints=any-tags`, with `current_build_configuration_reachability=not-evaluated` and `test_imports_may_contribute=true`;
 - versioned Go replacements querying the logical required module path while retaining the effective replacement identity separately (`queried_module`, `effective_module`, `replacement_active`);
+- component-scoped Go graph/why execution forcing both `GOPROXY=off` and `GOWORK=off` even when ambient values are set, while preserving unrelated environment variables;
+- a real installed Go tool, when available, leaving `go.mod` and `go.sum` byte-for-byte unchanged after `go mod why -m` against an isolated local replacement;
 - `--go-import-reachability` requiring full `--native` scan inventory rather than compatibility-only `--native-go`;
 - preview remaining non-executing;
 - project and fleet applied routing keeping source/import evidence separate from dependency impacts;
 - source/import rows retaining `api_reachability=not-evaluated`, `runtime_reachability=not-evaluated`, `exploitability=not-established`, and `persisted=false`.
 
-The same two tests are included in `scripts/test-native-security.sh`, which is part of the aggregate local path.
-
-The existing `tests/test_go_offline_provider.py` separately locks the execution boundary used by this feature: `query_native_why_offline` forces `GOPROXY=off`.
+The same trust-boundary and reachability tests are included in `scripts/test-native-security.sh`, which is part of the aggregate local path. The real-Go test skips when the Go executable is unavailable; it never downloads a toolchain for validation.
 
 ## Native-security focused slice
 
@@ -133,7 +135,9 @@ Focused reconstructed/local validation currently includes:
 - additional Cargo physical-object checks passed for multi-crate checkout-root grouping and noncanonical shallow checkout refusal;
 - cache provenance report semantics: **7/7** reconstructed checks passed;
 - separate cache identity-precision checks passed for legitimate multi-identity Cargo git containers, conflicting multi-identity Cargo registry objects, and competing Go PURLs on one physical path;
-- Go package-import reachability core: **7/7** reconstructed checks passed for positive import reachability, replacement-aware logical/effective module identity, successful negative, query failure, provider skip, query deduplication, non-Go filtering, and the any-build-tag/current-build-not-evaluated evidence contract.
+- Go package-import reachability core: **7/7** reconstructed checks passed for positive import reachability, replacement-aware logical/effective module identity, successful negative, query failure, provider skip, query deduplication, non-Go filtering, and the any-build-tag/current-build-not-evaluated evidence contract;
+- Go relationship execution environment: **3/3** reconstructed checks passed for graph isolation, why isolation, and preservation of unrelated environment while overriding `GOPROXY`/`GOWORK`;
+- real local Go 1.23.2 source-query immutability: **1/1** isolated check passed, with `go mod why -m` returning the expected path while `go.mod` and `go.sum` remained byte-for-byte unchanged.
 
 The project/fleet CLI reachability regressions are committed and included in local scripts, but they are not represented as having run end-to-end in this constrained runtime.
 
