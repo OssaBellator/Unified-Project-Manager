@@ -41,7 +41,7 @@ class PnpmSbomTests(unittest.TestCase):
             self.assertEqual(len(all_plans), 1)
             self.assertTrue(all_plans[0].split)
             self.assertIn("--split", all_plans[0].argv)
-            self.assertEqual(selected[0].filter_selector, "app")
+            self.assertEqual(selected[0].filter_selector, "./packages/app")
             self.assertNotIn("--split", selected[0].argv)
             self.assertIn("--lockfile-only", selected[0].argv)
 
