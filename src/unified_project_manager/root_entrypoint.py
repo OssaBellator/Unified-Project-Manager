@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 
 from .batch_operation_entrypoint import dispatch_batch_operation_command
+from .operation_receipt_entrypoint import dispatch_operation_receipt_command
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -10,6 +11,9 @@ def main(argv: list[str] | None = None) -> int:
     batch_result = dispatch_batch_operation_command(arguments)
     if batch_result is not None:
         return batch_result
+    operation_result = dispatch_operation_receipt_command(arguments)
+    if operation_result is not None:
+        return operation_result
 
     from .entrypoint import main as existing_main
 
