@@ -60,6 +60,41 @@ class NativeCycloneDxTests(unittest.TestCase):
             self.assertEqual(inventory.provider_counts()["npm-native-sbom"], 1)
             self.assertEqual(inventory.provider_counts()["pnpm-native-sbom"], 1)
 
+    def test_uv_workspace_shared_lock_contributes_member_registry_packages_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="root"\nversion="0.1.0"\n'
+                '[tool.uv.workspace]\nmembers=["packages/*"]\n', encoding="utf-8"
+            )
+            member = root / "packages" / "app"
+            member.mkdir(parents=True)
+            (member / "pyproject.toml").write_text(
+                '[project]\nname="app"\nversion="0.1.0"\n', encoding="utf-8"
+            )
+            (root / "uv.lock").write_text('''
+version = 1
+[[package]]
+name = "root"
+version = "0.1.0"
+source = { editable = "." }
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { editable = "packages/app" }
+dependencies = [{ name = "bar", version = "1.2.3" }]
+[[package]]
+name = "bar"
+version = "1.2.3"
+source = { registry = "https://pypi.org/simple" }
+''', encoding="utf-8")
+
+            inventory = build_native_cyclonedx(discover(root))
+
+            purls = [item.get("purl") for item in inventory.bom["components"] if item.get("purl")]
+            self.assertEqual(purls.count("pkg:pypi/bar@1.2.3"), 1)
+            self.assertEqual(inventory.provider_counts()["uv-lock"], 1)
+
     def test_requested_provider_failure_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
