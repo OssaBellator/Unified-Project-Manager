@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import tempfile
@@ -10,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from unified_project_manager.models import CommandResult
+from unified_project_manager.receipts import receipt_identity_digest, receipt_identity_payload
 from unified_project_manager.root_entrypoint import main
 
 
@@ -35,6 +35,13 @@ class ReceiptEntrypointTests(unittest.TestCase):
                     "name": "app",
                     "packageManager": "npm@11",
                     "dependencies": {package: version},
+                }),
+                encoding="utf-8",
+            )
+            (root / "package-lock.json").write_text(
+                json.dumps({
+                    "lockfileVersion": 3,
+                    "packages": {"": {"name": "app", "dependencies": {package: version}}},
                 }),
                 encoding="utf-8",
             )
@@ -145,16 +152,15 @@ class ReceiptEntrypointTests(unittest.TestCase):
             data = json.loads(receipt_path.read_text(encoding="utf-8"))
             original_id = data["receipt_id"]
             data["operation"] = "rewritten-valid-receipt"
-            stable = {
-                "operation": data.get("operation"),
-                "commands": data.get("commands"),
-                "before": data.get("before"),
-                "after": data.get("after"),
-                "created_at": data.get("created_at"),
-            }
-            data["receipt_id"] = hashlib.sha256(
-                json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            ).hexdigest()
+            data["receipt_id"] = receipt_identity_digest(receipt_identity_payload(
+                version=data["version"],
+                operation=data.get("operation"),
+                commands=data.get("commands"),
+                before=data.get("before"),
+                after=data.get("after"),
+                created_at=data.get("created_at"),
+                verification=data.get("verification"),
+            ))
             self.assertNotEqual(data["receipt_id"], original_id)
             receipt_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

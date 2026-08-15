@@ -27,7 +27,7 @@ class SpdxTests(unittest.TestCase):
             self.assertEqual(document["SPDXID"], "SPDXRef-DOCUMENT")
             self.assertTrue(document["documentNamespace"].startswith("https://spdx.org/spdxdocs/upm-"))
             self.assertEqual(document["creationInfo"]["created"], "2026-08-15T02:30:00Z")
-            package = document["packages"][0]
+            package = next(item for item in document["packages"] if item.get("name") == "foo")
             self.assertEqual(package["name"], "foo")
             self.assertEqual(package["versionInfo"], "1.2.3")
             self.assertEqual(package["downloadLocation"], "NOASSERTION")
@@ -38,8 +38,11 @@ class SpdxTests(unittest.TestCase):
             self.assertEqual(package["externalRefs"][0]["referenceType"], "purl")
             self.assertEqual(package["externalRefs"][0]["referenceLocator"], "pkg:npm/foo@1.2.3")
             describes = [item for item in document["relationships"] if item["relationshipType"] == "DESCRIBES"]
-            self.assertEqual(len(describes), 1)
-            self.assertEqual(describes[0]["spdxElementId"], "SPDXRef-DOCUMENT")
+            self.assertTrue(any(
+                item["spdxElementId"] == "SPDXRef-DOCUMENT"
+                and item["relatedSpdxElement"] == package["SPDXID"]
+                for item in describes
+            ))
 
     def test_document_namespace_is_content_deterministic_when_created_time_is_fixed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

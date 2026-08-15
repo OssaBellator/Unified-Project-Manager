@@ -36,15 +36,17 @@ class SbomTests(unittest.TestCase):
             bom = cyclonedx_bom(discover(root))
             self.assertEqual(bom["bomFormat"], "CycloneDX")
             self.assertEqual(bom["specVersion"], "1.7")
-            self.assertEqual(len(bom["components"]), 2)
-            self.assertEqual({item["purl"] for item in bom["components"]}, {"pkg:npm/foo@1.0.0", "pkg:npm/bar@2.0.0"})
+            libraries = [item for item in bom["components"] if item.get("type") == "library"]
+            self.assertEqual(len(libraries), 2)
+            self.assertEqual({item["purl"] for item in libraries}, {"pkg:npm/foo@1.0.0", "pkg:npm/bar@2.0.0"})
 
     def test_cyclonedx_uses_resolved_versions_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "package.json").write_text('{"packageManager":"npm@11","dependencies":{"foo":"^1"}}', encoding="utf-8")
             bom = cyclonedx_bom(discover(root))
-            self.assertEqual(bom["components"], [])
+            libraries = [item for item in bom["components"] if item.get("type") == "library"]
+            self.assertEqual(libraries, [])
 
     def test_non_registry_resolution_does_not_get_registry_purl(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

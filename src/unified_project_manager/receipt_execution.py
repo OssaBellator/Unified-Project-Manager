@@ -37,6 +37,8 @@ class ReceiptExecution:
 def _dict_payload(value: object | None, root: Path) -> dict[str, Any] | None:
     if value is None:
         return None
+    if isinstance(value, dict):
+        return dict(value)
     to_dict = getattr(value, 'to_dict', None)
     if callable(to_dict):
         try:

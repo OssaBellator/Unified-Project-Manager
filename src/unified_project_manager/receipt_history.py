@@ -175,6 +175,31 @@ def _load_after(path: str | Path) -> tuple[StateObservation, ...]:
     return _observations(data['after'])
 
 
+def receipt_history_status(
+    graph: ProjectGraph,
+    *,
+    extra_paths: Iterable[str | Path] = (),
+) -> dict[str, Any]:
+    """Return the CLI-facing receipt-history snapshot without re-executing tools."""
+
+    validations = list_receipt_history(graph.root)
+    drift = latest_receipt_drift(graph, extra_paths=extra_paths)
+    validation_payloads: list[dict[str, Any]] = []
+    for validation in validations:
+        payload = validation.to_dict()
+        payload["issues"] = [validation.reason] if validation.reason else []
+        validation_payloads.append(payload)
+    return {
+        "state": drift.state,
+        "current": drift.current,
+        "receipts": len(validations),
+        "validations": validation_payloads,
+        "latest_receipt": drift.latest_receipt.to_dict() if drift.latest_receipt else None,
+        "changes": list(drift.changes),
+        "reason": drift.reason,
+    }
+
+
 def latest_receipt_drift(
     graph: ProjectGraph,
     *,

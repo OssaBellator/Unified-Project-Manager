@@ -72,9 +72,9 @@ class UvWorkspaceSbomRoutingTests(unittest.TestCase):
             document = json.loads(output.getvalue())
 
             self.assertEqual(code, 0)
-            purls = {component.get("purl") for component in document.get("components", [])}
+            purls = {component["purl"] for component in document.get("components", []) if component.get("purl")}
             self.assertEqual(purls, {"pkg:pypi/bar@1.0.0"})
-            bar = document["components"][0]
+            bar = next(component for component in document["components"] if component.get("purl") == "pkg:pypi/bar@1.0.0")
             self.assertIn(
                 {"name": "upm:uv:scope-component", "value": "packages/app:python"},
                 bar.get("properties", []),
@@ -115,7 +115,7 @@ class UvWorkspaceSbomRoutingTests(unittest.TestCase):
             document = json.loads(output.getvalue())
 
             self.assertEqual(code, 0)
-            purls = {component.get("purl") for component in document.get("components", [])}
+            purls = {component["purl"] for component in document.get("components", []) if component.get("purl")}
             self.assertEqual(purls, {"pkg:pypi/foo@1.0.0"})
 
 

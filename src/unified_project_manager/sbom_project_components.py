@@ -211,8 +211,16 @@ def add_spdx_project_anchors(document: dict[str, Any], graph: ProjectGraph) -> d
     document["packages"] = package_list
     document["relationships"] = relationship_list
 
+    namespace_packages = []
+    for package in package_list:
+        stable_package = dict(package)
+        if stable_package.get("SPDXID") == aggregate_id:
+            # The checkout directory basename is display-only. Do not let it
+            # change the document identity for byte-equivalent clones.
+            stable_package["name"] = "project"
+        namespace_packages.append(stable_package)
     digest = hashlib.sha256(json.dumps(
-        {"packages": package_list, "relationships": relationship_list},
+        {"packages": namespace_packages, "relationships": relationship_list},
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")).hexdigest()

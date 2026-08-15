@@ -82,7 +82,7 @@ class SbomProjectComponentTests(unittest.TestCase):
             self.assertEqual(set(root_dependency["dependsOn"]), {item["bom-ref"] for item in anchors})
             # Anchors describe topology only; static inventory does not guess
             # direct project-to-package dependency edges.
-            self.assertFalse(any(item["ref"] in root_dependency["dependsOn"] for item in libraries))
+            self.assertFalse(any(item["bom-ref"] in root_dependency["dependsOn"] for item in libraries))
 
     def test_spdx_has_matching_application_hierarchy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -154,11 +154,11 @@ class SbomProjectComponentTests(unittest.TestCase):
                 spdx_document(graph, created=datetime(2026, 1, 1, tzinfo=timezone.utc)),
             )
 
-            self.assertTrue(report["consistent"])
-            self.assertEqual(report["cyclonedx_only"], [])
-            self.assertEqual(report["spdx_only"], [])
-            self.assertEqual(report["cyclonedx_purls"], 3)
-            self.assertEqual(report["spdx_purls"], 3)
+            self.assertTrue(report.consistent)
+            self.assertEqual(report.only_cyclonedx, ())
+            self.assertEqual(report.only_spdx, ())
+            self.assertEqual(len(report.cyclonedx_purls), 3)
+            self.assertEqual(len(report.spdx_purls), 3)
 
 
 if __name__ == "__main__":

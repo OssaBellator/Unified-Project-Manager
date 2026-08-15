@@ -21,6 +21,23 @@ def _add_property(entry: dict[str, Any], name: str, value: str) -> None:
     properties.sort(key=lambda value: (str(value.get("name", "")), str(value.get("value", ""))))
 
 
+def _reachable_locators(result: YarnGraphResult) -> set[str]:
+    packages = {package.locator for package in result.packages}
+    forward: dict[str, set[str]] = defaultdict(set)
+    for edge in result.edges:
+        if edge.source_locator in packages and edge.target_locator in packages:
+            forward[edge.source_locator].add(edge.target_locator)
+    reachable = {package.locator for package in result.packages if package.project_member}
+    pending = list(sorted(reachable))
+    while pending:
+        current = pending.pop()
+        for target in sorted(forward.get(current, set())):
+            if target not in reachable:
+                reachable.add(target)
+                pending.append(target)
+    return reachable
+
+
 def _registry_purl(package: object) -> str | None:
     protocol = getattr(package, "protocol", None)
     name = getattr(package, "name", None)
@@ -55,8 +72,11 @@ def merge_yarn_cyclonedx(base: dict[str, Any], results: list[YarnGraphResult]) -
         occurrence_sets: dict[str, set[str]] = defaultdict(set)
         virtual_counts: dict[str, int] = defaultdict(int)
         package_by_locator = {package.locator: package for package in result.packages}
+        reachable = _reachable_locators(result)
 
         for package in result.packages:
+            if package.locator not in reachable:
+                continue
             purl = _registry_purl(package)
             if purl is None:
                 continue
@@ -163,7 +183,10 @@ def merge_yarn_spdx(base: dict[str, Any], results: list[YarnGraphResult]) -> dic
         if not result.succeeded:
             continue
         locator_refs: dict[str, str] = {}
+        reachable = _reachable_locators(result)
         for package in result.packages:
+            if package.locator not in reachable:
+                continue
             purl = _registry_purl(package)
             if purl is None or package.version is None:
                 continue

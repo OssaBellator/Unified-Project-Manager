@@ -82,7 +82,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
         old = parse_go_symbol_build_environment(json.dumps({
             "GOOS": "linux", "GOARCH": "amd64", "GOVERSION": "go1.20.14",
         }))
-        with self.assertRaisesRegex(GoSymbolSourceObservationError, "requires Go 1.21\+"):
+        with self.assertRaisesRegex(GoSymbolSourceObservationError, r"requires Go 1.21\+"):
             validate_go_symbol_loader_profile_version(old)
 
         unknown = parse_go_symbol_build_environment(json.dumps({

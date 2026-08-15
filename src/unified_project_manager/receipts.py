@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -16,6 +17,7 @@ RECEIPT_DIRECTORY = Path('.upm/receipts')
 _REDACTED = '<redacted>'
 _SENSITIVE_FLAG = re.compile(r'(?i)(token|password|passwd|secret|credential|auth(?:entication)?(?:-?token)?)')
 _SENSITIVE_ASSIGNMENT = re.compile(r'(?i)(token|password|passwd|secret|_?auth(?:token)?|credential)=')
+_AUTHORIZATION_HEADER = re.compile(r'(?i)^(?:proxy-)?authorization\s*:')
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,7 @@ class MutationReceipt:
             'receipt_id': self.receipt_id,
             'created_at': self.created_at,
             'operation': self.operation,
+            'scope': 'project-native-state',
             'succeeded': self.succeeded,
             'commands': [command.to_dict() for command in self.commands],
             'before': [item.to_dict() for item in self.before],
@@ -86,6 +89,21 @@ class MutationReceipt:
             'changes': [item.to_dict() for item in self.changes],
             'verification': dict(self.verification) if self.verification is not None else None,
         }
+
+
+def _redact_url_userinfo(value: str) -> str:
+    if '://' not in value:
+        return value
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if '@' not in parsed.netloc:
+        return value
+    _userinfo, host = parsed.netloc.rsplit('@', 1)
+    if not host:
+        return value
+    return urlunsplit((parsed.scheme, f'{_REDACTED}@{host}', parsed.path, parsed.query, parsed.fragment))
 
 
 def redact_argv(argv: Sequence[str]) -> tuple[str, ...]:
@@ -100,6 +118,14 @@ def redact_argv(argv: Sequence[str]) -> tuple[str, ...]:
         if item.startswith('-') and '=' not in item and _SENSITIVE_FLAG.search(item):
             result.append(item)
             redact_next = True
+            continue
+        if _AUTHORIZATION_HEADER.search(item):
+            key = item.split(':', 1)[0].strip()
+            result.append(f'{key}: {_REDACTED}')
+            continue
+        redacted_url = _redact_url_userinfo(item)
+        if redacted_url != item:
+            result.append(redacted_url)
             continue
         if _SENSITIVE_ASSIGNMENT.search(item):
             key = item.split('=', 1)[0]

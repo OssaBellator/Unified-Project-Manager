@@ -26,6 +26,8 @@ from .uv_impact import analyze_uv_impact
 from .yarn_graph import execute_yarn_graph, plan_yarn_graphs
 from .yarn_impact import analyze_yarn_impact
 
+execute_native_graph = execute_native_graph_offline
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -85,7 +87,7 @@ def fleet_impact_command(argv: list[str]) -> int:
                 skips.append({"project": str(root), **skip.to_dict()})
 
         for plan in go_plans:
-            result = execute_native_graph_offline(plan)
+            result = execute_native_graph(plan)
             if not result.succeeded:
                 failures.append({
                     "project": str(root), "provider": "go-modules", "component": plan.component,

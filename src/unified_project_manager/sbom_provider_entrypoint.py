@@ -26,6 +26,8 @@ from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
 from .yarn_sbom_merge import merge_yarn_cyclonedx, merge_yarn_spdx
 
+execute_native_graph = execute_native_graph_offline
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -104,7 +106,7 @@ def sbom_command(argv: list[str]) -> int:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    go_results = [execute_native_graph_offline(plan) for plan in go_plans]
+    go_results = [execute_native_graph(plan) for plan in go_plans]
     npm_results = [execute_npm_sbom(plan) for plan in npm_plans]
     pnpm_results = [execute_pnpm_sbom(plan) for plan in pnpm_plans]
     yarn_results = [execute_yarn_graph(plan) for plan in yarn_plans]

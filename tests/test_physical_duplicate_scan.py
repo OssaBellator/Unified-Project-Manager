@@ -89,7 +89,10 @@ class PhysicalDuplicateScanTests(unittest.TestCase):
             outside.write_bytes(b"secret" * 2048)
             link = root / "node_modules" / "pkg" / "link.bin"
             link.parent.mkdir(parents=True)
-            link.symlink_to(outside)
+            try:
+                link.symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlink creation is unavailable: {exc}")
 
             report = analyze_physical_duplicates(self._graph(root), min_size_bytes=1)
 
@@ -104,7 +107,10 @@ class PhysicalDuplicateScanTests(unittest.TestCase):
             outside = Path(outside_temp) / "node_modules-real"
             outside.mkdir()
             (outside / "secret.bin").write_bytes(b"secret" * 2048)
-            (root / "node_modules").symlink_to(outside, target_is_directory=True)
+            try:
+                (root / "node_modules").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symlink creation is unavailable: {exc}")
 
             roots, skipped = discover_artifact_roots(self._graph(root))
             report = analyze_physical_duplicates(self._graph(root), min_size_bytes=1)

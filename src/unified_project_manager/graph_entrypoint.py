@@ -20,6 +20,10 @@ from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 from .yarn_execution_policy import yarn_execution_guards
 from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
 
+# Compatibility injection point retained for callers/tests that patch the
+# original Go provider name. Execution still goes through the offline wrapper.
+execute_native_graph = execute_native_graph_offline
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -124,7 +128,7 @@ def native_graph_command(argv: list[str]) -> int:
                 print(f"- {skip.component}: skipped ({skip.reason})")
         return 0 if plans else 1
 
-    go_results = [execute_native_graph_offline(plan) for plan in go_plans]
+    go_results = [execute_native_graph(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
     pnpm_results = [execute_pnpm_graph(plan) for plan in pnpm_plans]
     yarn_results = [execute_yarn_graph(plan) for plan in yarn_plans]

@@ -39,7 +39,9 @@ def _resolve_executable(
 ) -> str | None:
     resolved = which(value)
     if resolved:
-        return str(Path(resolved).expanduser().resolve())
+        # shutil.which already selected the executable from PATH. Preserve that
+        # exact spelling instead of reinterpreting foreign paths on this host.
+        return str(resolved)
     return None
 
 

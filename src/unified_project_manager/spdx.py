@@ -220,7 +220,6 @@ def spdx_document(
     identity_payload = {
         "packages": package_list,
         "relationships": relationship_list,
-        "root": str(graph.root),
     }
     digest = hashlib.sha256(json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     timestamp = created or datetime.now(timezone.utc)

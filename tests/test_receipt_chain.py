@@ -57,7 +57,7 @@ class ReceiptChainTests(unittest.TestCase):
             first.unlink()
             validation = validate_receipt_chain(root)
             self.assertFalse(validation.valid)
-            self.assertIn(str(first.relative_to(root)), validation.missing_receipts)
+            self.assertIn(first.relative_to(root).as_posix(), validation.missing_receipts)
 
     def test_new_unanchored_receipt_is_reported_as_unexpected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -68,7 +68,7 @@ class ReceiptChainTests(unittest.TestCase):
             second = self._add_receipt(root, 'install', 2)
             validation = validate_receipt_chain(root)
             self.assertFalse(validation.valid)
-            self.assertIn(str(second.relative_to(root)), validation.unexpected_receipts)
+            self.assertIn(second.relative_to(root).as_posix(), validation.unexpected_receipts)
 
     def test_manifest_link_tampering_is_detected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

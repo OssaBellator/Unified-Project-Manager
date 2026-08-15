@@ -35,7 +35,9 @@ def directory_size(path: str | Path, *, seen: InodeSet | None = None) -> tuple[i
                             continue
                         if not entry.is_file(follow_symlinks=False):
                             continue
-                        stat = entry.stat(follow_symlinks=False)
+                        # DirEntry.stat can expose zeroed inode metadata on Windows;
+                        # os.stat(path, ...) preserves the hardlink identity we need.
+                        stat = os.stat(entry.path, follow_symlinks=False)
                     except OSError:
                         continue
                     identity = (stat.st_dev, stat.st_ino)

@@ -25,6 +25,8 @@ from .uv_impact import analyze_uv_impact
 from .yarn_graph import execute_yarn_graph, plan_yarn_graphs
 from .yarn_impact import analyze_yarn_impact
 
+query_native_why = query_native_why_offline
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -83,7 +85,7 @@ def why_command(argv: list[str]) -> int:
     )
 
     try:
-        go_results, go_skips = query_native_why_offline(graph, args.package, selector=args.component)
+        go_results, go_skips = query_native_why(graph, args.package, selector=args.component)
     except ValueError as exc:
         failures.append({"provider": "go-mod-why", "component": selected_key, "error": str(exc), "returncode": None})
         go_results, go_skips = [], []
@@ -117,7 +119,12 @@ def why_command(argv: list[str]) -> int:
             failures.append({"provider": "pnpm-lock-tree", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
             continue
         for impact in analyze_pnpm_impact(result, args.package):
-            answers.append({"provider": "pnpm-lock-tree", "scope": "logical-dependency-tree", **impact.to_dict()})
+            answers.append({
+                "provider": "pnpm-lock-tree",
+                **impact.to_dict(),
+                "dependency_scope": impact.scope,
+                "scope": "logical-dependency-tree",
+            })
 
     for plan in yarn_plans:
         result = execute_yarn_graph(plan)
