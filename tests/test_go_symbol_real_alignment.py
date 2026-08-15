@@ -13,6 +13,9 @@ from support_go_symbol_runtime_fixture import (
     prepare_module_cache,
     write_runtime_fixture,
 )
+from unified_project_manager.go_symbol_build_selection import (
+    compare_go_symbol_build_selection,
+)
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
 from unified_project_manager.go_symbol_preflight import preflight_govulncheck_symbol
 from unified_project_manager.go_symbol_reachability import build_govulncheck_symbol_plan
@@ -76,6 +79,9 @@ class GoSymbolRealAlignmentTests(unittest.TestCase):
                     fixture.vulnerability_db,
                     executable=govulncheck,
                 )
+                planned = compare_go_symbol_build_selection(symbol_plan, observation_plan)
+                self.assertTrue(planned.matches, planned.to_dict())
+
                 preflight = preflight_govulncheck_symbol(symbol_plan)
                 self.assertTrue(preflight.ready, "; ".join(preflight.reasons))
                 symbol_execution = execute_govulncheck_symbol(
