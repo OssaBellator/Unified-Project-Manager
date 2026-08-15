@@ -19,12 +19,15 @@ def cyclonedx_bom_with_providers(
     go_results: list[object] | None = None,
     npm_results: list[object] | None = None,
     cargo_results: list[object] | None = None,
+    uv_results: list[object] | None = None,
 ) -> dict[str, Any]:
     """Enrich a CycloneDX BOM with authoritative provider relationships.
 
     Go selected-module results may add concrete components and relationships.
-    npm/Cargo graph results add relationships only when endpoint identities were
-    already supported by static native provenance (for example a registry PURL).
+    npm/Cargo/uv graph results add relationships only when endpoint identities
+    were already supported by static native provenance. uv marker-conditional or
+    ambiguous fork edges are intentionally not flattened into unconditional
+    CycloneDX dependency edges; omission counts remain explicit as properties.
     """
     bom = cyclonedx_bom_with_native(graph, go_results or [])
     components = {
@@ -103,6 +106,49 @@ def cyclonedx_bom_with_providers(
             target = package_refs.get(getattr(edge, "target_id", ""))
             if source and target and source != target:
                 dependency_sets.setdefault(source, set()).add(target)
+
+    for result in uv_results or []:
+        if not getattr(result, "succeeded", False):
+            continue
+        package_refs: dict[str, str] = {}
+        for package in getattr(result, "packages", []):
+            package_id = getattr(package, "package_id", None)
+            name = getattr(package, "name", None)
+            version = getattr(package, "version", None)
+            source_kind = getattr(package, "source_kind", None)
+            if not all(isinstance(value, str) and value for value in (package_id, name, version)):
+                continue
+            if source_kind != "registry":
+                continue
+            try:
+                purl = purl_for("python", name, version)
+            except ValueError:
+                continue
+            if purl not in components:
+                continue
+            package_refs[package_id] = purl
+            _add_property(components[purl], "upm:uv:identity-kind", "uv-lock-universal")
+
+        conditional_omitted: dict[str, int] = {}
+        ambiguous_omitted: dict[str, int] = {}
+        for edge in getattr(result, "edges", []):
+            source = package_refs.get(getattr(edge, "source_id", ""))
+            target = package_refs.get(getattr(edge, "target_id", ""))
+            if not source:
+                continue
+            if getattr(edge, "ambiguous", False) or not target:
+                ambiguous_omitted[source] = ambiguous_omitted.get(source, 0) + 1
+                continue
+            if getattr(edge, "marker", None):
+                conditional_omitted[source] = conditional_omitted.get(source, 0) + 1
+                continue
+            if source != target:
+                dependency_sets.setdefault(source, set()).add(target)
+
+        for ref, count in conditional_omitted.items():
+            _add_property(components[ref], "upm:uv:conditional-edges-omitted", str(count))
+        for ref, count in ambiguous_omitted.items():
+            _add_property(components[ref], "upm:uv:ambiguous-edges-omitted", str(count))
 
     for entry in components.values():
         properties = entry.get("properties")
