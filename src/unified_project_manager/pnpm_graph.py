@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -157,6 +157,39 @@ def plan_pnpm_graphs(graph: ProjectGraph, selector: str | None = None) -> list[P
         if plan is not None:
             unique.setdefault(plan.cwd.resolve(), plan)
     return [unique[path] for path in sorted(unique, key=str)]
+
+
+def pnpm_provider_component_keys(
+    graph: ProjectGraph,
+    plans: Iterable[PnpmGraphPlan] | None = None,
+) -> set[str]:
+    """Return every component whose relationship evidence is owned by the plans.
+
+    A recursive pnpm workspace plan owns the workspace root and every discovered
+    Node component nested under that exact `pnpm-workspace.yaml` root. This keeps
+    capability/skip accounting aligned with selector planning: a member can be
+    served by the authoritative root even when the member has no manager or lock.
+    """
+    selected = tuple(plans) if plans is not None else tuple(plan_pnpm_graphs(graph))
+    if not selected:
+        return set()
+    by_root = {plan.cwd.resolve(): plan for plan in selected}
+    result: set[str] = set()
+    for component in graph.components:
+        if component.ecosystem != "node":
+            continue
+        component_path = component.path.resolve()
+        direct = by_root.get(component_path)
+        if direct is not None:
+            result.add(component.key(graph.root))
+            continue
+        workspace_root = find_pnpm_workspace_root(component.path, graph.root)
+        if workspace_root is None:
+            continue
+        owner_plan = by_root.get(workspace_root.resolve())
+        if owner_plan is not None and owner_plan.recursive:
+            result.add(component.key(graph.root))
+    return result
 
 
 def _project_ref(component: str, index: int, path: str) -> str:
