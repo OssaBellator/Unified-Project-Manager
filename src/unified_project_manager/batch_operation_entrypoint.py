@@ -11,6 +11,7 @@ from .discovery import discover
 from .doctor import diagnose
 from .operations import execute_plan
 from .pnpm_workspace import PnpmWorkspaceResult, execute_pnpm_workspace
+from .receipt_execution import execute_plans_with_receipt
 from .workspace_batch import (
     WorkspaceBatchError,
     WorkspaceInspectionRequired,
@@ -58,6 +59,16 @@ def _plan(graph, operation: str) -> tuple[list, object, list[PnpmWorkspaceResult
         inspections = _inspect_pnpm_workspaces(graph, required.roots)
         plans, batch = plan_all_operations(graph, operation, pnpm_results=inspections)
     return plans, batch, inspections
+
+
+def _verification_errors(verification: object) -> int:
+    if not isinstance(verification, dict):
+        return 0
+    summary = verification.get("summary")
+    if not isinstance(summary, dict):
+        return 0
+    value = summary.get("errors")
+    return value if isinstance(value, int) else 0
 
 
 def batch_operation_command(operation: str, argv: list[str]) -> int:
@@ -108,20 +119,15 @@ def batch_operation_command(operation: str, argv: list[str]) -> int:
             print("Preview only. Re-run with --apply to execute the workspace-aware batch plan.")
         return 0
 
-    results = []
-    for plan in plans:
-        result = execute_plan(plan, root, verify=False)
-        results.append(result)
-        if result.returncode not in (None, 0):
-            break
-
-    verification = None
-    if (
-        len(results) == len(plans)
-        and all(result.returncode == 0 for result in results)
-        and not args.no_verify
-    ):
-        verification = diagnose(discover(root))
+    execution = execute_plans_with_receipt(
+        graph,
+        operation,
+        plans,
+        lambda plan: execute_plan(plan, root, verify=False),
+        verify_after=None if args.no_verify else lambda after_graph: diagnose(after_graph),
+    )
+    results = list(execution.results)
+    verification = execution.receipt.verification
 
     if args.as_json:
         print(json.dumps({
@@ -129,7 +135,9 @@ def batch_operation_command(operation: str, argv: list[str]) -> int:
             "results": [result.to_dict(root) for result in results],
             "workspace_batch": batch.to_dict(root),
             "workspace_inspections": inspection_rows,
-            "verification": verification.to_dict() if verification else None,
+            "verification": verification,
+            "receipt": execution.receipt.to_dict(),
+            "receipt_path": str(execution.receipt_path),
         }, indent=2, sort_keys=True))
     else:
         for result in results:
@@ -140,17 +148,23 @@ def batch_operation_command(operation: str, argv: list[str]) -> int:
             if result.stderr:
                 print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
         if verification:
+            summary = verification.get("summary", {}) if isinstance(verification, dict) else {}
             print(
-                f"Post-operation health: {verification.health_score}% "
-                f"({verification.errors} errors, {verification.warnings} warnings)"
+                f"Post-operation health: {verification.get('health_score', '?')}% "
+                f"({summary.get('errors', '?')} errors, {summary.get('warnings', '?')} warnings)"
             )
+        try:
+            receipt_text = execution.receipt_path.relative_to(root).as_posix()
+        except ValueError:
+            receipt_text = str(execution.receipt_path)
+        print(f"Mutation receipt: {receipt_text}")
 
     failed = next((result for result in results if result.returncode not in (None, 0)), None)
     if failed:
         return failed.returncode if failed.returncode and 0 < failed.returncode < 126 else 1
     if len(results) != len(plans):
         return 1
-    if verification and verification.errors:
+    if _verification_errors(verification):
         return 1
     return 0
 
