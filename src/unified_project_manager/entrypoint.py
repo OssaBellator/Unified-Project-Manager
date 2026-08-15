@@ -10,8 +10,9 @@ from .cache_entrypoint import dispatch_cache_command
 from .control_entrypoint import dispatch_control_command
 from .discovery import discover
 from .graph_entrypoint import dispatch_graph_command
-from .initializer import InitializationError, execute_initialization, plan_initialization
 from .impact_entrypoint import dispatch_impact_command
+from .impact_provider_entrypoint import dispatch_impact_provider_command
+from .initializer import InitializationError, execute_initialization, plan_initialization
 from .native_entrypoint import dispatch_native_command
 from .registry import RegistryError, registered_paths
 from .storage import project_storage, storage_summary
@@ -255,6 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     cache_result = dispatch_cache_command(arguments)
     if cache_result is not None:
         return cache_result
+    impact_provider_result = dispatch_impact_provider_command(arguments)
+    if impact_provider_result is not None:
+        return impact_provider_result
     impact_result = dispatch_impact_command(arguments)
     if impact_result is not None:
         return impact_result
