@@ -7,13 +7,14 @@ from collections import defaultdict
 from collections.abc import Callable
 
 from .installed import installed_findings
+from .manager_versions import manager_version_findings
 from .models import DoctorReport, Finding, ProjectGraph
 from .state import integrity_findings
 from .toolchains import toolchain_findings
 
 MANAGER_EXECUTABLES = {
     "npm": "npm", "pnpm": "pnpm", "yarn": "yarn", "bun": "bun",
-    "uv": "uv", "pip": "python", "poetry": "poetry", "pdm": "pdm", "cargo": "cargo",
+    "uv": "uv", "pip": "python", "poetry": "poetry", "pdm": "pdm", "cargo": "cargo", "go": "go",
 }
 
 
@@ -118,6 +119,7 @@ def diagnose(
             report.findings.append(Finding("dependency.version-divergence", "info", f"{ecosystem} dependency '{name}' uses different requirements across components: {rendered}."))
 
     report.findings.extend(toolchain_findings(graph, which=which, run=run_version))
+    report.findings.extend(manager_version_findings(graph, which=which, run=run_version))
     report.findings.extend(integrity_findings(graph))
     if deep:
         report.findings.extend(installed_findings(graph))
