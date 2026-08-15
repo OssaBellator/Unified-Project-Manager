@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -13,6 +14,8 @@ from typing import Any
 class GoSymbolSourceObservationError(ValueError):
     """Raised when candidate Go source/build observation cannot be trusted."""
 
+
+MIN_LOADER_PROFILE_GO_MINOR = 21
 
 BUILD_ENV_KEYS = (
     "GOOS",
@@ -74,6 +77,7 @@ class GoSymbolSourceObservationPlan:
             "env_argv": list(self.env_argv),
             "packages_argv": list(self.packages_argv),
             "environment": dict(self.environment),
+            "minimum_loader_profile_go": f"1.{MIN_LOADER_PROFILE_GO_MINOR}",
             "network": "disabled-by-go-environment",
             "project_mutation": "none-planned",
             "non_project_cache_tool_mutation": "possible",
@@ -230,10 +234,17 @@ def build_go_symbol_source_observation_plan(
         packages_argv=(
             executable,
             "list",
+            "-e",
             "-mod=readonly",
-            "-deps",
-            "-compiled",
+            "-deps=true",
+            "-compiled=true",
+            "-test=false",
+            "-export=false",
+            "-find=false",
+            "-buildvcs=false",
+            "-pgo=off",
             "-json",
+            "--",
             "./...",
         ),
         environment={
@@ -264,6 +275,28 @@ def parse_go_symbol_build_environment(text: str) -> GoSymbolBuildEnvironment:
         if isinstance(value.get(key), str)
     )
     return GoSymbolBuildEnvironment(selected)
+
+
+def _go_minor_version(version: str) -> int:
+    """Extract the Go 1.x minor version from release or devel GOVERSION text."""
+    match = re.search(r"(?:^|\s)go1\.(\d+)(?:\D|$)", version)
+    if match is None:
+        raise GoSymbolSourceObservationError(
+            f"Could not interpret GOVERSION for candidate loader profile: {version!r}"
+        )
+    return int(match.group(1))
+
+
+def validate_go_symbol_loader_profile_version(environment: GoSymbolBuildEnvironment) -> None:
+    version = environment.get("GOVERSION")
+    if version is None:
+        raise GoSymbolSourceObservationError("candidate loader profile is missing GOVERSION")
+    minor = _go_minor_version(version)
+    if minor < MIN_LOADER_PROFILE_GO_MINOR:
+        raise GoSymbolSourceObservationError(
+            "candidate govulncheck source/build observation requires Go 1.21+ to mirror "
+            f"the normalized go/packages loader profile; observed {version!r}"
+        )
 
 
 def _decode_json_stream(text: str) -> list[dict[str, Any]]:
@@ -414,6 +447,7 @@ def execute_go_symbol_source_observation(
         )
     try:
         build_environment = parse_go_symbol_build_environment(env_result.stdout or "")
+        validate_go_symbol_loader_profile_version(build_environment)
     except GoSymbolSourceObservationError as exc:
         return GoSymbolSourceObservationExecution(plan, 1, None, "", str(exc))
 
@@ -425,7 +459,7 @@ def execute_go_symbol_source_observation(
         detail = (package_result.stderr or package_result.stdout or "").strip()
         return GoSymbolSourceObservationExecution(
             plan, package_result.returncode, None, detail,
-            f"`go list -mod=readonly -deps -compiled -json ./...` failed with exit code {package_result.returncode}",
+            f"normalized `go list` source observation failed with exit code {package_result.returncode}",
         )
     try:
         packages = parse_go_symbol_package_inputs(package_result.stdout or "")
