@@ -83,9 +83,6 @@ def _matches(component: Component, graph: ProjectGraph, selector: str) -> bool:
 
 
 def _filter_for_component(component: Component, workspace_root: Path) -> str:
-    name = component.metadata.get("name")
-    if isinstance(name, str) and name:
-        return name
     relative = component.path.resolve().relative_to(workspace_root.resolve()).as_posix() or "."
     return "." if relative == "." else f"./{relative}"
 
