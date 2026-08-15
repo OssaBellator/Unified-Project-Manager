@@ -7,8 +7,10 @@ import sys
 from pathlib import Path
 
 from .discovery import discover
+from .fleet_policy import fleet_policy_summary, registered_policy_statuses
 from .native_exec import NativeExecError, execute_native_exec, plan_native_exec
 from .policy import PolicyError, evaluate_policy
+from .registry import RegistryError
 from .status import project_status
 
 
@@ -30,6 +32,14 @@ def _exec_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-verify", action="store_true", help="Skip post-command UPM doctor verification")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("arguments", nargs=argparse.REMAINDER, help="Arguments passed to the authoritative native manager")
+    return parser
+
+
+def _projects_policy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="upm projects policy", description="Evaluate project policy across registered repositories")
+    parser.add_argument("--registry", help="Override the user-level project registry")
+    parser.add_argument("--deep", action="store_true", help="Use deep installed-state doctor findings for warning budgets")
+    parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -95,6 +105,33 @@ def exec_command(argv: list[str]) -> int:
     if result.returncode != 0:
         return result.returncode if 0 < result.returncode < 126 else 1
     return 1 if result.verification and result.verification.errors else 0
+
+
+def projects_policy_command(argv: list[str]) -> int:
+    args = _projects_policy_parser().parse_args(argv)
+    try:
+        statuses = registered_policy_statuses(args.registry, deep=args.deep)
+    except RegistryError as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+    summary = fleet_policy_summary(statuses)
+    if args.as_json:
+        print(json.dumps({"summary": summary, "projects": statuses}, indent=2, sort_keys=True))
+    elif not statuses:
+        print("No projects registered.")
+    else:
+        for item in statuses:
+            symbol = "✓" if item["passed"] else "x"
+            if item.get("error"):
+                print(f"{symbol} {item['path']}: {item['error']}")
+            else:
+                violations = len(item["report"]["violations"])
+                print(f"{symbol} {item['path']}: {violations} policy violation(s)")
+        print(f"Fleet policy: {summary['passed']}/{summary['projects']} passed")
+    return 0 if summary["failed"] == 0 else 1
 
 
 def policy_command(argv: list[str]) -> int:
@@ -172,4 +209,6 @@ def dispatch_control_command(arguments: list[str]) -> int | None:
         return status_command(arguments[1:])
     if arguments[0] == "policy":
         return policy_command(arguments[1:])
+    if len(arguments) >= 2 and arguments[0] == "projects" and arguments[1] == "policy":
+        return projects_policy_command(arguments[2:])
     return None
