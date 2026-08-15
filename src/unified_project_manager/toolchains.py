@@ -8,8 +8,9 @@ from dataclasses import dataclass
 
 from .models import Finding, ProjectGraph
 
-TOOLCHAIN_EXECUTABLES = {"node": "node", "python": "python", "rust": "rustc"}
+TOOLCHAIN_EXECUTABLES = {"go": "go", "node": "node", "python": "python", "rust": "rustc"}
 _VERSION_COMMANDS = {
+    "go": ("go", "version"),
     "node": ("node", "--version"),
     "python": ("python", "--version"),
     "rust": ("rustc", "--version"),
@@ -183,11 +184,19 @@ def satisfies_node(installed: NumericVersion, requirement: str) -> bool | None:
     return None if saw_unknown else False
 
 
-def satisfies_rust(installed: NumericVersion, requirement: str) -> bool | None:
+def satisfies_minimum(installed: NumericVersion, requirement: str) -> bool | None:
     if not re.fullmatch(r"\s*[0-9]+(?:\.[0-9]+){0,2}\s*", requirement):
         return None
     expected = NumericVersion.parse(requirement)
     return None if expected is None else installed.compare(expected) >= 0
+
+
+def satisfies_rust(installed: NumericVersion, requirement: str) -> bool | None:
+    return satisfies_minimum(installed, requirement)
+
+
+def satisfies_go(installed: NumericVersion, requirement: str) -> bool | None:
+    return satisfies_minimum(installed, requirement)
 
 
 def satisfies(name: str, installed: NumericVersion, requirement: str) -> bool | None:
@@ -199,6 +208,8 @@ def satisfies(name: str, installed: NumericVersion, requirement: str) -> bool | 
         return satisfies_python(installed, requirement)
     if name == "rust":
         return satisfies_rust(installed, requirement)
+    if name == "go":
+        return satisfies_go(installed, requirement)
     return None
 
 
