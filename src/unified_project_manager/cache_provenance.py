@@ -50,6 +50,31 @@ def _manager_total(entries: Iterable[GlobalStorageEntry], manager: str) -> int:
     )
 
 
+def _group_identity(manager: str, group: object) -> str:
+    if manager == "cargo":
+        value = getattr(group, "identity", None)
+        if isinstance(value, str) and value:
+            return value
+    value = getattr(group, "purl", None)
+    if isinstance(value, str) and value:
+        return value
+    return "(unknown)"
+
+
+def _identity_conflicts(manager: str, groups: list[object]) -> list[dict[str, Any]]:
+    by_path: dict[str, set[str]] = {}
+    for group in groups:
+        path = getattr(group, "path", None)
+        if not isinstance(path, str) or not path:
+            continue
+        by_path.setdefault(path, set()).add(_group_identity(manager, group))
+    return [
+        {"path": path, "identities": sorted(identities)}
+        for path, identities in sorted(by_path.items())
+        if len(identities) > 1
+    ]
+
+
 def _manager_report(
     manager: str,
     entries: list[GlobalStorageEntry],
@@ -61,7 +86,7 @@ def _manager_report(
         for group in groups
         if isinstance((value := getattr(group, "bytes", None)), int)
     )
-    consistent = attributed <= total
+    conflicts = _identity_conflicts(manager, groups)
     return {
         "manager": manager,
         "scope": "GOMODCACHE" if manager == "go" else "CARGO_HOME registry+git",
@@ -69,7 +94,9 @@ def _manager_report(
         "attributed_bytes": attributed,
         "unattributed_bytes": max(total - attributed, 0),
         "coverage_ratio": (attributed / total) if total else None,
-        "measurement_consistent": consistent,
+        "measurement_consistent": attributed <= total,
+        "identity_consistent": not conflicts,
+        "identity_conflicts": conflicts,
         "groups": [group.to_dict() for group in groups],
         "unattributed_means_unused": False,
         "reclaimable_bytes": None,
@@ -220,7 +247,7 @@ def collect_cache_provenance(
         and not storage_skip_objects
         and not provider_failures
         and not provider_skips
-        and all(report["measurement_consistent"] for report in reports)
+        and all(report["measurement_consistent"] and report["identity_consistent"] for report in reports)
         and (
             ("go" not in selected_managers or go_modcache is not None)
             and ("cargo" not in selected_managers or cargo_home is not None)
