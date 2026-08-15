@@ -2,132 +2,106 @@
 
 These notes capture the current review boundary for `feature/initial-control-plane`. Anything described as follow-up should not be inferred as implemented public capability.
 
-## Public native providers
+## Public boundary
 
 The public native-provider surface remains exactly Go, npm, pnpm, Yarn Berry 2+, Cargo, uv, Poetry, and PDM. Govulncheck is **not** a public provider and has no public CLI route.
 
-## Public evidence boundaries
+Public Go package-import reachability remains report-only, component-scoped, offline (`GOPROXY=off`), ambient-workspace-isolated (`GOWORK=off`), replacement-aware, and explicitly weaker than symbol/runtime/exploitability evidence.
 
-Poetry/PDM remain public certainty-aware structured-lock providers. Mixed-project SBOM topology remains deterministic and topology-only. Go/Cargo physical cache provenance remains observation-only with no reclaim inference.
+## Pre-public Go vulnerable-symbol stack
 
-Go component-scoped relationship execution remains isolated with:
+Five lower layers now exist without public promotion:
+
+1. **Parser/planner** — strict govulncheck v1 source/symbol/local-DB semantics.
+2. **Correlation** — exact component + advisory ID/alias + effective module + exact version; mismatch/ambiguity stays unmatched.
+3. **Preflight** — local inspection only; exact project/DB, executables, and telemetry `off`; no settings mutation.
+4. **Executor** — only launches after exact-plan ready preflight; no shell; offline environment; nonzero is failure; zero is parsed/validated JSON; planned DB and reported DB must match exactly.
+5. **Public-boundary regression** — govulncheck remains absent from the eight-provider registry and public Go metadata retains both isolation guards.
+
+### JSON exit-code boundary
+
+Govulncheck JSON mode returns success even when vulnerabilities are detected. The executor therefore never equates exit code 0 with “clean.”
 
 ```text
-GOPROXY = off
-GOWORK = off
+0      = command completed; inspect validated JSON findings
+nonzero = execution failure; do not accept stdout as valid symbol evidence
 ```
 
-A real local Go 1.23.2 regression confirms `go mod why -m` leaves `go.mod` and `go.sum` byte-for-byte unchanged.
+The mocked executor regressions cover both zero-with-symbol-findings and zero-with-no-findings as valid command executions.
 
-## Public Go package-import reachability
+### Preflight binding
 
-The first public stronger-than-dependency layer remains the explicit Go-only audit enrichment:
-
-```sh
-upm audit . --native --go-import-reachability
-upm audit . --native --go-import-reachability --apply
-upm projects audit --native --go-import-reachability
-upm projects audit --native --go-import-reachability --apply
-```
-
-It is report-only, requires full native scan inventory, uses component-scoped offline `go mod why -m`, and never upgrades package-import evidence into current-build, API/symbol, runtime, or exploitability claims.
-
-Each row preserves the any-build-tag/test-import caveat and Go replacement distinction between logical query module and effective replacement advisory identity. It is not written into persisted OSV evidence.
-
-See `REACHABILITY_EVIDENCE.md`.
-
-## Pre-public Go vulnerable-symbol groundwork
-
-The branch now contains four lower-level govulncheck layers, all still **pre-public**:
-
-1. **Parser/planner** — exact govulncheck protocol `v1.0.0`, explicit source/symbol mode, local `file://` DB, module/package/symbol finding separation, offline execution guards.
-2. **Strict correlation** — symbol findings attach only to existing `go-modules` advisory impacts for the same component when govulncheck OSV/alias identity, effective module, and exact version all agree.
-3. **Read-only preflight** — revalidates project, local DB, Go/govulncheck executables, and `go env GOTELEMETRY`; does not launch govulncheck or change telemetry settings.
-4. **Public-boundary regression** — the provider registry remains the same eight public relationship providers and the public Go provider metadata explicitly retains both `GOPROXY=off` and `GOWORK=off`.
+A preflight result authorizes only the exact project and local DB it inspected. Passing a ready preflight for another project or DB blocks execution before launch.
 
 ### Correlation refusal rules
 
-Alias overlap alone never creates a match. The correlator refuses:
+Alias overlap alone never creates symbol attachment. Wrong provider/component, effective-module mismatch, missing version, exact-version mismatch, or multiple competing UPM advisory identities all fail closed. Replacement correlation uses the effective replacement module identity; import-query identity remains the logical/original module namespace.
 
-- wrong component/provider;
-- effective-module mismatch;
-- missing govulncheck module version;
-- exact-version mismatch;
-- multiple UPM advisory aliases competing for one govulncheck finding.
+### Side-effect boundary
 
-Duplicate exact UPM impacts consolidate dependency paths rather than multiplying the symbol claim.
-
-For Go replacements, govulncheck correlation uses the effective replacement module identity, while `go mod why -m` import reachability continues to query the logical/original module namespace. Those are deliberately separate semantics.
-
-### Offline/preflight boundary
-
-The planned future govulncheck command uses a caller-supplied local vulnerability DB and environment guards:
+The executor remains pre-public and does **not** claim real-runtime project immutability yet. Current output says:
 
 ```text
-GOPROXY = off
-GOWORK = off
-GOSUMDB = off
-GOTOOLCHAIN = local
-telemetry mode required = off
+project mutation = none planned; real-runtime verification still required
+non-project cache/tool mutation = possible
+persisted = false
+runtime reachability = not evaluated
+exploitability = not established
 ```
 
-Preflight is inspection-only and reports `executes_govulncheck=false`, `mutates_telemetry_configuration=false`, and `project_mutation=none` for the preflight itself.
+`GOSUMDB=off` is part of the no-network plan, so symbol evidence is not fresh checksum/integrity verification.
 
-The live environment remains not ready: Go is installed, telemetry is `local`, govulncheck is absent, and no candidate local vulnerability DB was found. UPM did not install a tool, download a DB, or alter telemetry to bypass those blockers.
+### Live blocker
 
-### Still not implemented/public
+No real govulncheck scan is claimed in this environment:
 
-There is still no govulncheck subprocess executor or `--go-symbol-reachability` public flag. No real symbol scan is claimed.
+```text
+govulncheck executable = absent
+Go executable = /usr/local/go/bin/go
+GOTELEMETRY = local
+usable local vulnerability DB = not found
+```
 
-Public promotion remains blocked on:
+No tool install, DB download, or telemetry mutation was performed to bypass those conditions.
 
-- fail-closed executor implementation and real local-DB runtime validation;
+## Remaining promotion gate
+
+Do not add public symbol routing until all remaining pieces are proven atomically:
+
+- real local-DB govulncheck execution after preflight;
 - project-state and non-project cache/tool side-effect characterization;
-- binding strict correlation to real output;
+- strict correlation against real output;
 - shared project/fleet presentation;
-- separate symbol-evidence persistence/freshness semantics;
+- separate symbol persistence/freshness semantics;
 - ordinary status remaining free of hidden symbol analysis.
 
-Because the no-network plan sets `GOSUMDB=off`, future symbol evidence must not be described as fresh dependency-integrity verification.
+## Validation boundary
 
-See `GO_SYMBOL_REACHABILITY.md`.
-
-## Stronger reachability not claimed
-
-UPM still has no public vulnerable-symbol provider, runtime/data-flow provider, or exploitability determination. Dependency paths, Go package-import paths, and pre-public parser/correlation data must not be promoted into those claims.
-
-## Exact advisory evidence contract
-
-Project and fleet advisory flows retain and fingerprint the exact CycloneDX document scanned by OSV-Scanner. Native inventory is not rebuilt after scanning, successful scanner output without the exact scanned BOM is an evidence failure, and ordinary status never reruns scanner/providers merely to manufacture freshness.
-
-## Local validation boundary
-
-No GitHub Actions workflow is part of this project.
-
-Aggregate local driver:
+No GitHub Actions workflow is part of this project. Aggregate local entrypoint:
 
 ```sh
 sh ./scripts/check-all-local-latest.sh
 ```
 
-Focused reconstructed/local validation in this execution environment includes:
+Focused reconstructed/local results include:
 
-- Poetry/PDM reachability hardening: **5/5**;
+- Poetry/PDM reachability: **5/5**;
 - all-provider fleet core: **4/4**;
 - mixed-project SBOM anchors: **5/5**;
-- initial cache physical mapping: **5/5** plus additional Cargo precision checks;
-- cache provenance report semantics: **7/7** plus separate identity-precision checks;
-- Go package-import reachability core: **7/7**;
-- Go relationship execution environment: **3/3**;
-- real local Go 1.23.2 source-query immutability: **1/1**;
-- pre-public govulncheck parser/planner: **8/8**;
-- strict govulncheck-to-UPM symbol correlation: **9/9**;
-- govulncheck preflight: **6/6**.
+- cache physical mapping: **5/5** plus additional precision checks;
+- cache report semantics: **7/7** plus identity checks;
+- Go package-import reachability: **7/7**;
+- Go relationship environment isolation: **3/3**;
+- real local Go import-query immutability: **1/1**;
+- govulncheck parser/planner: **8/8**;
+- strict symbol correlation: **9/9**;
+- govulncheck preflight: **6/6**;
+- fail-closed govulncheck executor: **9/9**.
 
-The full private branch still cannot be materialized and run end-to-end here. The committed local drivers are intended for a normal private checkout and are not represented as fully executed in this constrained runtime.
+The full private checkout still cannot be materialized and run end-to-end here.
 
 ## Merge hygiene
 
-The branch contains many small commits because repository writes were performed through GitHub's contents API during implementation. If/when merge is authorized, a squash merge remains the appropriate default to avoid importing transport history into `main`.
+The branch contains many small commits because repository writes were performed through GitHub's contents API. If/when merge is authorized, squash merge remains the appropriate default.
 
 Do not merge this PR without explicit user authorization.
