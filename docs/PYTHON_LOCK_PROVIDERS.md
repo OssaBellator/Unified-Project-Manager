@@ -79,28 +79,54 @@ Direct conditions are preserved before graph construction:
 
 This prevents optional or environment-qualified direct declarations from becoming unconditional graph reachability.
 
-## Conditional and ambiguous reachability
+## Resolved, conditional, and possible reachability
 
 Marker-bearing and optional edges are graph evidence, not unconditional reachability.
 
-`python_lock_reachability.py` retains, per resolved path:
+`python_lock_reachability.py` retains, per path:
 
 - exact project/package path;
 - accumulated marker expressions;
 - optional-edge count;
-- whether the path is conditional.
+- ambiguity-hop count;
+- certainty: `unconditional`, `conditional`, or `possible`.
 
-A package can have both unconditional and conditional paths.
+A package can have both unconditional and conditional resolved paths. Resolved paths and possible paths are returned separately so ambiguity is never relabeled as ordinary conditional resolution.
 
-Ambiguous references also retain the exact path to the unresolved hop. That evidence includes inherited path conditions plus the ambiguous edge's own marker/optional state. The final path node is rendered as `?dependency-name`, making it explicit that UPM reached an unresolved reference rather than a selected package occurrence.
+When a reachable edge has multiple candidate package ids, UPM records the unresolved hop as `?dependency-name` and then conservatively traverses **every** candidate branch as possible reachability. That possible state propagates through descendants of each candidate. For example:
 
-`python_lock_queries.py` is the command-neutral public query contract used by `why`, project `impact`, and fleet impact. It reports:
+```text
+project:.:python -> parent@1.0.0 -> ?shared -> shared@1.0.0 -> leaf@3.0.0
+```
 
-- resolved packages and all retained paths;
-- unconditional versus conditional match counts;
+means `leaf@3.0.0` is scan-relevant only because one unresolved `shared` candidate could lead to it. It does **not** mean UPM selected `shared@1.0.0` for a concrete Python environment.
+
+The ambiguity record itself retains the path ending at `?shared`, candidate ids, marker/optional conditions, and truncation state. The corresponding `possible_packages` records retain candidate/descendant paths beyond that hop.
+
+This alignment is important: native SBOM already propagates possible inventory through ambiguous candidate subgraphs, so public why/impact/advisory evidence must be able to explain every package intentionally admitted to the scan.
+
+### Path budgets and multiplicity
+
+Traversal is path-sensitive. Distinct parent chains are retained even when they have the same marker/optional state; the provider no longer collapses two valid dependency paths merely because their conditions match.
+
+To keep pathological graphs bounded, reachability has explicit defaults:
+
+- `max_paths_per_package = 64`;
+- `max_search_states = 10000`.
+
+A path-list cap sets `paths_truncated = true`. Reaching the traversal-state budget sets `search_truncated = true` and marks returned package/ambiguity path sets as truncated. UPM surfaces truncation in JSON and text output instead of returning an apparently complete partial explanation.
+
+`python_lock_queries.py` is the command-neutral public query contract used by `why`, project `impact`, fleet impact, and advisory correlation. It reports:
+
+- resolved `packages` and retained paths;
+- separate `possible_packages` reached through ambiguity;
+- unconditional versus conditional resolved match counts;
 - ambiguity records and candidate ids;
+- search/path truncation evidence;
 - whether the answer is uncertain;
 - the explicit interpretation that dependency reachability is not source/API/runtime reachability or exploitability.
+
+`python_lock_render.py` is the shared text renderer for project why, project impact, and fleet impact. This prevents possible-only queries from degrading into an empty provider heading and keeps marker/optional/truncation text aligned with the JSON contract.
 
 ## Public graph behavior
 
@@ -124,15 +150,15 @@ Only reachable registry-backed packages receive PyPI PURLs. Inventory has three 
 
 - **unconditional** — at least one unconditional resolved project path exists;
 - **conditional** — only marker/optional-qualified resolved paths exist;
-- **possible** — the package is a candidate behind a reachable ambiguous lock reference.
+- **possible** — reachability traversed one or more ambiguous references.
 
-Reachable ambiguous candidates remain scan-visible as possible inventory so vulnerability scanning does not miss a candidate merely because UPM refuses to guess manager selection. They are never connected by a fabricated dependency edge.
+Possible state propagates through dependencies of every ambiguous candidate. This is deliberately conservative for vulnerability inventory: if any candidate branch can lead to a registry package, that package can remain scan-visible without being presented as a definitely selected dependency.
 
 Relationship admission is stricter than package admission:
 
 - uniquely resolved + unconditional registry-to-registry edge: may become a dependency relationship;
 - marker-bearing or optional edge: package identities may be present, but the edge is omitted;
-- ambiguous edge: candidates may remain possible inventory, but the edge is omitted;
+- ambiguous edge: candidates/descendants may remain possible inventory, but no fabricated selected edge is emitted;
 - unresolved edge: omitted and distinguished from ambiguity;
 - non-registry endpoint: omitted rather than relabeled as PyPI.
 
@@ -151,15 +177,16 @@ For a resolved vulnerable package, advisory evidence retains:
 - provider/component/package identity;
 - all dependency paths;
 - marker/optional conditions per path;
-- whether an unconditional path exists.
+- whether an unconditional path exists;
+- path/search truncation state.
 
-For a vulnerable package that is only a candidate behind a reachable ambiguous lock reference, advisory evidence reports `possible-via-ambiguous-lock-reference` and retains the conditional path to the `?dependency` hop. This is possible dependency reachability, not proof that the candidate is installed for a specific environment or that vulnerable code is exploitable.
+For a vulnerable package reachable only through ambiguity—whether it is the direct candidate or a transitive descendant—advisory evidence reports `possible-via-ambiguous-lock-reference` and retains the full candidate path including each `?dependency` hop. This is possible dependency reachability, not proof that a candidate is installed for a specific environment or that vulnerable code is exploitable.
 
 Provider failure remains fail-closed: a malformed/unsupported structured lock prevents native advisory inventory rather than falling back to broad static package observations.
 
 ## Provider status
 
-`provider_registry` now advertises `poetry-lock` and `pdm-lock` for components with the corresponding authoritative lockfile. Project/fleet status uses that registry without executing provider parsing or advisory scans merely to display coverage.
+`provider_registry` advertises `poetry-lock` and `pdm-lock` for components with the corresponding authoritative lockfile. Project/fleet status uses that registry without executing provider parsing or advisory scans merely to display coverage.
 
 A configured provider can still fail when explicitly executed if the lock contains semantics UPM intentionally does not model. Coverage means a provider is configured for that manager/state, not that arbitrary future lock syntax will be guessed successfully.
 
@@ -187,8 +214,12 @@ sh ./scripts/test-python-lock-sbom-uncertainty.sh
 sh ./scripts/test-python-lock-native-inventory.sh
 ```
 
-The repository regressions cover provider ids/scope/coverage, supported lock-contract validation, Poetry and PDM relationship parsing, direct optional/marker/multi-constraint conditions, conditional and ambiguity path evidence, reachable-only CycloneDX/SPDX, possible ambiguous scan inventory, exact-BOM advisory evidence reuse, and public graph/why/impact/SBOM/advisory routing.
+The validated slice also includes `test_python_lock_render.py` and the path-multiplicity regression.
 
-In the constrained implementation runtime, a reconstructed core slice covering resolved conditional reachability, condition-preserving ambiguity, and Poetry/PDM OSV path correlation passed **3/3**. The full private branch still cannot be materialized here, so the new end-to-end shell driver is committed for a normal local clone and is not misrepresented as having run in this environment.
+The repository regressions cover provider ids/scope/coverage, supported lock-contract validation, Poetry and PDM relationship parsing, direct optional/marker/multi-constraint conditions, distinct path multiplicity, explicit path/search budgets, conditional and ambiguity evidence, transitive possible branches, reachable-only CycloneDX/SPDX, possible scan inventory, exact-BOM advisory evidence reuse, text rendering, and public graph/why/impact/SBOM/advisory routing.
+
+In the constrained implementation runtime, the current reconstructed reachability rewrite passed **5/5** focused tests covering resolved conditional paths, direct ambiguity, transitive possible reachability, distinct same-condition path multiplicity, path caps, and search-state truncation. A separate reconstructed query/advisory check confirmed that a transitive package below an ambiguous candidate is reported as `possible-via-ambiguous-lock-reference` with its full `?dependency` path. The shared text-renderer smoke check also passed.
+
+The full private branch still cannot be materialized here, so the committed end-to-end shell drivers are for a normal local clone and are not misrepresented as having run in this environment.
 
 Validation is local-only; no GitHub Actions workflow is required or used.
