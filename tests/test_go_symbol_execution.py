@@ -38,16 +38,28 @@ class GoSymbolExecutionTests(unittest.TestCase):
         )
 
     def _stream(self, plan, *, symbol=True, database_uri=None):
-        messages = [{
-            "config": {
-                "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
-                "scanner_name": "govulncheck",
-                "scanner_version": "v1.6.0",
-                "db": database_uri or plan.database_uri,
-                "scan_level": "symbol",
-                "scan_mode": "source",
-            }
-        }]
+        messages = [
+            {
+                "config": {
+                    "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                    "scanner_name": "govulncheck",
+                    "scanner_version": "v1.6.0",
+                    "db": database_uri or plan.database_uri,
+                    "scan_level": "symbol",
+                    "scan_mode": "source",
+                }
+            },
+            {
+                "SBOM": {
+                    "go_version": "go1.24.0",
+                    "modules": [
+                        {"path": "example.com/app"},
+                        {"path": "example.com/dep", "version": "v1.2.3"},
+                    ],
+                    "roots": ["example.com/app"],
+                }
+            },
+        ]
         if symbol:
             messages.extend([
                 {"osv": {"id": "GO-2026-0001", "aliases": ["CVE-2026-1234"]}},
@@ -82,6 +94,8 @@ class GoSymbolExecutionTests(unittest.TestCase):
             self.assertEqual(result.vulnerability_records, 1)
             self.assertEqual(result.stderr, "warning")
             self.assertIsNone(result.error)
+            self.assertIsNotNone(result.report.sbom)
+            self.assertTrue(result.report.sbom.has_module("example.com/dep", "v1.2.3"))
             self.assertEqual(len(calls), 1)
             argv, kwargs = calls[0]
             self.assertEqual(argv[0], "/tools/govulncheck")
@@ -110,6 +124,7 @@ class GoSymbolExecutionTests(unittest.TestCase):
             self.assertTrue(result.succeeded)
             self.assertEqual(result.symbol_findings, 0)
             self.assertEqual(result.vulnerability_records, 0)
+            self.assertEqual(result.report.sbom.roots, ("example.com/app",))
 
     def test_nonzero_exit_is_execution_failure_and_is_not_parsed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -141,6 +156,25 @@ class GoSymbolExecutionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIsNone(result.report)
             self.assertIn("JSON evidence is invalid", result.error or "")
+
+    def test_zero_exit_missing_scan_sbom_is_invalid_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            plan = self._plan(Path(temporary))
+            stream = json.dumps({
+                "config": {
+                    "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                    "db": plan.database_uri,
+                    "scan_level": "symbol",
+                    "scan_mode": "source",
+                }
+            })
+            result = execute_govulncheck_symbol(
+                plan,
+                preflight=self._preflight(plan),
+                run=lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, stream, ""),
+            )
+            self.assertFalse(result.succeeded)
+            self.assertIn("missing its scan SBOM", result.error or "")
 
     def test_reported_database_must_equal_planned_local_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
