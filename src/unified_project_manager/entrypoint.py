@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .discovery import discover
 from .initializer import InitializationError, execute_initialization, plan_initialization
+from .native_entrypoint import dispatch_native_command
 from .registry import RegistryError, registered_paths
 from .storage import project_storage, storage_summary
 from .tasks import TaskError, execute_task, list_native_tasks, load_tasks, plan_native_task, plan_task
@@ -236,6 +237,9 @@ def _is_go_init(arguments: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    native_result = dispatch_native_command(arguments)
+    if native_result is not None:
+        return native_result
     if arguments and arguments[0] == "storage":
         return _storage(arguments[1:])
     if arguments and arguments[0] == "tasks":
