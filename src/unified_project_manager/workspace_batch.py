@@ -6,6 +6,7 @@ from typing import Any, Iterable, Literal
 
 from .models import ProjectGraph
 from .pnpm_workspace import PnpmWorkspacePlan, PnpmWorkspaceResult, plan_pnpm_workspace
+from .uv_workspace_operations import UvWorkspaceOperationError, plan_uv_workspace_operations
 from .workspace_operations import WorkspaceOperationError, plan_node_workspace_operations
 
 WorkspaceBatchOperation = Literal["install", "sync"]
@@ -184,6 +185,32 @@ def plan_workspace_batch(
             owner=owner,
             member_components=members,
         ))
+
+    # uv workspaces share one authoritative lock and sync state. Collapse every
+    # proven workspace to one root operation rather than independently syncing
+    # member pyprojects against state they do not own.
+    try:
+        uv_plans, uv_consumed = plan_uv_workspace_operations(graph, operation)
+    except UvWorkspaceOperationError as exc:
+        raise WorkspaceBatchError(str(exc)) from exc
+    overlap = consumed & uv_consumed
+    if overlap:
+        raise WorkspaceBatchError(
+            "Overlapping workspace ownership detected: " + ", ".join(sorted(overlap))
+        )
+    consumed.update(uv_consumed)
+    plans.extend(
+        WorkspaceBatchPlan(
+            operation=operation,
+            workspace_kind="uv",
+            manager="uv",
+            cwd=plan.cwd,
+            argv=plan.argv,
+            owner=plan.component,
+            member_components=plan.member_components,
+        )
+        for plan in uv_plans
+    )
 
     all_keys = {component.key(graph.root) for component in graph.components}
     standalone = tuple(sorted(all_keys - consumed))
