@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .discovery import discover
 from .initializer import InitializationError, execute_initialization, plan_initialization
+from .impact_entrypoint import dispatch_impact_command
 from .native_entrypoint import dispatch_native_command
 from .registry import RegistryError, registered_paths
 from .storage import project_storage, storage_summary
@@ -237,6 +238,9 @@ def _is_go_init(arguments: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    impact_result = dispatch_impact_command(arguments)
+    if impact_result is not None:
+        return impact_result
     native_result = dispatch_native_command(arguments)
     if native_result is not None:
         return native_result
