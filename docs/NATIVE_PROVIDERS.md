@@ -9,6 +9,7 @@ UPM intentionally does not pretend every ecosystem exposes the same dependency g
 | Go | `go-modules` | selected module build list + module requirement graph | **offline/cache-only by default** (`GOPROXY=off`) | project `go.mod` / `go.sum` are read-only for graph queries |
 | npm | `npm-lock-tree` | npm lock-only logical tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
 | pnpm | `pnpm-lock-tree` | pnpm lock-only logical tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
+| Yarn Berry 2+ | `yarn-berry` | exact descriptor/locator graph from native `yarn info` plus reachable-only SBOM identity | **offline by provider configuration** (`YARN_ENABLE_NETWORK=0`) | install state is redirected; cache is immutable |
 | Cargo | `cargo-metadata` | resolved package graph from Cargo metadata | **offline by default** (`--offline`) | lockfile is fixed by `--locked` |
 | uv | `uv-lock` | static universal project/workspace graph from authoritative shared `uv.lock` | none | none |
 
@@ -78,6 +79,31 @@ pnpm sbom --sbom-format spdx --lockfile-only
 
 For a whole workspace, UPM uses `--split` and ingests pnpm's NDJSON documents. For one selected member, UPM uses an exact root-relative `--filter` path. Native PURLs—including named-registry qualifiers—are preserved when documents are merged into the cross-ecosystem BOM.
 
+## Yarn Berry 2+
+
+Relationship queries use Yarn's native stored-resolution surface:
+
+```text
+yarn info --all --recursive --virtuals --json
+```
+
+For an unscoped workspace query, UPM runs one root-owned `--all` query. Selecting a workspace member retains the authoritative root project while running the query from that member's cwd, so Berry applies the member's workspace context without inventing a second lock owner.
+
+The provider preserves exact descriptors, locators, virtual package identity, devirtualized package relationships, and workspace locators instead of flattening them into name/version-only nodes. Yarn Classic is not claimed by this provider; the declared project manager and the resolved runtime must both be Yarn 2 or newer.
+
+Execution is deliberately fail-closed and project-state-preserving:
+
+- `YARN_ENABLE_NETWORK=0` refuses Berry network access;
+- install state is redirected to a temporary path outside the project;
+- `YARN_ENABLE_IMMUTABLE_CACHE=1` prevents supported cache mutation;
+- telemetry is disabled;
+- the provider does **not** force `YARN_ENABLE_HARDENED_MODE`, because hardened mode is not part of UPM's safety contract and forcing that optional setting can reject otherwise-supported older Berry runtimes;
+- a runtime that cannot reconstruct the graph under these constraints fails explicitly rather than retrying online.
+
+These are package-manager configuration guarantees, not an OS sandbox for arbitrary project-defined Yarn plugins. The fuller trust boundary is documented in `YARN_PROVIDER_TRUST_BOUNDARY.md`.
+
+SBOM/advisory inventory is reachable-only: a locator returned by `yarn info --all --recursive` is not promoted merely because it exists in stored resolution data. UPM starts from active workspace/project roots and retains only reachable locators. npm-protocol resolutions can become npm PURLs where provenance is explicit; workspace, file, git, patch, and other non-registry resolutions remain non-registry identities.
+
 ## Cargo
 
 The Cargo provider uses:
@@ -125,6 +151,7 @@ Workspace-aware providers may serve more discovered components than the provider
 - unscoped npm workspace root plans own all declared discovered members;
 - scoped npm workspace plans own only root context plus the selected member;
 - recursive pnpm plans own the pnpm workspace members they serve;
+- unscoped Yarn Berry plans own the declared discovered workspace members they serve, while scoped plans retain root context plus the selected member;
 - Cargo workspace plans own only manifest-proven members;
 - unscoped uv workspace plans own all proven members, while scoped plans own only root context plus the selected member.
 
@@ -138,6 +165,7 @@ Provider scopes remain deliberately distinct:
 - Go impact: `module-requirement`;
 - npm: `logical-dependency-tree`;
 - pnpm: `logical-dependency-tree` with workspace-project occurrence identity;
+- Yarn Berry: exact descriptor/locator resolution reachability with workspace/virtual identity;
 - Cargo: `locked-offline-dependency-graph`;
 - uv: `universal-lock-dependency-graph`, scoped to a selected workspace project when requested.
 
@@ -150,6 +178,7 @@ Package identity and relationship evidence remain provenance-aware.
 - Go selected-module queries may add selected module identities and edges.
 - npm uses npm's native lockfile-only CycloneDX/SPDX package identity and relationships.
 - pnpm uses pnpm's native lockfile-only CycloneDX/SPDX identity; UPM preserves native PURLs and registry qualifiers.
+- Yarn Berry contributes only reachable stored resolutions; npm-protocol locators may become npm PURLs while workspace/file/git/patch/etc. remain non-registry.
 - Cargo provider edges are admitted only where static lock provenance supports registry endpoint identity.
 - uv may add registry package identities directly from authoritative `uv.lock`, but relationships are admitted only when the universal-lock reference is unambiguous and unconditional for the target representation.
 - local/path/workspace packages are never relabeled as registry packages just to make a graph look complete.
