@@ -28,24 +28,45 @@ class CargoCacheUse:
 class CargoCacheGroup:
     path: str
     cache_kind: str
-    identity: str
-    purl: str | None
-    name: str
-    version: str
+    identities: tuple[str, ...]
+    purls: tuple[str, ...]
+    packages: tuple[tuple[str, str], ...]
     projects: int
     components: int
     bytes: int | None
     files: int | None
     uses: tuple[CargoCacheUse, ...]
 
+    @property
+    def identity(self) -> str | None:
+        return self.identities[0] if len(self.identities) == 1 else None
+
+    @property
+    def purl(self) -> str | None:
+        return self.purls[0] if len(self.purls) == 1 and len(self.identities) == 1 else None
+
+    @property
+    def name(self) -> str | None:
+        return self.packages[0][0] if len(self.packages) == 1 else None
+
+    @property
+    def version(self) -> str | None:
+        return self.packages[0][1] if len(self.packages) == 1 else None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             'path': self.path,
             'cache_kind': self.cache_kind,
             'identity': self.identity,
+            'identities': list(self.identities),
             'purl': self.purl,
+            'purls': list(self.purls),
             'name': self.name,
             'version': self.version,
+            'packages': [
+                {'name': name, 'version': version}
+                for name, version in self.packages
+            ],
             'projects': self.projects,
             'components': self.components,
             'bytes': self.bytes,
@@ -57,6 +78,41 @@ class CargoCacheGroup:
         }
 
 
+def _source_object_root(
+    crate_dir: Path,
+    registry_source_root: Path,
+    git_checkout_root: Path,
+) -> tuple[str, Path] | None:
+    """Return the physical Cargo source object containing a package manifest.
+
+    Cargo registry source objects have the shape
+    ``registry/src/<index>/<crate-version>/...``. Git worktrees have the shape
+    ``git/checkouts/<repo>/<revision>/...``. Attribution is performed at those
+    object roots so nested workspace crates do not recursively claim overlapping
+    byte ranges as independent physical cache objects.
+    """
+
+    for kind, boundary in (
+        ('registry-source', registry_source_root),
+        ('git-checkout', git_checkout_root),
+    ):
+        try:
+            relative = crate_dir.relative_to(boundary)
+        except ValueError:
+            continue
+        if len(relative.parts) < 2:
+            return None
+        object_root = (boundary / relative.parts[0] / relative.parts[1]).resolve()
+        try:
+            object_root.relative_to(boundary)
+        except ValueError:
+            return None
+        if not object_root.is_dir() or object_root.is_symlink():
+            return None
+        return kind, object_root
+    return None
+
+
 def cargo_cache_uses(
     project: str | Path,
     cargo_results: Iterable[object],
@@ -64,10 +120,6 @@ def cargo_cache_uses(
 ) -> tuple[list[CargoCacheUse], list[dict[str, str]]]:
     project_root = Path(project).expanduser().resolve()
     home = Path(cargo_home).expanduser().resolve()
-    # Cargo metadata's manifest_path is source/check-out evidence. Restrict
-    # attribution to the exact CARGO_HOME trees that contain unpacked registry
-    # sources and git worktrees; registry index/cache metadata and git db state
-    # are not a package source directory merely because they live nearby.
     registry_source_root = (home / 'registry' / 'src').resolve()
     git_checkout_root = (home / 'git' / 'checkouts').resolve()
     uses: list[CargoCacheUse] = []
@@ -97,32 +149,22 @@ def cargo_cache_uses(
                 })
                 continue
             crate_dir = Path(manifest_path).expanduser().resolve().parent
-            cache_kind = None
-            for kind, boundary in (
-                ('registry-source', registry_source_root),
-                ('git-checkout', git_checkout_root),
-            ):
-                try:
-                    crate_dir.relative_to(boundary)
-                except ValueError:
-                    continue
-                cache_kind = kind
-                break
-            if cache_kind is None:
-                # Workspace/path dependencies, registry index/cache metadata,
-                # Cargo git db state, and external checkout locations are not
-                # package-source ownership evidence.
+            source_object = _source_object_root(crate_dir, registry_source_root, git_checkout_root)
+            if source_object is None:
                 skipped.append({
                     'component': component,
                     'package': name,
                     'version': version,
-                    'reason': 'package source directory is outside CARGO_HOME registry/src and git/checkouts roots',
+                    'reason': (
+                        'package source is not inside a canonical CARGO_HOME '
+                        'registry/src/<index>/<object> or git/checkouts/<repo>/<revision> object'
+                    ),
                 })
                 continue
+            cache_kind, physical_root = source_object
             purl = None
             if isinstance(source, str) and source.startswith('registry+'):
                 purl = purl_for('rust', name, version)
-            identity = purl or package_id
             uses.append(CargoCacheUse(
                 project=str(project_root),
                 component=component,
@@ -132,7 +174,7 @@ def cargo_cache_uses(
                 purl=purl,
                 source=source if isinstance(source, str) else None,
                 cache_kind=cache_kind,
-                path=str(crate_dir),
+                path=str(physical_root),
             ))
 
     return sorted(uses, key=lambda item: (item.path, item.project, item.component, item.package_id)), skipped
@@ -145,24 +187,24 @@ def aggregate_cargo_cache_uses(
 ) -> list[CargoCacheGroup]:
     grouped: dict[tuple[str, str], list[CargoCacheUse]] = {}
     for use in uses:
-        identity = use.purl or use.package_id
-        grouped.setdefault((use.path, identity), []).append(use)
+        grouped.setdefault((use.path, use.cache_kind), []).append(use)
 
     groups: list[CargoCacheGroup] = []
     seen: set[tuple[int, int]] = set()
-    for (path_text, identity), occurrences in sorted(grouped.items()):
+    for (path_text, cache_kind), occurrences in sorted(grouped.items()):
         path = Path(path_text)
         size = files = None
         if measure and path.is_dir() and not path.is_symlink():
             size, files = directory_size(path, seen=seen)
-        first = occurrences[0]
+        identities = tuple(sorted({use.purl or use.package_id for use in occurrences}))
+        purls = tuple(sorted({use.purl for use in occurrences if use.purl}))
+        packages = tuple(sorted({(use.name, use.version) for use in occurrences}))
         groups.append(CargoCacheGroup(
             path=path_text,
-            cache_kind=first.cache_kind,
-            identity=identity,
-            purl=first.purl,
-            name=first.name,
-            version=first.version,
+            cache_kind=cache_kind,
+            identities=identities,
+            purls=purls,
+            packages=packages,
             projects=len({item.project for item in occurrences}),
             components=len({(item.project, item.component) for item in occurrences}),
             bytes=size,
