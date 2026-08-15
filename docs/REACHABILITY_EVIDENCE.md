@@ -31,7 +31,7 @@ upm projects audit --native --go-import-reachability
 upm projects audit --native --go-import-reachability --apply
 ```
 
-After an applied native scan reports a vulnerable Go module already correlated to UPM's retained native dependency inventory, UPM executes `go mod why -m <module>` through the existing `GOPROXY=off` wrapper.
+After an applied native scan reports a vulnerable Go module already correlated to UPM's retained native dependency inventory, UPM executes `go mod why -m <module>` through the component-scoped Go relationship boundary.
 
 Go defines `go mod why -m` as a query over the **package import graph**, finding a path to any package in the target module rather than querying the module requirement graph.
 
@@ -123,7 +123,20 @@ That requirement ensures UPM only runs the stronger import query for Go advisory
 
 Preview remains non-executing. The Go import query runs only after an applied native scan, and only for vulnerable Go module impacts. Multiple advisories for the same component/logical-module pair share one import query.
 
-The query uses UPM's offline Go wrapper (`GOPROXY=off`). It is an explicit audit enrichment, not something ordinary `status` or policy evaluation runs silently.
+The query uses the same component-scoped Go relationship environment as native graph/why execution:
+
+```text
+GOPROXY = off
+GOWORK = off
+```
+
+`GOPROXY=off` prevents module-proxy fallback. `GOWORK=off` prevents an ambient parent `go.work` from changing the selected module's graph semantics.
+
+The Go command implementation for `go mod why` sets `ExplicitWriteGoMod`, which suppresses automatic `go.mod` and `go.sum` updates during module/package loading unless the command later explicitly writes them. `go mod why` does not perform that explicit write. UPM therefore treats this source query as project-state read-only.
+
+A local regression with an installed Go tool verifies this contract against an isolated module with a local replacement: the command must succeed while `go.mod` and `go.sum` remain byte-for-byte unchanged. The regression skips if Go is unavailable and never downloads a toolchain.
+
+This is an explicit audit enrichment, not something ordinary `status` or policy evaluation runs silently.
 
 ## Persistence boundary
 
