@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .cache_coverage import cache_integrity_coverage
 from .doctor import diagnose
 from .models import ProjectGraph
 from .policy import evaluate_policy
@@ -46,6 +47,9 @@ def project_status(
                 "skipped_components": len(verification_skips),
                 "total_components": len(graph.components),
             },
+        },
+        "cache_integrity": {
+            "coverage": [item.to_dict() for item in cache_integrity_coverage(graph)],
         },
     }
     if include_storage:
