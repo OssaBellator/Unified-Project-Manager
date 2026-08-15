@@ -81,7 +81,7 @@ class OperationTests(unittest.TestCase):
             with self.assertRaisesRegex(OperationError, "without a native lockfile"):
                 plan_operation(discover(root), "sync")
 
-    def test_execute_plan_captures_result_and_verifies(self) -> None:
+    def test_execute_plan_uses_exact_resolved_manager_and_verifies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
@@ -90,14 +90,36 @@ class OperationTests(unittest.TestCase):
             calls = []
 
             def fake_run(argv, **kwargs):
-                calls.append((argv, kwargs["cwd"]))
+                calls.append((argv, kwargs))
                 return subprocess.CompletedProcess(argv, 0, "installed\n", "")
 
-            result = execute_plan(plan, root, run=fake_run, which=lambda _name: "/bin/tool")
-            self.assertEqual(calls[0][0], ["npm", "ci"])
+            result = execute_plan(plan, root, run=fake_run, which=lambda _name: "/bin/npm-exact")
+            self.assertEqual(calls[0][0], ["/bin/npm-exact", "ci"])
+            self.assertEqual(calls[0][1]["cwd"], root)
+            self.assertNotIn("env", calls[0][1])
             self.assertEqual(result.stdout, "installed\n")
             self.assertTrue(result.succeeded)
             self.assertIsNotNone(result.verification)
+
+    def test_go_component_operation_disables_ambient_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            module = root / "module"
+            module.mkdir()
+            (root / "go.work").write_text("go 1.24\nuse ./module\n", encoding="utf-8")
+            (module / "go.mod").write_text("module example.com/module\ngo 1.24\n", encoding="utf-8")
+            plan = plan_operation(discover(root), "add", selector="module", packages=("example.com/dep@v1.0.0",))
+            calls = []
+
+            def fake_run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            result = execute_plan(plan, root, run=fake_run, which=lambda _name: "/toolchains/go", verify=False)
+
+            self.assertTrue(result.succeeded)
+            self.assertEqual(calls[0][0], ["/toolchains/go", "get", "example.com/dep@v1.0.0"])
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], "off")
 
     def test_render_command_shell_quotes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
