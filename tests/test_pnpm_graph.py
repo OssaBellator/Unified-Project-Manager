@@ -85,10 +85,11 @@ class PnpmGraphTests(unittest.TestCase):
             child = analyze_pnpm_impact(result, "child")
 
             self.assertEqual(len(by_name), 1)
-            self.assertEqual(by_name[0], by_alias[0])
+            self.assertEqual(by_name[0].ref, by_alias[0].ref)
+            self.assertEqual(by_name[0].root_path, by_alias[0].root_path)
             self.assertEqual(by_name[0].root_path, ("root@1.0.0", "actual-a@1.2.3"))
-            self.assertEqual({impact.project for impact in child}, {".", "packages/app"})
-            nested = next(impact for impact in child if impact.project == ".")
+            self.assertEqual({impact.workspace_project for impact in child}, {".", "packages/app"})
+            nested = next(impact for impact in child if impact.workspace_project == ".")
             self.assertEqual(nested.root_path, ("root@1.0.0", "actual-a@1.2.3", "child@2.0.0"))
             self.assertTrue(nested.deduped)
 
