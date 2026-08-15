@@ -162,6 +162,48 @@ class GoImportReachabilityAuditTests(unittest.TestCase):
             self.assertEqual(source["exploitability"], "not-established")
             self.assertFalse(source["persisted"])
 
+    def test_applied_fleet_audit_keeps_import_reachability_project_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            registry = root / "projects.json"
+            registry.write_text(json.dumps({"version": 1, "projects": [str(project)]}), encoding="utf-8")
+            plan = self._plan(project)
+            result = self._vulnerable_result(plan)
+            output = io.StringIO()
+            with (
+                patch("unified_project_manager.fleet_security_entrypoint.plan_security_scan", return_value=plan),
+                patch("unified_project_manager.fleet_security_entrypoint.execute_security_scan", return_value=result),
+                patch("unified_project_manager.fleet_security_entrypoint._dependency_impacts", return_value=([self._impact()], None)),
+                patch(
+                    "unified_project_manager.fleet_security_entrypoint.collect_go_import_reachability",
+                    return_value=[_ImportEvidence()],
+                ) as collect,
+                patch("unified_project_manager.fleet_security_entrypoint.build_audit_evidence", return_value=_Evidence()),
+                patch(
+                    "unified_project_manager.fleet_security_entrypoint.write_audit_evidence",
+                    return_value=project / ".upm" / "audits" / "osv.json",
+                ),
+                redirect_stdout(output),
+            ):
+                code = main([
+                    "projects", "audit", "--registry", str(registry), "--native",
+                    "--go-import-reachability", "--apply", "--json",
+                ])
+
+            self.assertEqual(code, 1)
+            collect.assert_called_once()
+            data = json.loads(output.getvalue())
+            self.assertEqual(data["summary"]["go_import_reachability_observations"], 1)
+            self.assertEqual(data["summary"]["go_import_reachability_query_failures"], 0)
+            self.assertEqual(len(data["projects"]), 1)
+            self.assertEqual(data["projects"][0]["project"], str(project))
+            source = data["projects"][0]["go_import_reachability"][0]
+            self.assertEqual(source["component"], ".:go")
+            self.assertEqual(source["state"], "package-import-reachable")
+            self.assertFalse(source["persisted"])
+
 
 if __name__ == "__main__":
     unittest.main()
