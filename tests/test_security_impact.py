@@ -8,6 +8,7 @@ from pathlib import Path
 from unified_project_manager.cargo_graph import CargoGraphPlan, CargoGraphResult, parse_cargo_metadata
 from unified_project_manager.native_graph import NativeGraphPlan, NativeGraphResult, NativeModule, NativeRequirementEdge
 from unified_project_manager.npm_graph import NpmGraphPlan, NpmGraphResult, parse_npm_ls
+from unified_project_manager.pnpm_graph import PnpmGraphPlan, PnpmGraphResult, parse_pnpm_list
 from unified_project_manager.security_impact import correlate_advisory_impact
 from unified_project_manager.uv_graph import parse_uv_lock
 
@@ -38,6 +39,32 @@ class SecurityImpactTests(unittest.TestCase):
                     ("app@1.0.0", "b@1.0.0", "foo@2.0.0"),
                 },
             )
+
+    def test_pnpm_advisory_preserves_workspace_project_and_alias_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree = json.dumps([{
+                "name":"app","version":"1.0.0","path":str(root),
+                "dependencies":{
+                    "foo-alias":{
+                        "from":"foo","version":"2.0.0","deduped":True,
+                    }
+                },
+            }])
+            projects, packages, edges = parse_pnpm_list(tree, ".:node", root)
+            pnpm = PnpmGraphResult(PnpmGraphPlan(".:node", root), projects, packages, edges, 0)
+            report = {"results":[{"packages":[{
+                "package":{"name":"foo","version":"2.0.0","ecosystem":"npm"},
+                "vulnerabilities":[{"id":"GHSA-pnpm"}],
+            }]}]}
+
+            impact = correlate_advisory_impact(report, pnpm_results=[pnpm])[0]
+
+            self.assertEqual(impact.provider, "pnpm-lock-tree")
+            self.assertEqual(impact.paths, (("app@1.0.0", "foo@2.0.0"),))
+            self.assertEqual(impact.evidence["alias"], "foo-alias")
+            self.assertEqual(impact.evidence["workspace_project"], ".")
+            self.assertTrue(impact.evidence["deduped"])
 
     def test_cargo_advisory_keeps_crate_version_and_workspace_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
