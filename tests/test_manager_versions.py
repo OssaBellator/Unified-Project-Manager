@@ -10,7 +10,7 @@ from unified_project_manager.models import Component, ProjectGraph
 
 
 class ManagerVersionTests(unittest.TestCase):
-    def test_mismatch_is_reported_and_version_read_once(self) -> None:
+    def test_mismatch_is_reported_version_read_once_and_resolved_path_is_executed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             calls = []
@@ -23,8 +23,8 @@ class ManagerVersionTests(unittest.TestCase):
                 calls.append(argv)
                 return subprocess.CompletedProcess(argv, 0, "10.2.1\n", "")
 
-            findings = manager_version_findings(graph, which=lambda _name: "/bin/pnpm", run=run)
-            self.assertEqual(len(calls), 1)
+            findings = manager_version_findings(graph, which=lambda _name: "/opt/toolchains/pnpm", run=run)
+            self.assertEqual(calls, [["/opt/toolchains/pnpm", "--version"]])
             self.assertEqual([finding.component for finding in findings if finding.code == "manager.version-mismatch"], ["b:node"])
 
     def test_matching_exact_version_has_no_finding(self) -> None:
