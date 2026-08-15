@@ -26,6 +26,33 @@ def _append_list(target: list[Dependency], values: object, scope: str) -> None:
             target.append(dependency)
 
 
+def _poetry_manifest_requirement(value: object) -> tuple[str | None, bool]:
+    """Preserve Poetry direct dependency conditions needed by lock reachability.
+
+    The normalized dependency model has one requirement string plus a scope. For
+    Poetry table constraints, keep the version text and append any condition text
+    after a semicolon so the structured-lock reachability layer can retain that
+    the project edge is conditional. Source/extras details remain authoritative
+    in Poetry's own manifest/lock and are not re-resolved here.
+    """
+
+    if isinstance(value, str):
+        return value or None, False
+    if not isinstance(value, dict):
+        return None, False
+
+    version = value.get("version") if isinstance(value.get("version"), str) else None
+    conditions = [
+        condition
+        for key in ("markers", "python", "platform")
+        if isinstance((condition := value.get(key)), str) and condition.strip()
+    ]
+    rendered = version or ""
+    if conditions:
+        rendered = f"{rendered}; {' && '.join(conditions)}"
+    return rendered or None, bool(value.get("optional"))
+
+
 def _render_source(source: object) -> str | None:
     if isinstance(source, str):
         return source
@@ -97,17 +124,23 @@ class PythonAdapter(Adapter):
                                     if isinstance(requirement, str) and toolchains[0].requirement is None:
                                         toolchains = [ToolchainRequirement("python", requirement)]
                                     continue
-                                rendered = requirement if isinstance(requirement, str) else None
-                                dependencies.append(Dependency(str(name), rendered, "runtime"))
+                                rendered, optional_dependency = _poetry_manifest_requirement(requirement)
+                                scope = "optional:poetry" if optional_dependency else "runtime"
+                                dependencies.append(Dependency(str(name), rendered, scope))
                         poetry_groups = poetry.get("group")
                         if isinstance(poetry_groups, dict):
                             for group, group_data in poetry_groups.items():
                                 if not isinstance(group_data, dict): continue
                                 group_deps = group_data.get("dependencies")
                                 if not isinstance(group_deps, dict): continue
+                                group_optional = bool(group_data.get("optional"))
                                 for name, requirement in group_deps.items():
-                                    rendered = requirement if isinstance(requirement, str) else None
-                                    dependencies.append(Dependency(str(name), rendered, f"development:{group}"))
+                                    rendered, optional_dependency = _poetry_manifest_requirement(requirement)
+                                    if group_optional or optional_dependency:
+                                        scope = f"optional:development:{group}"
+                                    else:
+                                        scope = f"development:{group}"
+                                    dependencies.append(Dependency(str(name), rendered, scope))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
                 metadata["parse_error"] = str(exc)
 
