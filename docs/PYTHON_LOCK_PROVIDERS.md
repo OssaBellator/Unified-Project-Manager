@@ -1,34 +1,38 @@
 # Structured Poetry and PDM lock-provider contract
 
-This document describes the lower-level Poetry/PDM relationship provider implemented on `feature/initial-control-plane`. It is intentionally **not yet advertised as a public native provider**. Public promotion should happen only after graph, why, impact, fleet impact, SBOM, advisory, provider-coverage, and failure behavior are routed together.
+Poetry and PDM are public native relationship providers on `feature/initial-control-plane`.
+
+- Poetry provider id: `poetry-lock`;
+- PDM provider id: `pdm-lock`;
+- shared relationship scope: `structured-lock-dependency-graph`.
+
+They are routed through public native graph, why, project/fleet impact, CycloneDX/SPDX, advisory inventory/path correlation, and provider-status coverage. The implementation remains deliberately conservative: unsupported lock semantics fail closed instead of falling back to environment-dependent manager commands or a guessed resolver.
 
 ## Why static lock evidence
 
-UPM does not need to invoke an environment-dependent `poetry show` or `pdm list` command merely to recover relationships already present in structured TOML lock state.
+UPM does not need to invoke `poetry show` or `pdm list` merely to recover relationships already present in structured TOML lock state.
 
-The lower-level provider reads:
+The providers read:
 
 - `poetry.lock` for components owned by Poetry;
 - `pdm.lock` for components owned by PDM.
 
-It uses Python's standard-library `tomllib`. No subprocess, environment activation, network access, package installation, or project mutation occurs.
+They use Python's standard-library `tomllib`. No subprocess, environment activation, network access, package installation, or project mutation occurs.
 
-Native manifests and lockfiles remain authoritative. This provider is a normalized observation layer, not a resolver.
+Native manifests and lockfiles remain authoritative. These providers normalize lock evidence; they are not replacement resolvers.
 
 ## Provider boundary
 
-`python_lock_provider.py` centralizes the pre-promotion contract:
+`python_lock_provider.py` centralizes provider naming, scope, ownership, validated execution, and generic-static-inventory suppression.
 
-- Poetry provider id: `poetry-lock`;
-- PDM provider id: `pdm-lock`;
-- shared scope: `structured-lock-dependency-graph`;
-- provider ownership is derived from validated lock plans;
-- validated execution is the only high-level execution path;
-- generic adapter `resolved_packages` are suppressed for provider-owned components when constructing a future native SBOM baseline.
+The general Python adapter records lock packages as broad static observations. Native Poetry/PDM inventory must not merge certainty-aware provider results on top of those observations because doing so could reintroduce orphan packages or flatten ambiguity. Public native SBOM/advisory routing therefore suppresses provider-owned generic lock observations before merging the validated structured-lock result.
 
-That last rule is important. The general Python adapter records every package in a Poetry/PDM lock as a broad static observation. Native Poetry/PDM inventory must not merge the certainty-aware provider result on top of those observations, because doing so could reintroduce orphan or ambiguous packages that structured reachability intentionally excluded.
+Provider registry capabilities are:
 
-This boundary remains internal until the full promotion checklist below is satisfied.
+- `execution = false`;
+- `network = none`;
+- `mutation = none`;
+- graph/why/impact/SBOM relationship support enabled.
 
 ## Identity
 
@@ -41,7 +45,7 @@ A locked package occurrence retains:
 - lock groups where available;
 - a distinct internal package id.
 
-Source kinds are deliberately provenance-sensitive. Registry-backed packages may become PyPI PURLs. Git, path/directory, URL/file, editable, and other local/non-registry records are not relabeled as registry packages.
+Source kinds remain provenance-sensitive. Registry-backed packages may become PyPI PURLs. Git, path/directory, URL/file, editable, and other non-registry records are not relabeled as registry packages.
 
 ## Relationship resolution
 
@@ -50,107 +54,130 @@ Lock dependency records are parsed differently by manager but normalized to one 
 - Poetry `[package.dependencies]` records retain version text, markers, optionality, and multi-constraint records;
 - PDM dependency strings retain the package name, requirement text, and PEP-508 marker text.
 
-UPM does **not** run a second resolver over these requirements.
+UPM does **not** run a second resolver over those requirements.
 
-A dependency name resolves to an internal target only when the lock contains exactly one candidate with that normalized name. If multiple locked candidates exist, the edge remains explicit ambiguity:
+A dependency resolves to an internal target only when the lock contains exactly one candidate with the normalized name. Multiple candidates remain explicit ambiguity:
 
 - `target_id = null`;
 - all candidate package ids are retained;
 - `ambiguous = true`;
-- impact/why must not select a candidate by version guessing.
+- public why/impact/audit paths do not select a candidate by version guessing.
 
-This is intentionally conservative. It can under-resolve a lock whose manager knows more context than UPM has modeled, but it does not fabricate certainty.
+A dependency with zero candidates is retained as unresolved, which is distinct from ambiguity.
 
-A dependency with zero candidates is a different state from ambiguity. It is retained as an unresolved reference and must not be reported as if multiple possible targets existed.
+## Project roots and direct conditions
 
-## Project roots
-
-The provider creates a synthetic project root for each component and connects normalized direct manifest dependencies to lock candidates using the same exact-one-candidate rule.
+Each provider creates a synthetic project root and connects normalized direct manifest dependencies using the same exact-one-candidate rule.
 
 Direct conditions are preserved before graph construction:
 
 - PEP 621 optional dependency groups become optional root edges;
-- Poetry `{ optional = true }` direct dependencies become optional root edges;
+- Poetry `{ optional = true }` dependencies become optional root edges;
 - optional Poetry dependency groups become optional root edges;
-- Poetry direct `markers`, `python`, and `platform` constraints remain attached to the normalized requirement so the certainty-aware traversal retains a conditional path.
+- Poetry direct `markers`, `python`, and `platform` constraints remain attached;
+- multiple Poetry direct constraint records remain separate normalized edges rather than being flattened.
 
-This lets relationship queries answer project-to-package paths without pretending the project itself is a registry package or silently upgrading optional/marker-qualified declarations into unconditional reachability.
+This prevents optional or environment-qualified direct declarations from becoming unconditional graph reachability.
 
-## Conditional and possible reachability
+## Conditional and ambiguous reachability
 
 Marker-bearing and optional edges are graph evidence, not unconditional reachability.
 
-The certainty-aware reachability layer retains, per path:
+`python_lock_reachability.py` retains, per resolved path:
 
-- exact package path;
-- marker expressions accumulated along that path;
+- exact project/package path;
+- accumulated marker expressions;
 - optional-edge count;
 - whether the path is conditional.
 
-A package can therefore have both an unconditional path and a marker-qualified path. Public `why` / `impact` promotion should expose that distinction rather than collapsing both into a single boolean “used” answer.
+A package can have both unconditional and conditional paths.
 
-`python_lock_queries.py` provides one command-neutral serialization contract for future `why`, project `impact`, and fleet impact routing. A conditional match or reachable ambiguity is marked uncertain; an ambiguity can count as a query match without producing a fabricated resolved package path. The query object also states explicitly that dependency reachability is not source/API/runtime reachability or exploitability.
+Ambiguous references also retain the exact path to the unresolved hop. That evidence includes inherited path conditions plus the ambiguous edge's own marker/optional state. The final path node is rendered as `?dependency-name`, making it explicit that UPM reached an unresolved reference rather than a selected package occurrence.
 
-Reachable ambiguous references are not discarded from scan inventory. Their candidate package identities are admitted as **possible** reachability so a vulnerability scanner does not miss a candidate merely because UPM refuses to guess which lock occurrence the manager selected. Those candidates are annotated as ambiguous/possible and are not connected by a fabricated dependency relationship.
+`python_lock_queries.py` is the command-neutral public query contract used by `why`, project `impact`, and fleet impact. It reports:
 
-If an ambiguous dependency reference itself matches a `why`/`impact` query, the reachability report returns the ambiguity and candidate ids without manufacturing a package path.
+- resolved packages and all retained paths;
+- unconditional versus conditional match counts;
+- ambiguity records and candidate ids;
+- whether the answer is uncertain;
+- the explicit interpretation that dependency reachability is not source/API/runtime reachability or exploitability.
+
+## Public graph behavior
+
+`graph --native` exposes Poetry/PDM as static providers. Preview contains no manager command and reports the certainty policy as `conditional-and-ambiguity-preserving`.
+
+Executed graph output includes:
+
+- structured package identities and source kinds;
+- resolved edges;
+- optional/marker conditions;
+- explicit ambiguous candidate sets;
+- explicit unresolved references.
+
+Unsupported lock shapes or record-level conditions fail the provider instead of being silently dropped.
 
 ## SBOM behavior
 
-The lower-level CycloneDX/SPDX merger uses project-root reachability to avoid turning unrelated/orphan lock records into scan targets. Before certainty-aware package identities are merged, generic static lock observations owned by the structured provider are removed so they cannot leak excluded records back into the native document.
+CycloneDX/SPDX inventory starts from project-root reachability, not every lock record.
 
-Only reachable registry-backed packages receive PyPI PURLs. Reachability has three useful inventory states:
+Only reachable registry-backed packages receive PyPI PURLs. Inventory has three useful states:
 
-- **unconditional** — at least one unconditional project path exists;
+- **unconditional** — at least one unconditional resolved project path exists;
 - **conditional** — only marker/optional-qualified resolved paths exist;
 - **possible** — the package is a candidate behind a reachable ambiguous lock reference.
+
+Reachable ambiguous candidates remain scan-visible as possible inventory so vulnerability scanning does not miss a candidate merely because UPM refuses to guess manager selection. They are never connected by a fabricated dependency edge.
 
 Relationship admission is stricter than package admission:
 
 - uniquely resolved + unconditional registry-to-registry edge: may become a dependency relationship;
-- marker-bearing or optional edge: package identities may be present, but the edge is omitted from unconditional SBOM dependency relationships;
-- ambiguous edge: candidates may remain scan-visible as possible inventory, but the edge is omitted;
+- marker-bearing or optional edge: package identities may be present, but the edge is omitted;
+- ambiguous edge: candidates may remain possible inventory, but the edge is omitted;
 - unresolved edge: omitted and distinguished from ambiguity;
-- non-registry endpoint: omitted rather than represented as a PyPI relationship merely for graph completeness.
+- non-registry endpoint: omitted rather than relabeled as PyPI.
 
-CycloneDX records provider uncertainty explicitly through properties such as conditional/ambiguous reachability and counts for conditional, ambiguous, unresolved, and non-registry edges omitted from unconditional relationships. SPDX 2.3 does not have an equivalent property mechanism in the current model, so it retains the conservative package subset and omits relationships that are not unconditional.
+CycloneDX records provider uncertainty through reachability properties and counts for conditional, ambiguous, unresolved, and non-registry edges omitted from unconditional relationships. SPDX 2.3 keeps the conservative package subset and omits relationships that are not unconditional.
 
-Because generic SPDX package records do not currently preserve per-component occurrence provenance, future public SPDX routing must construct its base document from `suppress_python_lock_static_inventory(...)` before merging structured-lock results. That prevents an identical PURL observed by an unrelated component from being accidentally removed while the provider-owned static seed is replaced.
+Public SPDX routing constructs the base document after `suppress_python_lock_static_inventory(...)`, preventing broad structured-lock seed records from leaking back into the certainty-aware document.
 
-## Exact advisory inventory boundary
+## Advisory inventory and path correlation
 
-`python_lock_native_inventory.py` now provides an internal fail-closed CycloneDX inventory object for the advisory seam. It deliberately retains three things together:
+Public `audit --native` and `projects audit --native` use the same validated structured-lock results that produced the exact CycloneDX document given to OSV-Scanner.
 
-- the structured provider plans;
-- the validated `PythonLockGraphResult` objects used to build inventory;
-- the exact CycloneDX document produced from those results.
+`NativeCycloneDxInventory` retains Poetry/PDM results alongside the BOM. Advisory correlation therefore does not rebuild a second graph after scanning.
 
-Assembly verifies that result order/identity matches the planned provider evidence and refuses to expose a BOM when any structured provider result failed. This mirrors the existing native advisory evidence rule: the graph used for dependency-path explanations must be the same graph retained alongside the exact BOM that was scanned, not a second reconstruction performed after the scanner returns.
+For a resolved vulnerable package, advisory evidence retains:
 
-This inventory object is **not yet wired into public `audit --native`**. Keeping it internal avoids a partial promotion where security scanning claims Poetry/PDM support before project/fleet query routes and provider-status coverage share the same uncertainty semantics.
+- provider/component/package identity;
+- all dependency paths;
+- marker/optional conditions per path;
+- whether an unconditional path exists.
 
-## Public promotion checklist
+For a vulnerable package that is only a candidate behind a reachable ambiguous lock reference, advisory evidence reports `possible-via-ambiguous-lock-reference` and retains the conditional path to the `?dependency` hop. This is possible dependency reachability, not proof that the candidate is installed for a specific environment or that vulnerable code is exploitable.
 
-Do not add Poetry/PDM to `provider_registry` until all of the following share this same model:
+Provider failure remains fail-closed: a malformed/unsupported structured lock prevents native advisory inventory rather than falling back to broad static package observations.
 
-1. `graph --native` exposes resolved, unresolved, and ambiguous edges with manager/scope labels;
-2. `why --native` exposes conditional paths and ambiguity evidence through the shared query contract;
-3. `impact --native` uses the same certainty-aware query result;
-4. fleet impact carries the same semantics;
-5. `sbom --native` suppresses generic static lock observations, uses unconditional/conditional/possible reachability correctly, and does not flatten markers, optionality, or ambiguity;
-6. `audit --native` scans the exact retained structured-lock BOM and reuses the same retained lock-graph results for advisory paths;
-7. project/fleet status advertises coverage only after the public routes above exist;
-8. provider failure/unsupported lock strategy remains explicit rather than silently falling back to a heuristic or environment-dependent CLI command.
+## Provider status
 
-## Current local regression slice
+`provider_registry` now advertises `poetry-lock` and `pdm-lock` for components with the corresponding authoritative lockfile. Project/fleet status uses that registry without executing provider parsing or advisory scans merely to display coverage.
 
-Run the comprehensive validated slice:
+A configured provider can still fail when explicitly executed if the lock contains semantics UPM intentionally does not model. Coverage means a provider is configured for that manager/state, not that arbitrary future lock syntax will be guessed successfully.
+
+## Local validation
+
+Run the comprehensive structured-lock slice:
 
 ```sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
-Focused provider/SBOM/query/audit-boundary checks are:
+The dedicated public promotion regression is:
+
+```sh
+sh ./scripts/test-python-lock-public-provider.sh
+```
+
+Focused checks also remain available:
 
 ```sh
 sh ./scripts/test-python-lock-provider-boundary.sh
@@ -160,25 +187,8 @@ sh ./scripts/test-python-lock-sbom-uncertainty.sh
 sh ./scripts/test-python-lock-native-inventory.sh
 ```
 
-The focused suite covers:
+The repository regressions cover provider ids/scope/coverage, supported lock-contract validation, Poetry and PDM relationship parsing, direct optional/marker/multi-constraint conditions, conditional and ambiguity path evidence, reachable-only CycloneDX/SPDX, possible ambiguous scan inventory, exact-BOM advisory evidence reuse, and public graph/why/impact/SBOM/advisory routing.
 
-- provider ids, scope, ownership, and generic-static-inventory suppression;
-- supported lock-contract validation;
-- Poetry transitive relationships;
-- PDM PEP-508 markers;
-- duplicate locked-name ambiguity;
-- non-registry source identity;
-- direct optional and marker conditions from Python manifests;
-- conditional versus unconditional paths;
-- multiple retained dependency paths;
-- one shared future query contract for project/fleet relationship explanations;
-- reachable ambiguity reporting;
-- ambiguous candidates retained as possible scan inventory without fake edges;
-- reachable-only SBOM package identity;
-- separate conditional/ambiguous/unresolved/non-registry omission evidence;
-- conservative CycloneDX and SPDX relationships;
-- fail-closed exact CycloneDX inventory with retained graph evidence.
+In the constrained implementation runtime, a reconstructed core slice covering resolved conditional reachability, condition-preserving ambiguity, and Poetry/PDM OSV path correlation passed **3/3**. The full private branch still cannot be materialized here, so the new end-to-end shell driver is committed for a normal local clone and is not misrepresented as having run in this environment.
 
-Focused reconstructed/local validation in this implementation environment includes the provider-boundary tests (**3 passed**), five structured-lock SBOM uncertainty scenarios, four direct manifest-condition normalization scenarios, three shared query-contract scenarios, and three exact inventory-assembly scenarios. The full private feature branch is still not materialized in this runtime, so those focused results are not presented as a whole-branch test run.
-
-This validation is local-only; no GitHub Actions workflow is required or used.
+Validation is local-only; no GitHub Actions workflow is required or used.
