@@ -38,6 +38,9 @@ def plan_all_operations(
         except OperationError as exc:
             raise WorkspaceBatchError(f"Cannot plan standalone component {component_key}: {exc}") from exc
 
+    if not plans:
+        raise WorkspaceBatchError("No supported project components were discovered for the batch operation.")
+
     plans.sort(key=lambda plan: (
         plan.cwd.relative_to(graph.root).as_posix(),
         plan.manager,
