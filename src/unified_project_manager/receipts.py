@@ -10,7 +10,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .models import ProjectGraph
 
-RECEIPT_VERSION = 1
+RECEIPT_VERSION = 2
+SUPPORTED_RECEIPT_VERSIONS = frozenset({1, RECEIPT_VERSION})
 RECEIPT_DIRECTORY = Path('.upm/receipts')
 _REDACTED = '<redacted>'
 _SENSITIVE_FLAG = re.compile(r'(?i)(token|password|passwd|secret|credential|auth(?:entication)?(?:-?token)?)')
@@ -204,6 +205,45 @@ def _normalize_command(root: Path, value: Mapping[str, Any]) -> ReceiptCommand:
     )
 
 
+def receipt_identity_payload(
+    *,
+    version: int,
+    operation: Any,
+    commands: Any,
+    before: Any,
+    after: Any,
+    created_at: Any,
+    verification: Any = None,
+) -> dict[str, Any]:
+    """Return the canonical fields bound by a receipt ID for a schema version.
+
+    v1 is retained only for backwards-readable validation. v2 additionally binds
+    the persisted post-operation verification payload and the schema version itself.
+    Derived fields such as `changes` and `succeeded` are recomputed from bound
+    before/after/command state and therefore are not independently hashed.
+    """
+    stable = {
+        'operation': operation,
+        'commands': commands,
+        'before': before,
+        'after': after,
+        'created_at': created_at,
+    }
+    if version >= 2:
+        stable = {
+            'version': version,
+            **stable,
+            'verification': verification,
+        }
+    return stable
+
+
+def receipt_identity_digest(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    ).hexdigest()
+
+
 def build_mutation_receipt(
     root: str | Path,
     operation: str,
@@ -221,14 +261,16 @@ def build_mutation_receipt(
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     created_at = timestamp.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
     changes = diff_project_state(before, after)
-    stable = {
-        'operation': operation,
-        'commands': [command.to_dict() for command in command_list],
-        'before': [item.to_dict() for item in before],
-        'after': [item.to_dict() for item in after],
-        'created_at': created_at,
-    }
-    digest = hashlib.sha256(json.dumps(stable, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+    stable = receipt_identity_payload(
+        version=RECEIPT_VERSION,
+        operation=operation,
+        commands=[command.to_dict() for command in command_list],
+        before=[item.to_dict() for item in before],
+        after=[item.to_dict() for item in after],
+        created_at=created_at,
+        verification=dict(verification) if verification is not None else None,
+    )
+    digest = receipt_identity_digest(stable)
     return MutationReceipt(
         version=RECEIPT_VERSION,
         receipt_id=digest,
