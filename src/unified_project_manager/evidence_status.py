@@ -10,7 +10,7 @@ from .policy import evaluate_policy
 from .provider_registry import provider_summary
 from .receipt_chain import CHAIN_PATH, validate_receipt_chain
 from .receipt_history import latest_receipt_drift
-from .workspace_health import node_workspace_findings
+from .workspace_health import workspace_findings
 
 SNAPSHOT_PATH = Path('.upm/state.json')
 
@@ -28,7 +28,7 @@ def local_evidence_status(
     Advisory state is read from persisted evidence only.
     """
     doctor = diagnose(graph, deep=deep)
-    workspace_findings = node_workspace_findings(graph)
+    workspace_health = workspace_findings(graph)
     policy = evaluate_policy(graph, deep=deep)
     advisory = evaluate_audit_status(graph, max_age_seconds=advisory_max_age_seconds)
     receipts = latest_receipt_drift(graph)
@@ -36,8 +36,8 @@ def local_evidence_status(
     chain_path = graph.root / CHAIN_PATH
     chain = validate_receipt_chain(graph.root) if chain_path.is_file() else None
 
-    workspace_errors = sum(1 for finding in workspace_findings if finding.severity == 'error')
-    workspace_warnings = sum(1 for finding in workspace_findings if finding.severity == 'warning')
+    workspace_errors = sum(1 for finding in workspace_health if finding.severity == 'error')
+    workspace_warnings = sum(1 for finding in workspace_health if finding.severity == 'warning')
     blockers = []
     if doctor.errors:
         blockers.append('doctor-errors')
@@ -78,7 +78,7 @@ def local_evidence_status(
             'blockers': blockers,
         },
         'doctor': doctor.to_dict(),
-        'workspace_health': [finding.to_dict() for finding in workspace_findings],
+        'workspace_health': [finding.to_dict() for finding in workspace_health],
         'policy': policy.to_dict(),
         'advisory_evidence': advisory.to_dict(),
         'mutation_receipts': receipts.to_dict(),
