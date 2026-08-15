@@ -21,9 +21,13 @@ for test_file in \
   tests/test_pnpm_provider_entrypoint.py \
   tests/test_pnpm_sbom.py \
   tests/test_pnpm_sbom_entrypoint.py \
+  tests/test_cargo_graph.py \
+  tests/test_cargo_workspace.py \
+  tests/test_provider_selection.py \
   tests/test_provider_ownership.py \
   tests/test_provider_registry.py \
   tests/test_security_impact.py \
+  tests/test_workspace_health.py \
   tests/test_fleet_provider_entrypoint.py \
   tests/test_fleet_status_entrypoint.py \
   tests/test_fleet_security.py \
