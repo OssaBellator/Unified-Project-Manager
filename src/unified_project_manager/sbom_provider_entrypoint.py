@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
 from .discovery import discover
 from .native_graph import execute_native_graph, plan_native_graph
 from .npm_graph import execute_npm_graph, plan_npm_graphs
@@ -47,25 +48,35 @@ def native_sbom_command(argv: list[str]) -> int:
         graph = _selected_graph(discover(root), args.component)
         go_plans, _go_skips = plan_native_graph(graph)
         npm_plans = plan_npm_graphs(graph)
+        cargo_plans = plan_cargo_graphs(graph)
     except (OSError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
     go_results = [execute_native_graph(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
+    cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     failures = [
         ("go-modules", result.plan.component, result.stderr)
         for result in go_results if not result.succeeded
     ] + [
         ("npm-lock-tree", result.plan.component, result.stderr)
         for result in npm_results if not result.succeeded
+    ] + [
+        ("cargo-metadata", result.plan.component, result.stderr)
+        for result in cargo_results if not result.succeeded
     ]
     if failures:
         for provider, component, error in failures:
             print(f"upm: {provider} inventory failed for {component}: {error}", file=sys.stderr)
         return 1
 
-    bom = cyclonedx_bom_with_providers(graph, go_results=go_results, npm_results=npm_results)
+    bom = cyclonedx_bom_with_providers(
+        graph,
+        go_results=go_results,
+        npm_results=npm_results,
+        cargo_results=cargo_results,
+    )
     rendered = json.dumps(bom, indent=2, sort_keys=True) + "\n"
     if args.output:
         target = Path(args.output).expanduser()
