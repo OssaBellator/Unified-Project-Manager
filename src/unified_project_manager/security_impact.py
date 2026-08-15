@@ -10,6 +10,8 @@ from .native_graph import NativeGraphResult
 from .native_impact import analyze_native_impact
 from .npm_graph import NpmGraphResult
 from .npm_impact import analyze_npm_impact
+from .pnpm_graph import PnpmGraphResult
+from .pnpm_impact import analyze_pnpm_impact
 from .uv_graph import UvGraphResult
 from .uv_impact import analyze_uv_impact
 
@@ -70,6 +72,7 @@ def correlate_advisory_impact(
     *,
     go_results: list[NativeGraphResult] | None = None,
     npm_results: list[NpmGraphResult] | None = None,
+    pnpm_results: list[PnpmGraphResult] | None = None,
     cargo_results: list[CargoGraphResult] | None = None,
     uv_results: list[UvGraphResult] | None = None,
 ) -> list[AdvisoryDependencyImpact]:
@@ -93,6 +96,23 @@ def correlate_advisory_impact(
                         "npm-lock-tree", "logical-dependency-tree", impact.component,
                         (impact.root_path,),
                         {"ref": impact.ref, "direct": impact.direct},
+                    ))
+            for result in pnpm_results or []:
+                for impact in analyze_pnpm_impact(result, name):
+                    if version and impact.version != version:
+                        continue
+                    impacts.append(AdvisoryDependencyImpact(
+                        advisory_id, ecosystem, name, version,
+                        "pnpm-lock-tree", "logical-dependency-tree", impact.component,
+                        (impact.root_path,),
+                        {
+                            "ref": impact.ref,
+                            "alias": impact.alias,
+                            "direct": impact.direct,
+                            "scope": impact.scope,
+                            "workspace_project": impact.workspace_project,
+                            "deduped": impact.deduped,
+                        },
                     ))
         elif eco in {"crates.io", "cargo", "rust"}:
             for result in cargo_results or []:
