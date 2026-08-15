@@ -38,10 +38,17 @@ groups = ["main"]
 name = "shared"
 version = "1.0.0"
 groups = ["main"]
+[package.dependencies]
+leaf = "*"
 
 [[package]]
 name = "shared"
 version = "2.0.0"
+groups = ["main"]
+
+[[package]]
+name = "leaf"
+version = "4.0.0"
 groups = ["main"]
 
 [[package]]
@@ -151,10 +158,21 @@ dependencies = ["parent>=1"]
             self.assertEqual(impact_code, 0)
             shared = next(item for item in impact["impacts"] if item["provider"] == "poetry-lock")
             self.assertEqual(shared["packages"], [])
+            self.assertEqual(len(shared["possible_packages"]), 2)
+            self.assertTrue(all(item["possible"] for item in shared["possible_packages"]))
             self.assertEqual(len(shared["ambiguities"]), 1)
             ambiguity = shared["ambiguities"][0]
             self.assertEqual(ambiguity["paths"][0]["nodes"][-1], "?shared")
             self.assertEqual(len(ambiguity["candidate_ids"]), 2)
+
+            leaf_code, leaf_impact = self._json(["impact", "leaf", str(root), "--native", "--json"])
+            self.assertEqual(leaf_code, 0)
+            leaf = next(item for item in leaf_impact["impacts"] if item["provider"] == "poetry-lock")
+            self.assertEqual(leaf["packages"], [])
+            self.assertEqual(len(leaf["possible_packages"]), 1)
+            path = leaf["possible_packages"][0]["paths"][0]["nodes"]
+            self.assertIn("?shared", path)
+            self.assertEqual(path[-1], "leaf@4.0.0")
 
     def test_poetry_native_sbom_is_reachable_only_and_conditional_edges_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -167,11 +185,17 @@ dependencies = ["parent>=1"]
             purls = {item.get("purl") for item in document.get("components", []) if item.get("purl")}
             self.assertIn("pkg:pypi/parent@1.0.0", purls)
             self.assertIn("pkg:pypi/child@2.0.0", purls)
+            self.assertIn("pkg:pypi/leaf@4.0.0", purls)
             self.assertNotIn("pkg:pypi/orphan@9.9.9", purls)
             parent = next(item for item in document["components"] if item.get("purl") == "pkg:pypi/parent@1.0.0")
             properties = {(item["name"], item["value"]) for item in parent.get("properties", [])}
             self.assertIn(("upm:poetry:conditional-edges-omitted", "2"), properties)
             self.assertIn(("upm:poetry:ambiguous-edges-omitted", "1"), properties)
+            leaf = next(item for item in document["components"] if item.get("purl") == "pkg:pypi/leaf@4.0.0")
+            self.assertIn(
+                {"name": "upm:poetry:reachability", "value": "possible"},
+                leaf.get("properties", []),
+            )
             self.assertFalse(any(
                 item["ref"] == "pkg:pypi/parent@1.0.0"
                 and "pkg:pypi/child@2.0.0" in item.get("dependsOn", [])
@@ -200,6 +224,10 @@ dependencies = ["parent>=1"]
                             "package": {"name": "shared", "ecosystem": "PyPI", "version": "1.0.0"},
                             "vulnerabilities": [{"id": "OSV-SHARED"}],
                         },
+                        {
+                            "package": {"name": "leaf", "ecosystem": "PyPI", "version": "4.0.0"},
+                            "vulnerabilities": [{"id": "OSV-LEAF"}],
+                        },
                     ],
                 }],
             }
@@ -215,7 +243,13 @@ dependencies = ["parent>=1"]
 
             shared = next(item for item in impacts if item.advisory_id == "OSV-SHARED")
             self.assertEqual(shared.evidence["reachability"], "possible-via-ambiguous-lock-reference")
-            self.assertEqual(shared.paths[0][-1], "?shared")
+            self.assertIn("?shared", shared.paths[0])
+            self.assertEqual(shared.paths[0][-1], "shared@1.0.0")
+
+            leaf = next(item for item in impacts if item.advisory_id == "OSV-LEAF")
+            self.assertEqual(leaf.evidence["reachability"], "possible-via-ambiguous-lock-reference")
+            self.assertIn("?shared", leaf.paths[0])
+            self.assertEqual(leaf.paths[0][-1], "leaf@4.0.0")
 
     def test_pdm_is_promoted_with_same_static_provider_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
