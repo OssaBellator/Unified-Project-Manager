@@ -49,7 +49,7 @@ Implemented lower-level semantics include:
 - explicit duplicate-name ambiguity;
 - project-root dependency paths;
 - marker/optional-aware conditional reachability;
-- direct PEP 621 optional-group, Poetry optional-table, Poetry marker-table, and optional Poetry-group conditions preserved before graph construction;
+- direct PEP 621 optional-group, Poetry optional-table, Poetry marker-table, optional Poetry-group, and Poetry multi-constraint conditions preserved before graph construction;
 - reachable ambiguity reporting without fake paths;
 - a shared command-neutral query contract for future `why`, `impact`, and fleet impact routing;
 - registry-only PyPI PURL identity;
@@ -68,6 +68,8 @@ Implemented lower-level semantics include:
 
 `python_lock_queries.py` is deliberately command-neutral. Future project `why`, project `impact`, and fleet impact integration should serialize the same certainty-aware query result rather than implementing three subtly different marker/optional/ambiguity policies.
 
+`python_lock_native_inventory.py` now provides the exact advisory-side pre-promotion boundary: the exact CycloneDX document, validated provider plans, and the same `PythonLockGraphResult` objects are retained together. Assembly fails closed on provider failure or plan/result mismatch, preventing later advisory explanations from being rebuilt against different evidence.
+
 Promotion remains gated on routing graph, why, impact, fleet impact, SBOM, audit, and provider status together. Until then, `provider_registry` must not claim Poetry/PDM native relationship coverage.
 
 See `PYTHON_LOCK_PROVIDERS.md`.
@@ -84,7 +86,7 @@ Project and fleet advisory flows share the same evidence rule:
 - fleet output distinguishes planning, native-inventory, scanner, and evidence failures;
 - ordinary status never reruns scanner/providers to manufacture freshness.
 
-This is the main remaining integration gate for Poetry/PDM promotion: structured-lock results must be retained alongside the exact scanned BOM so advisory-path correlation can reuse the same evidence rather than reconstructing a second graph after the scan.
+The Poetry/PDM internal inventory object now matches this evidence shape, but it remains intentionally disconnected from public `audit --native` until project/fleet query routing and provider-status coverage can move with it.
 
 ## Local validation boundary
 
@@ -107,6 +109,7 @@ sh ./scripts/test-python-lock-provider-boundary.sh
 sh ./scripts/test-python-lock-direct-conditions.sh
 sh ./scripts/test-python-lock-query-contract.sh
 sh ./scripts/test-python-lock-sbom-uncertainty.sh
+sh ./scripts/test-python-lock-native-inventory.sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
@@ -116,8 +119,9 @@ Focused reconstructed/local validation in this execution environment currently i
 - Yarn refactored Berry 2.x compatibility boundary: **1 test passed**;
 - structured Python lock provider boundary: **3 tests passed**;
 - structured Python lock SBOM uncertainty: **5 focused scenarios passed**;
-- direct Python manifest-condition normalization: **4 focused scenarios passed**;
-- shared structured Python query contract: **3 focused scenarios passed**.
+- direct Python manifest-condition normalization: **5 focused scenarios passed**;
+- shared structured Python query contract: **3 focused scenarios passed**;
+- exact structured Python inventory assembly: **3 focused scenarios passed**.
 
 The repository regression files contain additional assertions beyond those reconstructed slices. This execution environment still cannot materialize the entire private feature branch as one local checkout, so the latest full branch has not been executed end-to-end here. Keep whole-suite claims conservative until the branch is run from a normal local clone.
 
