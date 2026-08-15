@@ -23,6 +23,12 @@ for test_file in \
   tests/test_pnpm_sbom_entrypoint.py \
   tests/test_cargo_graph.py \
   tests/test_cargo_workspace.py \
+  tests/test_uv_graph.py \
+  tests/test_uv_workspace.py \
+  tests/test_uv_workspace_health.py \
+  tests/test_uv_workspace_operations.py \
+  tests/test_uv_workspace_batch_entrypoint.py \
+  tests/test_uv_workspace_provider_routing.py \
   tests/test_provider_selection.py \
   tests/test_provider_ownership.py \
   tests/test_provider_registry.py \
