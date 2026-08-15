@@ -72,6 +72,8 @@ def _native_argv(component: Component) -> tuple[str, ...] | None:
         return ("pdm", "lock", "--check")
     if manager == "cargo" and "Cargo.lock" in component.lockfiles:
         return ("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1")
+    if manager == "go":
+        return ("go", "mod", "tidy", "-diff")
     return None
 
 
@@ -98,9 +100,12 @@ def plan_native_verification(graph: ProjectGraph, selector: str | None = None) -
         if component.metadata.get("parse_error"):
             skips.append(VerificationSkip(key, component.manager, "manifest is invalid"))
             continue
-        if len(component.lockfiles) != 1:
+        if component.manager != "go" and len(component.lockfiles) != 1:
             reason = "no native lockfile" if not component.lockfiles else "conflicting native lockfiles"
             skips.append(VerificationSkip(key, component.manager, reason))
+            continue
+        if component.manager == "go" and len(component.lockfiles) > 1:
+            skips.append(VerificationSkip(key, component.manager, "conflicting native lockfiles"))
             continue
         argv = _native_argv(component)
         if argv is None:
