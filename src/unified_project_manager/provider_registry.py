@@ -115,7 +115,7 @@ YARN_PROVIDER = NativeProviderCapability(
     execution=True,
     network='none',
     mutation='none',
-    supports_sbom_relationships=False,
+    supports_sbom_relationships=True,
 )
 
 CARGO_PROVIDER = NativeProviderCapability(
