@@ -76,7 +76,7 @@ def build_python_lock_native_inventory(
     *,
     selector: str | None = None,
 ) -> PythonLockNativeInventory:
-    """Build exact Poetry/PDM CycloneDX plus retained path evidence without execution."""
+    """Build exact Poetry/PDM CycloneDX plus retained path evidence without subprocesses, network, or mutation."""
 
     plans, results = execute_python_lock_provider(graph, selector=selector)
     return assemble_python_lock_native_inventory(graph, plans, results)
