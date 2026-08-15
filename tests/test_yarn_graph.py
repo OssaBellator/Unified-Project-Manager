@@ -160,7 +160,7 @@ class YarnGraphTests(unittest.TestCase):
                 self.assertFalse(temporary_state.is_relative_to(root))
                 self.assertTrue(temporary_state.parent.is_dir())
                 self.assertIn(env["YARN_ENABLE_NETWORK"], {"0", "false"})
-                self.assertIn(env["YARN_ENABLE_HARDENED_MODE"], {"0", "false"})
+                self.assertNotIn("YARN_ENABLE_HARDENED_MODE", env)
                 self.assertIn(env["YARN_ENABLE_TELEMETRY"], {"0", "false"})
                 self.assertIn(env["YARN_ENABLE_IMMUTABLE_CACHE"], {"1", "true"})
                 self.assertEqual(argv[0], "/tools/yarn")
