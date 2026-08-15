@@ -38,6 +38,9 @@ class NodeAdapter(Adapter):
                 metadata["name"] = data["name"]
             if isinstance(data.get("version"), str):
                 metadata["version"] = data["version"]
+            scripts = data.get("scripts")
+            if isinstance(scripts, dict):
+                metadata["scripts"] = {str(name): command for name, command in scripts.items() if isinstance(name, str) and isinstance(command, str)}
 
             package_manager = data.get("packageManager")
             legacy_manager: str | None = None
