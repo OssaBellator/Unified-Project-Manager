@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from .models import Component, ProjectGraph
+from .node_workspace import NodeWorkspaceError, inspect_node_workspace
 
 
 class NpmGraphError(ValueError):
@@ -19,7 +20,14 @@ class NpmGraphError(ValueError):
 class NpmGraphPlan:
     component: str
     cwd: Path
-    argv: tuple[str, ...] = ("npm", "ls", "--all", "--json", "--package-lock-only")
+    workspace_selector: str | None = None
+
+    @property
+    def argv(self) -> tuple[str, ...]:
+        args: list[str] = ["npm", "ls", "--all", "--json", "--package-lock-only"]
+        if self.workspace_selector:
+            args.extend(("--workspace", self.workspace_selector))
+        return tuple(args)
 
     def to_dict(self, root: Path) -> dict[str, Any]:
         return {
@@ -29,6 +37,9 @@ class NpmGraphPlan:
             "cwd": self.cwd.relative_to(root).as_posix() or ".",
             "argv": list(self.argv),
             "source": "package-lock",
+            "network": False,
+            "mutates_project": False,
+            "workspace_selector": self.workspace_selector,
         }
 
 
@@ -96,22 +107,101 @@ def _matches(component: Component, graph: ProjectGraph, selector: str) -> bool:
     }
 
 
+def _has_npm_lock(component: Component) -> bool:
+    return component.manager == "npm" and any(
+        name in component.lockfiles for name in ("package-lock.json", "npm-shrinkwrap.json")
+    )
+
+
+def _workspace_owners(graph: ProjectGraph) -> tuple[dict[Path, Component], dict[Path, Component]]:
+    """Return npm workspace roots and exact member->root ownership."""
+    roots: dict[Path, Component] = {}
+    members: dict[Path, Component] = {}
+    for component in graph.components:
+        if component.ecosystem != "node" or not _has_npm_lock(component):
+            continue
+        try:
+            workspace = inspect_node_workspace(component.path)
+        except NodeWorkspaceError as exc:
+            raise NpmGraphError(str(exc)) from exc
+        if workspace is None or workspace.manager not in {None, "npm"}:
+            continue
+        root_path = component.path.resolve()
+        roots[root_path] = component
+        for member in workspace.members:
+            path = member.path.resolve()
+            existing = members.get(path)
+            if existing is not None and existing.path.resolve() != root_path:
+                raise NpmGraphError(
+                    f"Node component {path} is claimed by multiple npm workspace roots: "
+                    f"{existing.path} and {component.path}."
+                )
+            members[path] = component
+    return roots, members
+
+
+def _workspace_selector(member: Component, owner: Component) -> str:
+    relative = member.path.resolve().relative_to(owner.path.resolve()).as_posix() or "."
+    return "." if relative == "." else f"./{relative}"
+
+
 def plan_npm_graphs(graph: ProjectGraph, selector: str | None = None) -> list[NpmGraphPlan]:
-    candidates = [
-        component
-        for component in graph.components
-        if component.ecosystem == "node"
-        and component.manager == "npm"
-        and any(name in component.lockfiles for name in ("package-lock.json", "npm-shrinkwrap.json"))
-    ]
+    node_components = [component for component in graph.components if component.ecosystem == "node"]
+    roots, member_owners = _workspace_owners(graph)
+
     if selector is not None:
-        candidates = [component for component in candidates if _matches(component, graph, selector)]
-        if not candidates:
+        matches = [component for component in node_components if _matches(component, graph, selector)]
+        if not matches:
             return []
-        if len(candidates) > 1:
-            choices = ", ".join(component.key(graph.root) for component in candidates)
+        if len(matches) > 1:
+            choices = ", ".join(component.key(graph.root) for component in matches)
             raise NpmGraphError(f"Component selector '{selector}' is ambiguous for npm graph ingestion: {choices}")
-    return [NpmGraphPlan(component.key(graph.root), component.path) for component in candidates]
+        selected = matches[0]
+        owner = member_owners.get(selected.path.resolve())
+        if owner is not None:
+            return [NpmGraphPlan(
+                owner.key(graph.root),
+                owner.path,
+                workspace_selector=_workspace_selector(selected, owner),
+            )]
+        if _has_npm_lock(selected):
+            return [NpmGraphPlan(selected.key(graph.root), selected.path)]
+        return []
+
+    plans: list[NpmGraphPlan] = []
+    for component in node_components:
+        path = component.path.resolve()
+        if path in member_owners:
+            continue
+        if not _has_npm_lock(component):
+            continue
+        plans.append(NpmGraphPlan(component.key(graph.root), component.path))
+    plans.sort(key=lambda plan: plan.cwd.relative_to(graph.root).as_posix())
+    return plans
+
+
+def npm_provider_component_keys(
+    graph: ProjectGraph,
+    plans: Iterable[NpmGraphPlan] | None = None,
+) -> set[str]:
+    """Return all discovered components served by the selected npm root plans."""
+    selected = tuple(plans) if plans is not None else tuple(plan_npm_graphs(graph))
+    if not selected:
+        return set()
+    planned_roots = {plan.cwd.resolve(): plan for plan in selected}
+    _roots, member_owners = _workspace_owners(graph)
+    result: set[str] = set()
+    for component in graph.components:
+        if component.ecosystem != "node":
+            continue
+        path = component.path.resolve()
+        if path in planned_roots:
+            result.add(component.key(graph.root))
+            continue
+        owner = member_owners.get(path)
+        if owner is not None and owner.path.resolve() in planned_roots:
+            result.add(component.key(graph.root))
+    return result
 
 
 def _ref(parent_ref: str, name: str, version: str | None, ordinal: int) -> str:
@@ -138,13 +228,13 @@ def parse_npm_ls(text: str, component: str) -> tuple[str | None, str | None, lis
             return
         for ordinal, name in enumerate(sorted(dependencies), start=1):
             record = dependencies[name]
-            if not isinstance(name, str) or not isinstance(record, dict):
+            if not isinstance(record, dict):
                 continue
             version = record.get("version") if isinstance(record.get("version"), str) else None
-            child_ref = _ref(parent_ref, name, version, ordinal)
-            package = NpmLogicalPackage(
+            current_ref = _ref(parent_ref, name, version, ordinal)
+            packages.append(NpmLogicalPackage(
                 component=component,
-                ref=child_ref,
+                ref=current_ref,
                 name=name,
                 version=version,
                 parent_ref=parent_ref,
@@ -152,14 +242,12 @@ def parse_npm_ls(text: str, component: str) -> tuple[str | None, str | None, lis
                 direct=depth == 1,
                 overridden=bool(record.get("overridden")),
                 resolved=record.get("resolved") if isinstance(record.get("resolved"), str) else None,
-            )
-            packages.append(package)
-            edges.append(NpmLogicalEdge(component, parent_ref, child_ref, name))
-            visit(record.get("dependencies"), child_ref, depth + 1)
+            ))
+            edges.append(NpmLogicalEdge(component, parent_ref, current_ref, name))
+            visit(record.get("dependencies"), current_ref, depth + 1)
 
     visit(data.get("dependencies"), root_ref, 1)
-    raw_problems = data.get("problems")
-    problems = tuple(str(item) for item in raw_problems) if isinstance(raw_problems, list) else ()
+    problems = tuple(value for value in data.get("problems", []) if isinstance(value, str))
     return root_name, root_version, packages, edges, problems
 
 
@@ -182,27 +270,21 @@ def execute_npm_graph(
         )
     except OSError as exc:
         return NpmGraphResult(plan, [], [], 127, stderr=str(exc))
-
-    output = completed.stdout or ""
-    if not output.strip():
-        return NpmGraphResult(
-            plan,
-            [],
-            [],
-            completed.returncode,
-            stderr=(completed.stderr or "npm ls produced no JSON output").strip(),
-        )
+    stdout = completed.stdout or ""
     try:
-        root_name, root_version, packages, edges, problems = parse_npm_ls(output, plan.component)
+        root_name, root_version, packages, edges, problems = parse_npm_ls(stdout, plan.component)
     except NpmGraphError as exc:
         return NpmGraphResult(plan, [], [], completed.returncode or 1, stderr=str(exc))
+    stderr = (completed.stderr or "").strip()
+    if problems and not stderr:
+        stderr = "; ".join(problems)
     return NpmGraphResult(
-        plan=plan,
-        packages=packages,
-        edges=edges,
-        returncode=completed.returncode,
+        plan,
+        packages,
+        edges,
+        completed.returncode,
         root_name=root_name,
         root_version=root_version,
         problems=problems,
-        stderr=(completed.stderr or "").strip(),
+        stderr=stderr,
     )
