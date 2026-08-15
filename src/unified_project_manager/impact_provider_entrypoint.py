@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+from .cargo_graph import CargoGraphError, execute_cargo_graph, plan_cargo_graphs
+from .cargo_impact import analyze_cargo_impact
 from .discovery import discover
 from .models import ProjectGraph
 from .native_graph import NativeGraphError, execute_native_graph, plan_native_graph
@@ -46,15 +48,16 @@ def impact_command(argv: list[str]) -> int:
         graph = _selected_graph(discover(root), args.component)
         go_plans, go_skips = plan_native_graph(graph)
         npm_plans = plan_npm_graphs(graph)
-    except (FileNotFoundError, NotADirectoryError, NativeGraphError, NpmGraphError, ValueError) as exc:
+        cargo_plans = plan_cargo_graphs(graph)
+    except (FileNotFoundError, NotADirectoryError, NativeGraphError, NpmGraphError, CargoGraphError, ValueError) as exc:
         if args.as_json:
             print(json.dumps({"error": str(exc)}, indent=2))
         else:
             print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    npm_components = {plan.component for plan in npm_plans}
-    skips = [skip for skip in go_skips if skip.component not in npm_components]
+    handled_components = {plan.component for plan in [*npm_plans, *cargo_plans]}
+    skips = [skip for skip in go_skips if skip.component not in handled_components]
     impacts: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
 
@@ -74,7 +77,18 @@ def impact_command(argv: list[str]) -> int:
         for impact in analyze_npm_impact(result, args.package):
             impacts.append({"provider": "npm-lock-tree", "scope": "logical-dependency-tree", **impact.to_dict()})
 
-    impacts.sort(key=lambda item: (str(item["provider"]), str(item["component"]), str(item.get("ref", "")), str(item.get("module", ""))))
+    for plan in cargo_plans:
+        result = execute_cargo_graph(plan)
+        if not result.succeeded:
+            failures.append({"provider": "cargo-metadata", "component": plan.component, "returncode": result.returncode, "error": result.stderr})
+            continue
+        for impact in analyze_cargo_impact(result, args.package):
+            impacts.append({"provider": "cargo-metadata", "scope": "locked-offline-dependency-graph", **impact.to_dict()})
+
+    impacts.sort(key=lambda item: (
+        str(item["provider"]), str(item["component"]), str(item.get("ref", "")),
+        str(item.get("module", "")), str(item.get("package_id", "")),
+    ))
     if args.as_json:
         print(json.dumps({
             "query": args.package,
@@ -94,10 +108,14 @@ def impact_command(argv: list[str]) -> int:
                 print(rendered)
                 for path in impact.get("root_paths", []):
                     print("  root path: " + " -> ".join(path))
-            else:
+            elif impact["provider"] == "npm-lock-tree":
                 version = f"@{impact['version']}" if impact.get("version") else ""
                 print(f"{impact['component']} [npm]: {impact['name']}{version}")
                 print("  logical path: " + " -> ".join(impact["root_path"]))
+            else:
+                print(f"{impact['component']} [cargo]: {impact['name']}@{impact['version']}")
+                for path in impact.get("workspace_paths", []):
+                    print("  workspace path: " + " -> ".join(path))
         for failure in failures:
             print(f"x {failure['component']} [{failure['provider']}]: {failure['error']}")
         for skip in skips:
