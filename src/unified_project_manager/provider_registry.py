@@ -7,6 +7,7 @@ from .cargo_graph import cargo_provider_component_keys, plan_cargo_graphs
 from .models import Component, ProjectGraph
 from .npm_graph import npm_provider_component_keys, plan_npm_graphs
 from .pnpm_graph import plan_pnpm_graphs, pnpm_provider_component_keys
+from .uv_graph import plan_uv_graphs, uv_provider_component_keys
 
 NetworkMode = Literal['none', 'offline', 'may-use-network']
 MutationMode = Literal['none', 'project-read-only']
@@ -118,11 +119,11 @@ UV_PROVIDER = NativeProviderCapability(
     provider='uv-lock',
     ecosystem='python',
     manager='uv',
-    evidence='static universal uv.lock package/relationship graph with explicit fork ambiguity',
+    evidence='static universal shared uv.lock package/relationship graph with explicit fork ambiguity',
     graph_scope='universal-lock-dependency-graph',
     why_scope='universal-lock-dependency-graph',
     impact_scope='universal-lock-dependency-graph',
-    source='uv.lock',
+    source='authoritative project/workspace uv.lock',
     execution=False,
     network='none',
     mutation='none',
@@ -148,12 +149,12 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
         return CARGO_PROVIDER, None
     if component.ecosystem == 'python' and component.manager == 'uv':
         if 'uv.lock' not in component.lockfiles:
-            return None, 'uv relationship graph requires uv.lock'
+            return None, 'uv relationship graph requires uv.lock at the authoritative project/workspace root'
         return UV_PROVIDER, None
     return None, 'no authoritative native relationship provider is configured for this component'
 
 
-def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str]]:
+def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str], set[str]]:
     try:
         npm_plans = plan_npm_graphs(graph)
         npm_owned = npm_provider_component_keys(graph, npm_plans)
@@ -169,11 +170,16 @@ def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str]
         cargo_owned = cargo_provider_component_keys(graph, cargo_plans)
     except ValueError:
         cargo_owned = set()
-    return npm_owned, pnpm_owned, cargo_owned
+    try:
+        uv_plans = plan_uv_graphs(graph)
+        uv_owned = uv_provider_component_keys(graph, uv_plans)
+    except ValueError:
+        uv_owned = set()
+    return npm_owned, pnpm_owned, cargo_owned, uv_owned
 
 
 def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
-    npm_owned, pnpm_owned, cargo_owned = _owned_components(graph)
+    npm_owned, pnpm_owned, cargo_owned, uv_owned = _owned_components(graph)
     result: list[ProviderCoverage] = []
     for component in graph.components:
         key = component.key(graph.root)
@@ -184,6 +190,8 @@ def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
             provider, reason = PNPM_PROVIDER, None
         elif key in cargo_owned:
             provider, reason = CARGO_PROVIDER, None
+        elif key in uv_owned:
+            provider, reason = UV_PROVIDER, None
         result.append(ProviderCoverage(
             component=key,
             ecosystem=component.ecosystem,
