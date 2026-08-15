@@ -27,7 +27,7 @@ class GovulncheckSymbolMatch:
             "trace": list(self.trace),
             "provider": "govulncheck",
             "scope": "vulnerable-symbol-call-graph",
-            "correlation": "advisory+effective-module+exact-version",
+            "correlation": "scan-sbom+advisory+effective-module+exact-version",
             "runtime_reachability": "not-evaluated",
             "exploitability": "not-established",
             "persisted": False,
@@ -45,7 +45,9 @@ class GovulncheckUnmatchedSymbol:
     known_advisory_ids: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["known_advisory_ids"] = list(self.known_advisory_ids)
+        return data
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class GovulncheckSymbolCorrelation:
             "public": False,
             "interpretation": (
                 "pre-public static vulnerable-symbol call-graph correlation only; "
+                "scanner-declared build-list, advisory, module, and version identity must agree; "
                 "runtime/data-flow reachability and exploitability are not established"
             ),
         }
@@ -126,14 +129,10 @@ def correlate_govulncheck_symbols(
 ) -> GovulncheckSymbolCorrelation:
     """Correlate pre-public govulncheck symbol findings to exact Go advisory impacts.
 
-    Correlation is deliberately strict. A symbol finding must match an existing
-    Go dependency impact for the same component by govulncheck OSV id (or an
-    alias carried by that exact OSV record), effective module path, and exact
-    module version. Alias overlap never bypasses module/version identity.
-
-    Go's vulnerability machinery uses replacement module path/version for
-    vulnerability lookup/reporting, so replacement-aware UPM impacts correlate
-    against ``effective_name`` rather than the logical required module path.
+    A match requires agreement between four evidence layers: the exact UPM Go
+    component, the govulncheck OSV identity/aliases, the govulncheck scan SBOM's
+    module build list, and the UPM effective module/exact version. Alias overlap
+    never bypasses module/version or scanner-inventory identity.
     """
 
     impacts = [
@@ -181,6 +180,21 @@ def correlate_govulncheck_symbols(
             unmatched.append(GovulncheckUnmatchedSymbol(
                 finding.osv, module, version, package, symbol,
                 "govulncheck symbol finding is missing module version",
+                known_ids,
+            ))
+            continue
+
+        if report.sbom is None:
+            unmatched.append(GovulncheckUnmatchedSymbol(
+                finding.osv, module, version, package, symbol,
+                "govulncheck report is missing scan SBOM evidence",
+                known_ids,
+            ))
+            continue
+        if not report.sbom.has_module(module, version):
+            unmatched.append(GovulncheckUnmatchedSymbol(
+                finding.osv, module, version, package, symbol,
+                "govulncheck symbol module/version is absent from the scan SBOM build list",
                 known_ids,
             ))
             continue
