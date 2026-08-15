@@ -174,6 +174,11 @@ def compare_go_symbol_build_selection(
     and optional test inclusion to configure go/packages. UPM keeps these knobs
     aligned before treating the Go-native observation as candidate scanner input
     evidence. This is plan-level agreement only, not runtime equivalence.
+
+    Test-enabled selection deliberately fails closed even if both command lines
+    request tests. packages.Config{Tests:true} and `go list -test` expand package
+    variants differently enough that UPM requires a real-scanner alignment proof
+    before accepting that mode as equivalent candidate input evidence.
     """
 
     scanner = govulncheck_build_selection(govulncheck_plan)
@@ -185,4 +190,6 @@ def compare_go_symbol_build_selection(
         differences.append("build tags differ")
     if scanner.tests != observation.tests:
         differences.append("test inclusion differs")
+    elif scanner.tests:
+        differences.append("test-enabled selection equivalence is not established")
     return GoSymbolBuildSelectionAlignment(scanner, observation, tuple(differences))
