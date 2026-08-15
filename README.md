@@ -1,6 +1,6 @@
 # Unified Project Manager
 
-Unified Project Manager (`upm`) is an experimental package-manager-agnostic control plane for development projects. It does **not** replace npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, or Cargo. Native package managers remain authoritative for dependency resolution and project mutation; UPM discovers, normalizes, plans, delegates, verifies, and correlates their state.
+Unified Project Manager (`upm`) is an experimental package-manager-agnostic control plane for development projects. It does **not** replace npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, Cargo, or Go modules. Native package managers and toolchains remain authoritative for dependency resolution and project mutation; UPM discovers, normalizes, plans, delegates, verifies, and correlates their state.
 
 The current implementation targets Python 3.11+ and has no runtime dependencies outside the standard library.
 
@@ -8,20 +8,22 @@ The current implementation targets Python 3.11+ and has no runtime dependencies 
 
 UPM currently supports:
 
-- mixed-repository discovery for Node, Python, and Rust projects;
-- normalized direct dependencies, resolved package inventory, package-manager ownership, and toolchain requirements;
-- structural health checks for malformed manifests, lockfile conflicts, manager mismatches, and missing tools;
-- native lockfile syntax checks for npm, uv/Poetry/PDM, and Cargo formats that are JSON/TOML parseable;
+- mixed-repository discovery for Node, Python, Rust, and Go projects;
+- normalized direct dependencies, resolved package inventory where native state represents a concrete resolution, package-manager ownership, and toolchain requirements;
+- structural health checks for malformed manifests, lockfile/manager conflicts, missing tools, declared toolchain-version drift, and declared Node package-manager-version drift;
+- native lockfile syntax checks for npm, uv/Poetry/PDM, and Cargo formats that are safely JSON/TOML parseable;
 - npm manifest-vs-lock root dependency drift detection;
-- SHA-256 integrity snapshots for native manifests and lockfiles;
+- SHA-256 integrity snapshots for discovered native manifests/state files;
+- documented non-mutating native verification commands through `upm verify`;
 - opt-in deep installed-state checks for npm `node_modules` and local Python `.venv` metadata;
 - preview-first native `init`, `install`, `sync`, `add`, and `remove` operations;
-- preview-first repair plans for installed-state drift using the authoritative manager's locked/frozen sync;
+- preview-first repair plans for installed-state drift using the authoritative manager's locked/frozen sync where UPM has a safe mapping;
 - multi-component `install --all` and `sync --all` planning;
 - direct and resolved `graph`, `why`, and `duplicates` queries;
-- a user-level registry for explicitly registered projects and fleet health status;
-- resolved package duplication aggregation across registered projects in the registry API;
-- CycloneDX 1.7 SBOM export from resolved native lockfile inventory;
+- safe project task DAGs in `upm.toml`, plus native Node/Cargo/Go task discovery;
+- project-local and registered-project storage accounting without destructive cleanup;
+- a user-level registry for explicitly registered projects, fleet health, resolved inventory, duplicate analysis, and storage views;
+- CycloneDX 1.7 SBOM export from concrete resolved native inventory;
 - human-readable and JSON output for automation and tooling.
 
 No GitHub Actions workflows are used. Validation is local and script-driven.
@@ -49,7 +51,7 @@ python3 -m pip install -e .
 upm doctor .
 ```
 
-## Discover and inspect
+## Discover, inspect, and verify
 
 ```sh
 upm discover .
@@ -61,13 +63,28 @@ upm duplicates .
 upm duplicates . --resolved
 upm doctor .
 upm doctor . --deep
+upm verify .
+upm verify . --preview
 ```
 
-Component keys use `<relative-path>:<ecosystem>`, for example `frontend:node`, `backend:python`, or `engine:rust`.
+Component keys use `<relative-path>:<ecosystem>`, for example `frontend:node`, `backend:python`, `engine:rust`, or `service:go`.
 
-`--resolved` views are populated from native lockfiles UPM can parse safely. They represent observations from the authoritative lockfile, not a second UPM resolver.
+`--resolved` views are populated only from native state UPM can interpret as concrete resolved inventory. They are observations from authoritative native state, not a UPM resolver.
 
-`doctor --deep` is intentionally opt-in because it traverses installed environments. The first deep checks cover npm physical `node_modules` locations and local Python `.venv` `dist-info` metadata.
+`upm verify` runs only verification commands that are configured as non-mutating. Current examples include npm dry-run CI, Bun frozen dry-run, `uv lock --check`, `pdm lock --check`, locked Cargo metadata, and `go mod tidy -diff`. Components without a sufficiently safe native verification path are reported as skipped rather than probed with a potentially mutating command.
+
+`doctor --deep` is intentionally opt-in because it traverses installed environments. Current deep checks cover npm physical `node_modules` locations and local Python `.venv` `dist-info` metadata.
+
+## Go module semantics
+
+Go support deliberately does not pretend `go.sum` is a universal lockfile. UPM treats:
+
+- `go.mod` as the module/dependency/toolchain declaration;
+- the `go` directive as a minimum Go toolchain requirement;
+- `go.sum` as checksum/integrity state;
+- `go mod tidy -diff` as the current non-mutating native consistency check.
+
+Because `go.sum` can retain checksums for module versions that are not in the selected build list, UPM does **not** convert every `go.sum` entry into resolved dependency inventory or SBOM components.
 
 ## Integrity snapshots
 
@@ -78,7 +95,7 @@ upm snapshot .
 upm doctor .
 ```
 
-`.upm/state.json` records root-relative native manifest/lockfile paths, SHA-256 digests, sizes, and component identity. It is **not** a universal dependency lockfile. UPM reports changed, missing, newly discovered, invalid, or unsupported snapshot state; `upm snapshot` explicitly accepts the current state as the new baseline.
+`.upm/state.json` records root-relative native manifest/state-file paths, SHA-256 digests, sizes, and component identity. It is **not** a universal dependency lockfile. UPM reports changed, missing, newly discovered, invalid, or unsupported snapshot state; `upm snapshot` explicitly accepts the current state as the new baseline.
 
 ## Preview-first package operations
 
@@ -108,6 +125,68 @@ Current delegation includes:
 | Python | uv, Poetry, PDM | install/sync, add, remove |
 | Python requirements | pip | install only; manifest mutation is deliberately refused |
 | Rust | Cargo | fetch/locked fetch, add, remove |
+| Go | Go modules | module download, `go get` add, `@none` removal |
+
+For Go, `install`/`sync` currently mean module-cache hydration with `go mod download`; consistency belongs to `upm verify` via `go mod tidy -diff`.
+
+## Toolchain and manager version health
+
+`doctor` checks executable presence and, when a component declares a version requirement, compares it with the active toolchain where UPM can safely interpret the syntax.
+
+Current support covers common Node semver ranges, common Python version specifiers, Rust minimum versions, and Go minimum versions. Unsupported requirement syntax produces an informational `unverified` finding rather than a guessed pass/fail result.
+
+For Node projects that declare npm/pnpm/Yarn/Bun versions, UPM also compares the active package-manager executable version with the project declaration. Exact declarations remain exact; explicit ranges remain ranges.
+
+## Project tasks
+
+UPM tasks use argv arrays instead of shell command strings:
+
+```toml
+# upm.toml
+[tasks.lint]
+command = ["python", "-m", "compileall", "src"]
+
+[tasks.test]
+command = ["python", "-m", "unittest"]
+depends = ["lint"]
+```
+
+Then:
+
+```sh
+upm tasks .
+upm run test .
+upm run test . --apply
+```
+
+`run` is preview-first. Task dependency cycles, unknown dependencies, working-directory escapes, and shell-string commands are rejected before execution.
+
+If a task is not defined in `upm.toml`, UPM can fall back to supported native tasks:
+
+- Node package scripts through the authoritative npm/pnpm/Yarn/Bun manager;
+- Cargo `build`, `check`, `run`, and `test`;
+- Go `build`, `test`, `vet`, and `run`.
+
+If multiple components expose the same native task, `--component` is required. An explicitly configured `upm.toml` task takes precedence over a native task of the same name.
+
+## Storage accounting
+
+UPM measures known project-local artifact directories without deleting anything:
+
+```sh
+upm storage .
+upm storage . --json
+```
+
+The current measurement covers Node `node_modules`, Python `.venv`/`__pypackages__`, and Cargo `target`. Symlinks are not followed, and hardlinked files are counted once when filesystem inode information is available.
+
+Fleet measurement shares hardlink identities across registered projects:
+
+```sh
+upm projects storage
+```
+
+A reported byte count is **not** a claim that the space is safely reclaimable. Cache cleanup and destructive deduplication require ecosystem-specific safety rules and remain separate future work.
 
 ## Safe repair
 
@@ -123,15 +202,16 @@ Malformed manifests, conflicting package managers, conflicting lockfiles, and in
 
 ## Initialize projects
 
-Initialization delegates to native generators and is also preview-first:
+Initialization delegates to native generators and is preview-first:
 
 ```sh
 upm init frontend --ecosystem node --manager pnpm
 upm init backend --ecosystem python
 upm init engine --ecosystem rust --lib
+upm init service --ecosystem go --module example.com/service
 ```
 
-Add `--apply` to execute. Current defaults are npm for Node, uv for Python, and Cargo for Rust. Supported generic initializers are npm/pnpm/Bun, uv, and Cargo.
+Add `--apply` to execute. Current generic initializer paths are npm/pnpm/Bun, uv, Cargo, and `go mod init`. Go initialization requires an explicit module path.
 
 For safety, the target must be new or empty and must remain inside the current root. Existing projects are not silently adopted or overwritten.
 
@@ -144,6 +224,9 @@ upm projects add ~/code/my-app
 upm projects list
 upm projects status
 upm projects status --deep
+upm projects inventory
+upm projects duplicates
+upm projects storage
 upm projects remove ~/code/my-app
 ```
 
@@ -156,18 +239,21 @@ upm sbom .
 upm sbom . --output bom.cdx.json
 ```
 
-The first exporter emits deterministic CycloneDX 1.7 JSON from concrete versions found in parseable native lockfiles. Registry resolutions receive Package URLs (npm, PyPI, Cargo). Git/path/local resolutions are retained as components with deterministic UPM `bom-ref` values rather than being mislabeled as registry packages.
+The exporter emits deterministic CycloneDX 1.7 JSON from concrete versions in supported resolved native inventory. Registry resolutions receive Package URLs for npm, PyPI, and Cargo. Git/path/local resolutions are retained as components with deterministic UPM `bom-ref` values rather than being mislabeled as registry packages.
+
+A Go Package URL mapping exists for future selected-module inventory, but `go.sum` checksums are deliberately not exported as resolved components.
 
 SPDX export is intentionally deferred until UPM can model the richer SPDX object graph correctly.
 
 ## Design principles
 
 1. **Native managers remain authoritative.** UPM delegates dependency resolution and mutation instead of reimplementing ecosystem semantics.
-2. **Normalize observations, not lockfiles.** Native manifests and lockfiles stay first-class; UPM builds a common graph above them.
-3. **Preview before mutation.** Native commands are visible before execution and require explicit `--apply`.
-4. **Refuse ambiguity.** Conflicting managers, lockfiles, component selectors, and unsafe repair cases are errors instead of guesses.
-5. **Deep checks are explicit.** Expensive installed-environment inspection is opt-in.
-6. **Do not equate duplication with corruption.** Duplicate declarations/resolutions are surfaced for analysis, not automatically deleted.
-7. **Local-first by default.** Project health and the project registry work without a hosted service or GitHub Actions.
+2. **Normalize observations, not lockfiles.** Native manifests and state stay first-class; UPM builds a common graph above them.
+3. **Preview before mutation or arbitrary tasks.** Native mutation/task commands are visible before execution and require explicit `--apply`.
+4. **Refuse ambiguity.** Conflicting managers, lockfiles, component selectors, task targets, and unsafe repair cases are errors instead of guesses.
+5. **Prefer explicit uncertainty to false compatibility.** Unsupported version syntax or native verification paths are surfaced as unverified/skipped.
+6. **Deep checks are explicit.** Expensive installed-environment inspection is opt-in.
+7. **Do not equate duplication with corruption.** Duplicate declarations/resolutions and storage bytes are surfaced for analysis, not automatically deleted.
+8. **Local-first by default.** Project health, workflows, storage accounting, and the project registry work without a hosted service or GitHub Actions.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for architecture, safety boundaries, and milestone status.
