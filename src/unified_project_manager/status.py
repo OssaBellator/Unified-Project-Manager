@@ -41,6 +41,7 @@ def project_status(
         "policy": evidence["policy"],
         "advisory_evidence": evidence["advisory_evidence"],
         "mutation_receipts": evidence["mutation_receipts"],
+        "mutation_receipt_chain": evidence["mutation_receipt_chain"],
         "relationship_providers": evidence["relationship_providers"],
         "local_evidence": {
             "network_executed": evidence["network_executed"],
