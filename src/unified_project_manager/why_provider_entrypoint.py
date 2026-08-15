@@ -18,6 +18,7 @@ from .provider_ownership import provider_owned_component_keys
 from .python_lock_graph import plan_python_lock_graphs
 from .python_lock_provider import python_lock_provider_name
 from .python_lock_queries import query_python_lock_result
+from .python_lock_render import render_python_lock_query
 from .python_lock_validation import execute_validated_python_lock_graph
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
@@ -218,18 +219,8 @@ def why_command(argv: list[str]) -> int:
                     print("  " + " -> ".join(path))
             elif provider in {"poetry-lock", "pdm-lock"}:
                 print(f"{answer['component']} [{provider} structured-lock]")
-                for package in answer.get("packages", []):
-                    certainty = "unconditional" if package.get("unconditional") else "conditional"
-                    print(f"  {package['name']}@{package['version']} [{certainty}]")
-                    for path in package.get("paths", []):
-                        print("    " + " -> ".join(path.get("nodes", [])))
-                        if path.get("markers"):
-                            print("    markers: " + " && ".join(path["markers"]))
-                        if path.get("optional_edges"):
-                            print(f"    optional edges: {path['optional_edges']}")
-                for ambiguity in answer.get("ambiguities", []):
-                    candidates = ", ".join(ambiguity.get("candidate_ids", []))
-                    print(f"  ? {ambiguity['source']} -> {ambiguity['dependency_name']} [ambiguous: {candidates}]")
+                for line in render_python_lock_query(answer):
+                    print(line)
             else:
                 print(f"{answer['component']} [uv universal-lock]: {answer['name']}@{answer['version']}")
                 for path in answer.get("project_paths", []):
