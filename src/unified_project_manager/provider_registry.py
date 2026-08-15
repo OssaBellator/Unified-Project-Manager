@@ -111,9 +111,9 @@ YARN_PROVIDER = NativeProviderCapability(
     graph_scope='berry-resolution-graph',
     why_scope='berry-resolution-graph',
     impact_scope='berry-resolution-graph',
-    source='yarn info --all --recursive --virtuals --json with network disabled and temporary install state',
+    source='yarn info --all --recursive --virtuals --json with Berry network disabled, temporary install state, and immutable cache',
     execution=True,
-    network='none',
+    network='offline',
     mutation='none',
     supports_sbom_relationships=True,
 )
