@@ -212,6 +212,15 @@ def status_command(argv: list[str]) -> int:
         if receipts.get("changes"):
             receipt_detail += f" ({len(receipts['changes'])} state changes)"
         print(f"Mutation receipts: {receipt_detail}")
+        chain = data["mutation_receipt_chain"]
+        if chain.get("present") is False:
+            print("Receipt chain: absent (optional)")
+        else:
+            chain_detail = "valid" if chain.get("valid") else "invalid"
+            anchor = chain.get("anchor_digest")
+            if anchor:
+                chain_detail += f" (anchor {anchor})"
+            print(f"Receipt chain: {chain_detail}")
         local_summary = data["local_evidence"]["summary"]
         if local_summary["workspace_errors"] or local_summary["workspace_warnings"]:
             print(
