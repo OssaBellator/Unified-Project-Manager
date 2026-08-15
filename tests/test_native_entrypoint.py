@@ -32,6 +32,7 @@ class NativeEntrypointTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(data["plans"][0]["selected_argv"], ["go", "list", "-mod=readonly", "-m", "-json", "all"])
             self.assertEqual(data["plans"][0]["edges_argv"], ["go", "mod", "graph"])
+            self.assertEqual(data["plans"][0]["provider"], "go-modules")
 
     def test_native_graph_json_keeps_selected_and_required_versions_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -48,10 +49,11 @@ class NativeEntrypointTests(unittest.TestCase):
                 return NativeGraphResult(plan, modules, edges, 0)
 
             output = io.StringIO()
-            with patch("unified_project_manager.native_entrypoint.execute_native_graph", side_effect=fake_execute), redirect_stdout(output):
+            with patch("unified_project_manager.graph_entrypoint.execute_native_graph", side_effect=fake_execute), redirect_stdout(output):
                 code = main(["graph", str(root), "--native", "--json"])
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
+            self.assertEqual(data["results"][0]["provider"], "go-modules")
             edge = data["results"][0]["edges"][0]
             self.assertEqual(edge["required_version"], "v1.3.0")
             self.assertEqual(edge["selected_version"], "v1.4.0")
