@@ -42,24 +42,9 @@ sh ./scripts/test-go-symbol-reachability.sh
 
 ## Native relationship providers
 
-`--native` relationship analysis has eight public provider families:
+`--native` relationship analysis has eight public provider families: Go, npm, pnpm, Yarn Berry 2+, Cargo, uv, Poetry, and PDM. Provider-specific graph/scope evidence remains visible rather than being flattened into one universal resolver model.
 
-- **Go** — selected modules, module requirement graph, package-import `why`, replacements, module provenance; component-scoped relationship execution is cache-only/offline and workspace-isolated through `GOPROXY=off` and `GOWORK=off`;
-- **npm** — workspace-aware lock-only logical dependency tree through npm plus native lockfile-only CycloneDX/SPDX provenance;
-- **pnpm** — workspace-aware lock-only logical dependency tree preserving alias/project/dedupe occurrence evidence plus native lockfile-only CycloneDX/SPDX provenance;
-- **Yarn Berry 2+** — exact descriptor/locator and virtual/workspace identity from native `yarn info`; network disabled, install state redirected, cache immutable, and reachable-only SBOM/advisory identity;
-- **Cargo** — `cargo metadata --locked --offline`, package IDs/kinds/targets, with workspace ownership derived from Cargo manifests rather than arbitrary nesting;
-- **uv** — static universal project/workspace graph from authoritative `uv.lock`, preserving marker/fork ambiguity and selected-member scope instead of guessing;
-- **Poetry** — validated static `poetry.lock` relationships with optional/marker conditions, explicit ambiguity, reachable-only SBOM identity, and no subprocess/network/mutation;
-- **PDM** — validated static `pdm.lock` relationships with PEP-508 markers, explicit ambiguity, reachable-only SBOM identity, and no subprocess/network/mutation.
-
-Public `graph`, `why`, project/fleet `impact`, native SBOM, advisory inventory/path correlation, provider-status coverage, and fleet native inventory/duplicate correlation retain provider/scope labels rather than pretending these evidence classes are identical.
-
-### Poetry/PDM uncertainty model
-
-Poetry/PDM share `structured-lock-dependency-graph`. Their shared reachability/query model distinguishes resolved packages from ambiguity-derived `possible_packages`, renders unresolved hops as `?dependency`, propagates possible state through candidate descendants, preserves marker/optional conditions and distinct paths, and surfaces explicit path/search truncation. The same validated graph results are reused for exact-SBOM advisory correlation.
-
-Unsupported structured-lock semantics fail closed rather than falling back to an environment-dependent manager command.
+Go component-scoped relationship execution is cache-only/offline and workspace-isolated through both `GOPROXY=off` and `GOWORK=off`. Poetry/PDM share the certainty-aware `structured-lock-dependency-graph` model and fail closed on unsupported structured-lock semantics.
 
 ## Fleet native inventory and duplicate correlation
 
@@ -69,21 +54,13 @@ Unsupported structured-lock semantics fail closed rather than falling back to an
 
 CycloneDX 1.7 and SPDX 2.3 are public formats. Registry PURLs are emitted only where provenance supports them, and provider-specific uncertainty is retained rather than flattened.
 
-Aggregate SBOMs represent mixed-project topology explicitly:
-
-- CycloneDX has one deterministic aggregate `metadata.component` application root plus one application anchor per discovered UPM component;
-- SPDX has one aggregate `APPLICATION` package plus one `APPLICATION` package per component and aggregate `CONTAINS` relationships;
-- anchor identity and aggregate naming are clone-location-independent;
-- provider merges preserve the topology;
-- generic normalized inventory does not manufacture component→package dependency edges.
-
-Application anchors are topology-only and are excluded from advisory package counts without imposing a blanket `type=library` requirement on other valid CycloneDX scan targets.
+Aggregate SBOMs represent mixed-project topology explicitly with deterministic aggregate/component application anchors. Provider merges preserve those anchors and generic normalized inventory does not manufacture component→package dependency edges. Topology-only anchors are excluded from advisory package counts.
 
 See `SBOM_PROJECT_COMPONENTS.md`.
 
 ## Advisory and reachability model
 
-Advisory scanning is explicit because OSV scanning may use network access. Implemented public layers include preview-first project/fleet plans, provider-backed `audit --native`, exact scanned CycloneDX retention/fingerprinting, dependency-path correlation across all eight public provider families, structured-lock conditional/ambiguity evidence, and local evidence/policy states.
+Advisory scanning is explicit because OSV scanning may use network access. Implemented public layers include preview-first project/fleet plans, provider-backed `audit --native`, exact scanned CycloneDX retention/fingerprinting, dependency-path correlation across all eight public provider families, structured-lock uncertainty evidence, and local evidence/policy states.
 
 ### Go package-import reachability
 
@@ -96,15 +73,9 @@ upm projects audit --native --go-import-reachability
 upm projects audit --native --go-import-reachability --apply
 ```
 
-The flag requires full `--native` inventory so source evidence is queried only for vulnerable Go module impacts already correlated to the retained native scan inventory.
+The flag requires full `--native` inventory. It uses component-scoped `go mod why -m` with `GOPROXY=off` and `GOWORK=off` only for vulnerable Go impacts already correlated to the retained native scan inventory.
 
-The enrichment uses component-scoped `go mod why -m` with both `GOPROXY=off` and `GOWORK=off` and emits separate states:
-
-- `package-import-reachable`;
-- `not-package-import-reachable`;
-- `query-failed`.
-
-The Go command's package graph is any-build-tag and can include test imports, so each row records:
+Evidence remains deliberately narrower than runtime exploitability:
 
 ```text
 build_constraints = any-tags
@@ -116,50 +87,44 @@ exploitability = not-established
 persisted = false
 ```
 
-Go's current `why` implementation sets the module loader's explicit-write guard, which suppresses automatic `go.mod` and `go.sum` updates. A real-tool local regression additionally verifies that an isolated `go mod why -m` query leaves both files byte-for-byte unchanged. UPM therefore treats this enrichment as project-state read-only.
-
-Preview never executes the import query. Applied queries are report-only and are not written into `.upm/audits/osv.json`; ordinary status does not replay them as durable evidence. Query failures do not invalidate independently valid OSV scan evidence.
+Go replacements preserve logical import-query identity separately from effective replacement advisory identity. The command is project-state read-only: Go's loader suppresses automatic `go.mod`/`go.sum` writes for `why`, and a real local Go 1.23.2 regression confirmed both files stayed byte-for-byte unchanged.
 
 See `REACHABILITY_EVIDENCE.md`.
 
 ### Pre-public Go symbol/call-graph groundwork
 
-A lower-level govulncheck contract exists, but **symbol reachability is not a public UPM capability yet**.
+A lower-level govulncheck contract exists, but **symbol reachability is not a public UPM capability yet**. There is still no public CLI route/provider advertisement.
 
-Current groundwork includes:
+Implemented groundwork now includes:
 
-- govulncheck v1 streaming-JSON parsing;
-- strict `source` + `symbol` scan-mode validation;
-- mandatory local `file://` vulnerability database evidence;
+- strict govulncheck v1 streaming-JSON parsing;
+- mandatory explicit `scan_mode=source`, `scan_level=symbol`, and local `file://` database evidence;
 - module/package/symbol finding separation;
-- OSV alias retention for future correlation;
-- offline plan construction with `GOPROXY=off`, `GOWORK=off`, `GOSUMDB=off`, and `GOTOOLCHAIN=local`;
-- telemetry-mode fail-closed validation requiring the user's Go telemetry mode already be `off`.
+- an offline plan with `GOPROXY=off`, `GOWORK=off`, `GOSUMDB=off`, and `GOTOOLCHAIN=local`;
+- strict symbol correlation to existing UPM Go advisory impacts requiring exact component, advisory identity/alias, effective module, and exact version;
+- replacement-aware correlation against the effective replacement module identity;
+- fail-closed read-only preflight that revalidates project/DB/executables and requires `go env GOTELEMETRY` already be `off`;
+- an explicit public-boundary regression keeping govulncheck out of the eight-provider public registry.
 
-There is no subprocess executor or public CLI route yet. Public promotion is gated on real local-DB govulncheck execution tests, exact package/version/advisory correlation with existing UPM OSV findings, project/fleet shared semantics, mutation/cache-side-effect representation, and a dedicated freshness/persistence contract.
+Alias overlap alone cannot attach symbol evidence. Missing/mismatched module/version identity remains unmatched with a reason. Multiple competing UPM advisory aliases for one finding are refused as ambiguous.
 
-Because the no-network plan disables the checksum database, this provider does not claim to freshly verify dependency checksums. Symbol evidence and dependency-integrity evidence remain separate.
+The preflight never launches govulncheck and never changes telemetry settings. The live environment currently remains not ready: Go is installed, telemetry is `local`, govulncheck is absent, and no candidate local vulnerability DB was found. None of those conditions were mutated automatically.
+
+There is intentionally no real govulncheck execution claim yet. Public promotion remains gated on a real local-DB execution test, project/cache side-effect characterization, binding the strict correlation core to real output, shared project/fleet presentation, and separate persistence/freshness semantics.
+
+Because the offline plan disables the checksum database, symbol evidence must not be described as fresh dependency-integrity verification.
 
 See `GO_SYMBOL_REACHABILITY.md`.
 
 ### Reachability classes still not public
 
-UPM does **not** currently provide a public provider for:
-
-- current-build-configuration reachability outside a future govulncheck-specific contract;
-- vulnerable API/symbol reachability as a routed command;
-- runtime/data-flow reachability;
-- exploitability determination.
-
-Dependency presence, dependency paths, and Go package-import paths must not be promoted into those stronger claims. The pre-public parser/planner does not change this public boundary.
+UPM does **not** currently provide a public provider for vulnerable API/symbol reachability as a routed command, runtime/data-flow reachability, or exploitability determination. The pre-public govulncheck groundwork does not change that public boundary.
 
 Ordinary status/policy evaluation does not perform hidden scans, dependency-provider execution, source/import queries, or symbol analysis.
 
 ## Cache/storage safety and provenance
 
-The cache subsystem separates storage measurement, physical provenance, integrity checks, maintenance verification, prune, and clean.
-
-`upm cache provenance` is public for Go and Cargo only. Go attribution uses native-reported module directories plus selected-version download artifacts derived from the already-escaped physical path. Cargo attribution uses canonical `registry/src/<index>/<crate-version>` and `git/checkouts/<repo>/<revision>` physical source objects. Legitimate multi-crate Cargo git containers are measured once; conflicting registry identities or competing Go physical identities make an observation incomplete.
+`upm cache provenance` is public for Go and Cargo only. Go attribution uses native-reported module directories plus selected-version download artifacts derived from the already-escaped physical path. Cargo attribution uses canonical registry/git source objects, including one-object multi-crate git checkout grouping.
 
 Safety fields remain invariant:
 
@@ -169,7 +134,7 @@ reclaimable_bytes = null
 reclaimable = false
 ```
 
-npm, pnpm, and uv cache/store internals remain without per-package physical attribution rather than being heuristically parsed merely to claim coverage.
+npm, pnpm, and uv cache/store internals remain without per-package physical attribution rather than being heuristically reverse-engineered.
 
 See `CACHE_PROVENANCE.md`.
 
@@ -179,32 +144,32 @@ The runtime available to this implementation session cannot materialize the enti
 
 Focused reconstructed/local validation completed for:
 
-- real local npm lock-only graph/native SBOM workspace behavior using npm 10.9.2;
-- Cargo workspace ownership across explicit members/excludes/path-dependency fallback and unrelated nested projects (**7 focused filesystem tests passed**);
-- Yarn Berry execution compatibility against a simulated Yarn 2.4.3 runtime plus shared execution-policy checks;
-- Poetry/PDM reachability hardening (**5/5 reconstructed tests passed**);
-- separate Poetry/PDM query/advisory consolidation and possible-path rendering checks;
-- all-provider fleet core (**4/4 reconstructed checks passed**);
-- mixed-project SBOM anchors (**5/5 reconstructed checks passed**);
-- initial cache physical mapping (**5/5 reconstructed filesystem checks passed**);
-- additional Cargo physical-object checks for one-object multi-crate git checkout grouping and noncanonical shallow-checkout refusal;
-- cache provenance report semantics (**7/7 reconstructed checks passed**), plus separate identity-precision checks;
-- Go package-import reachability core (**7/7 reconstructed checks passed**) including replacement-aware logical/effective identity, any-build-tag evidence semantics, positive/negative results, query failure/skip, deduplication, and non-Go filtering;
-- Go relationship environment isolation (**3/3 reconstructed checks passed**) for graph/why `GOPROXY=off` + `GOWORK=off` behavior and unrelated-environment preservation;
-- real local Go 1.23.2 `go mod why -m` project-state immutability (**1/1 isolated check passed**) with `go.mod` and `go.sum` unchanged;
-- pre-public govulncheck parser/planner contract (**8/8 reconstructed checks passed**) covering evidence-level separation, alias/order handling, protocol/mode/level/local-DB refusal boundaries, message-shape validation, offline plan guards, and telemetry fail-closed behavior.
+- Poetry/PDM reachability hardening: **5/5**;
+- all-provider fleet core: **4/4**;
+- mixed-project SBOM anchors: **5/5**;
+- initial cache physical mapping: **5/5** plus additional Cargo physical-object precision checks;
+- cache provenance report semantics: **7/7** plus separate identity-precision checks;
+- Go package-import reachability core: **7/7**;
+- Go relationship environment isolation: **3/3**;
+- real local Go 1.23.2 `go mod why -m` project-state immutability: **1/1**;
+- pre-public govulncheck parser/planner contract: **8/8**;
+- strict govulncheck-to-UPM symbol correlation: **9/9**;
+- read-only govulncheck executable/local-state/telemetry preflight: **6/6**;
+- live symbol preflight blockers independently confirmed without changing tool, DB, or telemetry state.
 
-Project/fleet Go import-reachability CLI regressions and the pre-public symbol test driver are committed and included in aggregate local validation, but the full private checkout has not been executed end-to-end in this runtime.
+Project/fleet Go import-reachability CLI regressions and the pre-public symbol driver are committed and included in aggregate local validation, but the full private checkout has not been executed end-to-end in this runtime.
 
 ## Important remaining gaps
 
 The next highest-value work is now:
 
-1. prove the govulncheck execution/correlation boundary with a real local vulnerability DB before any public symbol-reachability promotion;
-2. add runtime/data-flow or exploitability evidence only where an ecosystem-native contract can support it; never infer those classes from dependency/import/symbol evidence;
-3. deepen physical cache provenance only where a manager-native identity contract can support it; Cargo's documented cache internals are not treated as a stable reverse-engineering API, and opaque npm/pnpm/uv internals remain unsupported;
-4. validate more of the very large branch in one materialized checkout when the execution environment can expose private branch bytes;
-5. eventually add SPDX 3.x as a dedicated model, not a shallow 2.3 translation.
+1. implement and validate a fail-closed pre-public govulncheck executor, then prove it against a real local vulnerability DB before public promotion;
+2. characterize project-state and non-project cache/tool side effects of that real execution;
+3. define shared project/fleet symbol output plus separate persistence/freshness semantics before any public CLI route;
+4. add runtime/data-flow or exploitability evidence only where an ecosystem-native contract can support it;
+5. deepen physical cache provenance only where manager-native identity supports it;
+6. validate more of the very large branch in one materialized checkout when private branch bytes are available;
+7. eventually add SPDX 3.x as a dedicated model, not a shallow 2.3 translation.
 
 ## Safety boundary
 
