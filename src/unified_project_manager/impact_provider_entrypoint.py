@@ -8,7 +8,8 @@ from pathlib import Path
 from .cargo_graph import CargoGraphError, execute_cargo_graph, plan_cargo_graphs
 from .cargo_impact import analyze_cargo_impact
 from .discovery import discover
-from .native_graph import NativeGraphError, execute_native_graph, plan_native_graph
+from .go_offline_provider import execute_native_graph_offline
+from .native_graph import NativeGraphError, plan_native_graph
 from .native_impact import analyze_native_impact
 from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
@@ -61,7 +62,7 @@ def impact_command(argv: list[str]) -> int:
     failures: list[dict[str, object]] = []
 
     for plan in go_plans:
-        result = execute_native_graph(plan)
+        result = execute_native_graph_offline(plan)
         if not result.succeeded:
             failures.append({"provider": "go-modules", "component": plan.component, "returncode": result.returncode, "error": result.stderr})
             continue
