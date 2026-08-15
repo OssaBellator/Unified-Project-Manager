@@ -26,6 +26,18 @@ class BatchOperationEntrypointTests(unittest.TestCase):
         member.mkdir(parents=True)
         (member / "package.json").write_text('{"name":"app"}', encoding="utf-8")
 
+    def _uv_workspace(self, root: Path) -> None:
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="py-root"\nversion="0.1.0"\n'
+            '[tool.uv.workspace]\nmembers=["python/*"]\n', encoding="utf-8"
+        )
+        (root / "uv.lock").write_text("version=1\n", encoding="utf-8")
+        member = root / "python" / "lib"
+        member.mkdir(parents=True)
+        (member / "pyproject.toml").write_text(
+            '[project]\nname="lib"\nversion="0.1.0"\n', encoding="utf-8"
+        )
+
     def test_sync_all_collapses_package_json_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -67,6 +79,31 @@ class BatchOperationEntrypointTests(unittest.TestCase):
             commands = {tuple(plan["argv"]) for plan in data["plans"]}
             self.assertEqual(commands, {("npm", "ci"), ("cargo", "fetch", "--locked")})
             self.assertEqual(data["workspace_batch"]["standalone_components"], ["engine:rust"])
+
+    def test_mixed_node_and_uv_workspaces_each_collapse_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._npm_workspace(root)
+            self._uv_workspace(root)
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = main(["sync", "--all", "--path", str(root), "--json"])
+
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            commands = {tuple(plan["argv"]) for plan in data["plans"]}
+            self.assertEqual(commands, {
+                ("npm", "ci"),
+                ("uv", "sync", "--all-packages", "--locked"),
+            })
+            kinds = {plan["workspace_kind"] for plan in data["workspace_batch"]["workspace_plans"]}
+            self.assertEqual(kinds, {"package-json", "uv"})
+            self.assertEqual(
+                set(data["workspace_batch"]["consumed_components"]),
+                {".:node", ".:python", "packages/app:node", "python/lib:python"},
+            )
+            self.assertEqual(data["workspace_batch"]["standalone_components"], [])
 
     def test_pnpm_workspace_is_inspected_non_mutating_before_preview(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
