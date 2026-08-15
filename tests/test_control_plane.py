@@ -83,6 +83,7 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(data["summary"]["ecosystems"], ["rust"])
             self.assertFalse(data["integrity_snapshot"]["exists"])
             self.assertEqual(data["native_verification"]["coverage"]["planned_components"], 1)
+            self.assertFalse(data["cache_integrity"]["coverage"][0]["supported"])
             self.assertIsNone(data["storage"])
             self.assertTrue(data["policy"]["passed"])
 
@@ -110,6 +111,7 @@ class StatusTests(unittest.TestCase):
             self.assertIn(code, (0, 1))
             self.assertEqual(data["summary"]["ecosystems"], ["go"])
             self.assertEqual(data["native_verification"]["coverage"]["planned_components"], 1)
+            self.assertEqual(data["cache_integrity"]["coverage"][0]["mode"], "isolated-project-cache-verify")
 
     def test_status_fails_configured_policy_violation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
