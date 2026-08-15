@@ -26,56 +26,41 @@ The dedicated reachability driver covers `GOPROXY=off` + `GOWORK=off`, any-build
 
 ## Pre-public Go vulnerable-symbol stack
 
-`scripts/test-go-symbol-reachability.sh` now runs:
+`scripts/test-go-symbol-reachability.sh` runs parser/planner, strict correlation, public-boundary, preflight, executor, project/fleet reporting, deterministic DB/runtime fixtures, and an optional real govulncheck end-to-end test.
 
-- `tests/test_go_symbol_reachability.py` — parser/planner;
-- `tests/test_go_symbol_correlation.py` — strict correlation;
-- `tests/test_go_symbol_public_boundary.py` — no public provider promotion;
-- `tests/test_go_symbol_preflight.py` — read-only readiness inspection;
-- `tests/test_go_symbol_execution.py` — fail-closed subprocess boundary;
-- `tests/test_go_symbol_reporting.py` — shared project/fleet report model.
+The deterministic fixture support is:
 
-### Parser/planner
+- `tests/support_go_vulndb_fixture.py` — writes only the published Go vulnerability DB v1 filesystem endpoints;
+- `tests/support_go_symbol_runtime_fixture.py` — writes a tiny app, versioned dependency file proxy, isolated Go caches, and the local vulnerability DB;
+- `scripts/prepare-go-symbol-validation-fixture.sh DESTINATION` — creates/prepares that fully local fixture for manual validation.
 
-Requires protocol `v1.0.0`, source+symbol scan mode, local `file://` DB, and preserves module/package/symbol levels. The plan sets `GOPROXY=off`, `GOWORK=off`, `GOSUMDB=off`, and `GOTOOLCHAIN=local`.
+### Fully local versioned dependency
 
-### Strict correlation
+The fixture uses `example.com/dep@v1.2.3` with no `replace`. Setup runs `go mod download` against only the generated `file://` module proxy, with `GOSUMDB=off` and isolated caches. The actual analysis environment then uses `GOPROXY=off`.
 
-Requires exact component/provider, advisory GO-ID/alias, effective module, and exact version. Replacement, mismatch, missing-version, ambiguity, and duplicate-path behavior are covered explicitly.
+A real installed Go 1.23.2 check already confirms the versioned dependency remains resolvable after that transition.
 
-### Preflight
+### Optional real govulncheck test
 
-Revalidates project/DB/executables and `GOTELEMETRY=off` without launching govulncheck or mutating telemetry settings.
+`tests/test_go_symbol_real_runtime.py` skips unless:
 
-### Executor
+- `go` already exists;
+- `govulncheck` already exists;
+- `go env GOTELEMETRY` is already exactly `off`.
 
-Tests cover JSON-mode vulnerable/clean success, nonzero failure, malformed evidence, DB mismatch, preflight mismatch/blocking, launch errors, and missing resolved executable. The executor remains pre-public.
+It never installs govulncheck and never changes telemetry. When runnable, it generates the local DB/proxy/caches, snapshots the project after fixture setup, executes the UPM preflight/executor/correlation/report path, requires the synthetic `GO-2099-0001` / `Danger` symbol finding, and requires the project snapshot to remain byte-for-byte identical.
 
-### Shared project/fleet reporting
+### Current live blocker
 
-Tests cover:
-
-- successful execution + strict matched symbol;
-- successful execution + explicit unmatched symbol;
-- failed execution producing no fabricated negative correlation;
-- deterministic fleet ordering;
-- independent fleet counts for execution failures, raw symbol findings, correlated matches, and unmatched symbols;
-- normalized project identity.
-
-The reporting model does not execute or persist anything.
-
-### Live runtime blocker
-
-A real govulncheck symbol scan is not claimed here:
+The DB and versioned dependency source are no longer external blockers because the repo generates them deterministically. A real govulncheck symbol scan is still not claimed here because:
 
 ```text
 govulncheck executable = absent
 Go executable = /usr/local/go/bin/go
 GOTELEMETRY = local
-usable local vulnerability DB = not found
 ```
 
-No install, DB download, or telemetry mutation was performed.
+No install or telemetry mutation was performed to bypass those conditions.
 
 ## Focused reconstructed/local results
 
@@ -91,6 +76,9 @@ No install, DB download, or telemetry mutation was performed.
 - strict symbol correlation: **9/9**;
 - govulncheck preflight: **6/6**;
 - fail-closed govulncheck executor: **9/9**;
-- shared project/fleet symbol reporting: **6/6**.
+- shared project/fleet symbol reporting: **6/6**;
+- deterministic Go vulnerability-DB fixture: **7/7**;
+- fully local versioned runtime fixture: **5/5**, including real Go file-proxy → offline-cache resolution;
+- optional real govulncheck end-to-end regression: **committed but skipped in this environment** because prerequisites are not satisfied.
 
 The full private branch still cannot be materialized and executed end-to-end in this constrained runtime. Committed local drivers are intended for a normal private checkout.
