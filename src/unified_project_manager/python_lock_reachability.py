@@ -62,9 +62,25 @@ class PythonLockAmbiguity:
     candidate_ids: tuple[str, ...]
     requirement: str | None
     marker: str | None
+    optional: bool
+    paths: tuple[PythonLockPath, ...]
+
+    @property
+    def conditional(self) -> bool:
+        return bool(self.paths) and all(path.conditional for path in self.paths)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "component": self.component,
+            "source": self.source,
+            "dependency_name": self.dependency_name,
+            "candidate_ids": list(self.candidate_ids),
+            "requirement": self.requirement,
+            "marker": self.marker,
+            "optional": self.optional,
+            "conditional": self.conditional,
+            "paths": [path.to_dict() for path in self.paths],
+        }
 
 
 @dataclass(frozen=True)
@@ -105,6 +121,23 @@ def _label(node: str, packages: dict[str, object]) -> str:
     return f"{getattr(package, 'name')}@{getattr(package, 'version')}"
 
 
+def _unique_paths(paths: list[PythonLockPath]) -> tuple[PythonLockPath, ...]:
+    unique = {
+        (path.root, path.nodes, path.markers, path.optional_edges): path
+        for path in paths
+    }
+    return tuple(sorted(
+        unique.values(),
+        key=lambda path: (
+            path.conditional,
+            len(path.nodes),
+            path.nodes,
+            path.markers,
+            path.optional_edges,
+        ),
+    ))
+
+
 def analyze_python_lock_reachability(
     result: PythonLockGraphResult,
     package_name: str,
@@ -114,7 +147,8 @@ def analyze_python_lock_reachability(
     Resolved edges remain usable even when marker-conditional, but the markers
     and optional-edge count travel with the path. Ambiguous references never
     become graph edges; if they are themselves reachable and match the query,
-    they are returned as explicit ambiguity evidence instead.
+    they are returned with candidate ids and the exact conditional path to the
+    unresolved hop instead of manufacturing a package path.
     """
     if not result.succeeded:
         raise PythonLockGraphError(result.error)
@@ -139,15 +173,15 @@ def analyze_python_lock_reachability(
     }
 
     found_paths: dict[str, list[PythonLockPath]] = defaultdict(list)
+    node_paths: dict[str, list[PythonLockPath]] = defaultdict(list)
     reachable_nodes: set[str] = set()
 
     for root in result.project_roots:
         queue: deque[tuple[str, tuple[str, ...], tuple[str, ...], int]] = deque([
             (root, (root,), (), 0),
         ])
-        # Keep the best state per node by conditional burden. A package can have
-        # both unconditional and conditional routes, so retain one shortest path
-        # for each distinct (marker-set, optional-count) state.
+        # A package can have both unconditional and conditional routes, so retain
+        # one shortest path for each distinct (marker-set, optional-count) state.
         visited: dict[str, set[tuple[tuple[str, ...], int]]] = defaultdict(set)
         while queue:
             current, nodes, markers, optional_edges = queue.popleft()
@@ -156,14 +190,16 @@ def analyze_python_lock_reachability(
                 continue
             visited[current].add(state)
             reachable_nodes.add(current)
+            current_path = PythonLockPath(
+                root=root,
+                nodes=tuple(_label(node, packages) for node in nodes),
+                markers=markers,
+                optional_edges=optional_edges,
+            )
+            node_paths[current].append(current_path)
 
             if current in matches:
-                found_paths[current].append(PythonLockPath(
-                    root=root,
-                    nodes=tuple(_label(node, packages) for node in nodes),
-                    markers=markers,
-                    optional_edges=optional_edges,
-                ))
+                found_paths[current].append(current_path)
                 # Continue traversal: matching package can itself lead to another
                 # occurrence/candidate with the same normalized name.
 
@@ -189,27 +225,13 @@ def analyze_python_lock_reachability(
         paths = found_paths.get(package_id, [])
         if not paths:
             continue
-        unique = {
-            (path.nodes, path.markers, path.optional_edges): path
-            for path in paths
-        }
-        ordered = tuple(sorted(
-            unique.values(),
-            key=lambda path: (
-                path.conditional,
-                len(path.nodes),
-                path.nodes,
-                path.markers,
-                path.optional_edges,
-            ),
-        ))
         reachable_packages.append(PythonLockReachablePackage(
             component=result.plan.component,
             package_id=package_id,
             name=package.name,
             version=package.version,
             manager=result.plan.manager,
-            paths=ordered,
+            paths=_unique_paths(paths),
         ))
 
     ambiguities: list[PythonLockAmbiguity] = []
@@ -220,6 +242,17 @@ def analyze_python_lock_reachability(
             continue
         if normalize_python_name(edge.dependency_name) != query:
             continue
+        ambiguity_paths: list[PythonLockPath] = []
+        for source_path in node_paths.get(edge.source_id, []):
+            edge_markers = _edge_markers(edge)
+            markers = tuple(dict.fromkeys((*source_path.markers, *edge_markers)))
+            optional_edges = source_path.optional_edges + (1 if edge.optional else 0)
+            ambiguity_paths.append(PythonLockPath(
+                root=source_path.root,
+                nodes=(*source_path.nodes, f"?{edge.dependency_name}"),
+                markers=markers,
+                optional_edges=optional_edges,
+            ))
         ambiguities.append(PythonLockAmbiguity(
             component=result.plan.component,
             source=_label(edge.source_id, packages),
@@ -227,6 +260,8 @@ def analyze_python_lock_reachability(
             candidate_ids=edge.candidate_ids,
             requirement=edge.requirement,
             marker=edge.marker,
+            optional=edge.optional,
+            paths=_unique_paths(ambiguity_paths),
         ))
 
     ambiguities.sort(key=lambda item: (
@@ -235,6 +270,7 @@ def analyze_python_lock_reachability(
         item.candidate_ids,
         item.requirement or "",
         item.marker or "",
+        item.optional,
     ))
     return PythonLockReachabilityReport(
         query=package_name,
