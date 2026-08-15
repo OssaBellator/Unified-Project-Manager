@@ -10,6 +10,7 @@ Current public behavior includes:
 - first-class Go workspace discovery/inspection and guarded workspace synchronization;
 - package.json workspace inspection plus native pnpm workspace ownership;
 - manifest-aware Cargo workspace ownership and local workspace diagnostics;
+- shared-lock uv workspace ownership, local health, graph/SBOM scoping, and batch synchronization;
 - structural `doctor` health plus opt-in installed-state checks;
 - toolchain and Node package-manager version checks;
 - SHA-256 project-state snapshots;
@@ -31,6 +32,8 @@ No GitHub Actions workflows are used. Validation remains local and script-driven
 ```sh
 sh ./scripts/check.sh
 sh ./scripts/test-integration.sh
+sh ./scripts/test-native-security.sh
+sh ./scripts/check-all-local.sh
 ```
 
 ## Native relationship providers
@@ -41,7 +44,7 @@ sh ./scripts/test-integration.sh
 - **npm** — workspace-aware lock-only logical dependency tree through npm plus native lockfile-only CycloneDX/SPDX provenance;
 - **pnpm** — workspace-aware lock-only logical dependency tree preserving alias/project/dedupe occurrence evidence plus native lockfile-only CycloneDX/SPDX provenance;
 - **Cargo** — `cargo metadata --locked --offline`, package IDs/kinds/targets, with workspace ownership derived from Cargo manifests rather than arbitrary nesting;
-- **uv** — static universal-lock graph retaining marker/fork ambiguity instead of guessing.
+- **uv** — static universal project/workspace graph from authoritative `uv.lock`, preserving marker/fork ambiguity and selected-member scope instead of guessing.
 
 Public `graph`, `why`, `impact`, fleet impact, and native SBOM routes retain provider/scope labels rather than pretending these evidence classes are identical.
 
@@ -70,15 +73,26 @@ Workspace ownership is part of the provider contract rather than a CLI formattin
 
 ### Cargo
 
-UPM no longer treats “nested below a `[workspace]` manifest” as sufficient membership proof. Static workspace ownership uses discovered Cargo manifests and:
+UPM no longer treats “nested below a `[workspace]` manifest” as sufficient membership proof.
 
-- `[workspace].members` paths/globs;
-- `[workspace].exclude`;
-- the workspace root `[package]`, when present;
-- explicit `package.workspace` pointers;
-- discovered in-root local path dependencies.
+- explicit `[workspace].members` paths/globs define the discovered member set, subject to `[workspace].exclude`;
+- a root `[package]` is itself a workspace member;
+- when a root package has no explicit members list, discovered in-root path dependencies are followed transitively as Cargo's automatic-membership fallback;
+- `package.workspace` is root/consistency evidence for already-proven membership, not an independent membership grant.
 
 An unrelated nested Cargo project with its own lockfile remains an independent graph owner. Unmatched member patterns become local workspace-health warnings. Contradictory ownership becomes an error/blocker before native graph execution.
+
+### uv
+
+uv workspaces are modeled as one resolver state with one shared root `uv.lock`.
+
+- `[tool.uv.workspace].members` / `exclude` establish static ownership;
+- missing shared locks, overlapping ownership, and nested included uv workspaces fail closed and surface through local status health;
+- unscoped graph/provider queries read the root lock once and report all proven members as covered;
+- selecting a member promotes the read to the root lock but retains the selected project name/version, so `why`/`impact` traverse only that member's reachable package subgraph;
+- selected CycloneDX/SPDX export admits only registry packages reachable from the selected member and never relabels local/editable/path/git/url sources as PyPI packages;
+- `install --all` / `sync --all` collapse a uv workspace to one root `uv sync --all-packages`; reproducible sync adds `--locked`;
+- applied batch execution uses the ordinary mutation-receipt path, producing one shared-lock receipt rather than per-member mutations.
 
 ## Advisory model
 
@@ -89,16 +103,17 @@ Implemented layers include:
 - preview-first project and fleet OSV-Scanner plans;
 - temporary CycloneDX scan artifacts;
 - correct distinction between OSV exit code 1 (findings) and scanner failure;
-- offline Go inventory enrichment before the network-capable scanner stage;
-- dependency-path correlation for npm, pnpm, Cargo, Go, and conservative uv evidence;
+- provider-backed `audit --native` inventory whose Go/Cargo queries are forced offline, npm/pnpm SBOM queries are lockfile-only, and uv inventory is static;
+- dependency-path correlation for npm, pnpm, Cargo, Go, and uv;
 - pnpm advisory path evidence preserves alias, workspace-project, scope, and dedupe metadata;
+- uv workspace advisory paths come from the shared lock but retain the member project path that reaches the affected package;
 - versioned persisted advisory evidence at `.upm/audits/osv.json`;
 - evidence fingerprints bound to the exact scanned SBOM;
 - local evidence states: absent, current-clean, current-vulnerable, stale, native-inventory-unverified, invalid;
 - policy fields for requiring current advisory evidence, maximum evidence age, and known-vulnerability budgets;
 - automatic persistence of valid public audit outcomes (clean or vulnerable), never scanner failures.
 
-Ordinary status/policy evaluation uses persisted local evidence and does not perform a hidden advisory scan.
+Ordinary status/policy evaluation uses persisted local evidence and does not perform a hidden advisory scan or silently re-run provider inventory.
 
 ## SBOM interoperability
 
@@ -110,7 +125,7 @@ CycloneDX 1.7 and SPDX 2.3 are public formats.
 - pnpm delegates package identity/relationships to pnpm's native `--lockfile-only` SBOM. Whole workspaces use native split output; selected members use exact path filters;
 - named-registry PURL qualifiers produced by pnpm are preserved;
 - Cargo relationships are admitted only where static lock identity supports trustworthy registry endpoints;
-- uv ambiguous/conditional relationships are omitted rather than flattened into unconditional edges;
+- uv may establish PyPI identities directly from registry sources in authoritative `uv.lock`; selected workspace SBOMs are member-reachability scoped, while ambiguous/conditional relationships remain omitted rather than flattened;
 - native npm/pnpm document-local refs are remapped into stable aggregate identities;
 - native CycloneDX input does not downgrade UPM's aggregate CycloneDX 1.7 schema;
 - SPDX namespaces are recomputed after native document merge so the namespace remains content-derived.
@@ -133,21 +148,16 @@ Storage measurements are never converted into generic deletion targets. Cache pr
 
 ## Current validation state
 
-The runtime available to this implementation session cannot materialize the entire private branch as a local checkout, so full-suite claims are kept conservative. The repository contains:
+The runtime available to this implementation session cannot materialize the entire private branch as a local checkout, so full-suite claims are kept conservative. The repository contains layered local validation scripts rather than GitHub Actions.
 
-```sh
-sh ./scripts/check.sh
-sh ./scripts/test-integration.sh
-```
-
-Focused reconstructed local validation completed for:
+Focused reconstructed/local validation completed for:
 
 - pnpm graph/impact parsing, workspace ownership, exact executable use, and logical occurrence metadata;
 - pnpm native SBOM split/filter planning plus CycloneDX/SPDX merge behavior;
 - real local npm lock-only graph and native SBOM workspace behavior using npm 10.9.2;
-- Cargo workspace ownership across explicit members, excludes, local path dependencies, `package.workspace`, and unrelated nested standalone projects (**5 focused filesystem tests passed**).
+- Cargo workspace ownership across explicit members, excludes, automatic path-dependency fallback, `package.workspace` non-membership behavior, and unrelated nested projects (**7 focused filesystem tests passed**).
 
-The focused cases are also represented as repository regression tests and included in `scripts/test-integration.sh`. GitHub Actions remains intentionally absent.
+The repository regression suite now additionally covers uv shared-lock ownership across public graph/impact, provider coverage, CycloneDX/SPDX selection, native advisory inventory/path correlation, zero-network status blockers, root-owned batch planning, mixed Node+uv planning, and applied mutation receipts. These are included in `scripts/test-integration.sh` / `scripts/test-native-security.sh` but the latest full branch has not been materialized and executed end-to-end in this runtime.
 
 ## Important remaining gaps
 
