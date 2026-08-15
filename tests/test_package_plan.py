@@ -65,6 +65,15 @@ class PackagePlanTests(unittest.TestCase):
             with self.subTest(manager=manager, package=package):
                 self.assertEqual(validate_executor_package_spec(manager, package, operation="add"), package)
 
+    def test_package_contract_rejects_init_even_for_direct_api_callers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            with self.assertRaises(OperationError):
+                package_execution_plan(discover(root), "init")
+            with self.assertRaises(OperationError):
+                validate_executor_package_spec("npm", "zod", operation="init")
+
     def test_go_remove_rejects_versioned_input_before_none_is_appended(self) -> None:
         with self.assertRaises(OperationError):
             validate_executor_package_spec("go", "example.com/dep@v1.0.0", operation="remove")
