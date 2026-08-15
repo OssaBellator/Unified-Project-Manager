@@ -9,6 +9,7 @@ from typing import Any
 
 from .audit_evidence import AuditEvidenceError, build_audit_evidence, write_audit_evidence
 from .discovery import discover
+from .go_import_reachability import collect_go_import_reachability
 from .security import SecurityScanError, SecurityScanResult, execute_security_scan, plan_security_scan
 from .security_impact import correlate_advisory_impact
 
@@ -18,9 +19,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="upm audit",
         description="Preview or execute vulnerability scanning over a temporary UPM CycloneDX SBOM",
     )
-    parser.add_argument(
-        "path", nargs="?", default=".",
-    )
+    parser.add_argument("path", nargs="?", default=".")
     parser.add_argument(
         "--native",
         action="store_true",
@@ -33,6 +32,14 @@ def _parser() -> argparse.ArgumentParser:
         "--native-go",
         action="store_true",
         help="Compatibility mode: enrich only with authoritative offline selected Go modules",
+    )
+    parser.add_argument(
+        "--go-import-reachability",
+        action="store_true",
+        help=(
+            "After an applied --native scan, query vulnerable Go modules with offline `go mod why -m` "
+            "and report package-import reachability separately from dependency/runtime reachability"
+        ),
     )
     parser.add_argument(
         "--apply",
@@ -63,8 +70,30 @@ def _dependency_impacts(result: SecurityScanResult) -> tuple[list[dict[str, Any]
     return [impact.to_dict() for impact in impacts], None
 
 
+def _go_import_reachability(
+    graph: object,
+    dependency_impacts: list[dict[str, Any]],
+    *,
+    enabled: bool,
+) -> list[dict[str, Any]]:
+    if not enabled or not dependency_impacts:
+        return []
+    return [
+        evidence.to_dict()
+        for evidence in collect_go_import_reachability(graph, dependency_impacts)
+    ]
+
+
 def audit_command(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
+    if args.go_import_reachability and not args.native:
+        message = "--go-import-reachability requires --native so source evidence is correlated to retained native scan inventory."
+        if args.as_json:
+            print(json.dumps({"error": message}, indent=2))
+        else:
+            print(f"upm: {message}", file=sys.stderr)
+        return 2
+
     root = Path(args.path).expanduser().resolve()
     if not root.is_dir():
         message = f"project path is not a directory: {root}"
@@ -92,6 +121,13 @@ def audit_command(argv: list[str]) -> int:
             "executed": False,
             "plan": plan.to_dict(),
             "evidence_will_be_persisted": True,
+            "go_import_reachability": {
+                "requested": args.go_import_reachability,
+                "executed": False,
+                "network": "offline" if args.go_import_reachability else None,
+                "persisted": False if args.go_import_reachability else None,
+                "scope": "package-import-graph" if args.go_import_reachability else None,
+            },
         }
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
@@ -106,6 +142,11 @@ def audit_command(argv: list[str]) -> int:
             print(f"Command: {shlex.join(plan.argv_template)}")
             if plan.native_providers:
                 print("Native provider inventory is local/offline and preview does not execute it.")
+            if args.go_import_reachability:
+                print(
+                    "Go package-import reachability is opt-in and will run offline after the applied scan; "
+                    "it is report-only and does not establish API/runtime exploitability."
+                )
             print("Preview only. OSV-Scanner may use network access; re-run with --apply to execute and persist advisory evidence.")
         return 0
 
@@ -119,6 +160,11 @@ def audit_command(argv: list[str]) -> int:
         return 2
 
     dependency_impacts, correlation_warning = _dependency_impacts(result)
+    go_import_reachability = _go_import_reachability(
+        graph,
+        dependency_impacts,
+        enabled=args.go_import_reachability and result.scanner_succeeded,
+    )
     evidence = None
     evidence_path = None
     if result.scanner_succeeded:
@@ -147,6 +193,7 @@ def audit_command(argv: list[str]) -> int:
         payload = result.to_dict()
         payload["dependency_impacts"] = dependency_impacts
         payload["dependency_impact_warning"] = correlation_warning
+        payload["go_import_reachability"] = go_import_reachability
         payload["evidence"] = evidence.to_dict() if evidence else None
         payload["evidence_path"] = str(evidence_path) if evidence_path else None
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -170,6 +217,17 @@ def audit_command(argv: list[str]) -> int:
                     print("    dependency path: " + " -> ".join(path))
                 if impact.get("evidence", {}).get("reachability") == "possible-via-ambiguous-lock-reference":
                     print("    reachability: possible via ambiguous structured-lock reference")
+            for source in go_import_reachability:
+                label = f"{source['advisory_id']} {source['package']}"
+                if source.get("version"):
+                    label += f"@{source['version']}"
+                print(f"  {label} [go-mod-why] {source['component']}")
+                print(f"    package-import reachability: {source['state']}")
+                if source.get("import_path"):
+                    print("    import path: " + " -> ".join(source["import_path"]))
+                if source.get("error"):
+                    print(f"    import query error: {source['error']}")
+                print("    API/runtime reachability: not evaluated; exploitability not established")
         else:
             print("No known vulnerabilities were reported for the scanned SBOM.")
         if correlation_warning:
