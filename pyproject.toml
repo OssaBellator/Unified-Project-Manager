@@ -12,7 +12,7 @@ authors = [{ name = "Unified Project Manager contributors" }]
 dependencies = []
 
 [project.scripts]
-upm = "unified_project_manager.entrypoint:main"
+upm = "unified_project_manager.root_entrypoint:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
