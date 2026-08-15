@@ -6,7 +6,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+from unified_project_manager.models import CommandResult
 from unified_project_manager.root_entrypoint import main
 
 
@@ -56,6 +58,41 @@ class UvWorkspaceBatchEntrypointTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(data["plans"][0]["argv"], ["uv", "sync", "--all-packages", "--locked"])
+
+    def test_applied_sync_uses_one_root_command_and_persists_shared_lock_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._workspace(root)
+
+            def fake_execute(plan, _root, verify=False):
+                self.assertFalse(verify)
+                self.assertEqual(plan.cwd, root)
+                self.assertEqual(plan.argv, ("uv", "sync", "--all-packages", "--locked"))
+                (root / "uv.lock").write_text("version=1\nrevision=2\n", encoding="utf-8")
+                return CommandResult(plan=plan, executed=True, returncode=0, stdout="synced\n")
+
+            output = io.StringIO()
+            with patch(
+                "unified_project_manager.batch_operation_entrypoint.execute_plan",
+                side_effect=fake_execute,
+            ), redirect_stdout(output):
+                code = main([
+                    "sync", "--all", "--path", str(root),
+                    "--apply", "--no-verify", "--json",
+                ])
+
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertTrue(data["executed"])
+            self.assertEqual(len(data["results"]), 1)
+            self.assertEqual(len(data["receipt"]["commands"]), 1)
+            self.assertEqual(
+                data["receipt"]["commands"][0]["argv"],
+                ["uv", "sync", "--all-packages", "--locked"],
+            )
+            changes = {item["path"]: item["status"] for item in data["receipt"]["changes"]}
+            self.assertEqual(changes["uv.lock"], "changed")
+            self.assertTrue(Path(data["receipt_path"]).is_file())
 
 
 if __name__ == "__main__":
