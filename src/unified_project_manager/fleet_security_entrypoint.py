@@ -111,10 +111,7 @@ def fleet_audit_command(argv: list[str]) -> int:
 
     if not args.apply:
         projects = [
-            {
-                "project": str(root),
-                "plan": plan.to_dict(),
-            }
+            {"project": str(root), "plan": plan.to_dict()}
             for root, _graph, plan in planned
         ]
         payload = {
@@ -143,6 +140,7 @@ def fleet_audit_command(argv: list[str]) -> int:
 
     project_results: list[dict[str, Any]] = []
     vulnerability_ids: set[str] = set()
+    inventory_failures = 0
     scanner_failures = 0
     vulnerable_projects = 0
     clean_projects = 0
@@ -151,7 +149,7 @@ def fleet_audit_command(argv: list[str]) -> int:
         try:
             result = execute_security_scan(graph, plan)
         except SecurityScanError as exc:
-            scanner_failures += 1
+            inventory_failures += 1
             project_results.append({
                 "project": str(root),
                 "result": None,
@@ -202,6 +200,7 @@ def fleet_audit_command(argv: list[str]) -> int:
         "projects": len(planned),
         "clean_projects": clean_projects,
         "vulnerable_projects": vulnerable_projects,
+        "inventory_failures": inventory_failures,
         "scanner_failures": scanner_failures,
         "planning_failures": len(planning_failures),
         "missing_projects": len(missing),
@@ -247,7 +246,7 @@ def fleet_audit_command(argv: list[str]) -> int:
         if missing:
             print(f"Skipped {len(missing)} missing registered project(s).")
 
-    if scanner_failures or planning_failures:
+    if inventory_failures or scanner_failures or planning_failures:
         return 2
     return 1 if vulnerable_projects else 0
 
