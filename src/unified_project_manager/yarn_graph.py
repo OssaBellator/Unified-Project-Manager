@@ -335,7 +335,6 @@ def execute_yarn_graph(
     base_env = os.environ.copy()
     base_env.update({
         "YARN_ENABLE_NETWORK": "0",
-        "YARN_ENABLE_HARDENED_MODE": "0",
         "YARN_ENABLE_TELEMETRY": "0",
         "YARN_ENABLE_IMMUTABLE_CACHE": "1",
         "YARN_ENABLE_COLORS": "0",
