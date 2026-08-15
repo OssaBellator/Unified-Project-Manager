@@ -29,6 +29,7 @@ for test_file in \
   tests/test_yarn_sbom_entrypoint.py \
   tests/test_yarn_security_impact.py \
   tests/test_yarn_native_audit.py \
+  tests/test_yarn_fleet_audit.py \
   tests/test_cargo_graph.py \
   tests/test_cargo_workspace.py \
   tests/test_uv_graph.py \
