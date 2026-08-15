@@ -27,14 +27,7 @@ def _append_list(target: list[Dependency], values: object, scope: str) -> None:
 
 
 def _poetry_manifest_requirement(value: object) -> tuple[str | None, bool]:
-    """Preserve Poetry direct dependency conditions needed by lock reachability.
-
-    The normalized dependency model has one requirement string plus a scope. For
-    Poetry table constraints, keep the version text and append any condition text
-    after a semicolon so the structured-lock reachability layer can retain that
-    the project edge is conditional. Source/extras details remain authoritative
-    in Poetry's own manifest/lock and are not re-resolved here.
-    """
+    """Preserve one Poetry direct dependency constraint for lock reachability."""
 
     if isinstance(value, str):
         return value or None, False
@@ -51,6 +44,13 @@ def _poetry_manifest_requirement(value: object) -> tuple[str | None, bool]:
     if conditions:
         rendered = f"{rendered}; {' && '.join(conditions)}"
     return rendered or None, bool(value.get("optional"))
+
+
+def _poetry_manifest_requirements(value: object) -> list[tuple[str | None, bool]]:
+    """Return one normalized record per Poetry alternative constraint."""
+
+    values = value if isinstance(value, list) else [value]
+    return [_poetry_manifest_requirement(item) for item in values]
 
 
 def _render_source(source: object) -> str | None:
@@ -124,9 +124,9 @@ class PythonAdapter(Adapter):
                                     if isinstance(requirement, str) and toolchains[0].requirement is None:
                                         toolchains = [ToolchainRequirement("python", requirement)]
                                     continue
-                                rendered, optional_dependency = _poetry_manifest_requirement(requirement)
-                                scope = "optional:poetry" if optional_dependency else "runtime"
-                                dependencies.append(Dependency(str(name), rendered, scope))
+                                for rendered, optional_dependency in _poetry_manifest_requirements(requirement):
+                                    scope = "optional:poetry" if optional_dependency else "runtime"
+                                    dependencies.append(Dependency(str(name), rendered, scope))
                         poetry_groups = poetry.get("group")
                         if isinstance(poetry_groups, dict):
                             for group, group_data in poetry_groups.items():
@@ -135,12 +135,12 @@ class PythonAdapter(Adapter):
                                 if not isinstance(group_deps, dict): continue
                                 group_optional = bool(group_data.get("optional"))
                                 for name, requirement in group_deps.items():
-                                    rendered, optional_dependency = _poetry_manifest_requirement(requirement)
-                                    if group_optional or optional_dependency:
-                                        scope = f"optional:development:{group}"
-                                    else:
-                                        scope = f"development:{group}"
-                                    dependencies.append(Dependency(str(name), rendered, scope))
+                                    for rendered, optional_dependency in _poetry_manifest_requirements(requirement):
+                                        if group_optional or optional_dependency:
+                                            scope = f"optional:development:{group}"
+                                        else:
+                                            scope = f"development:{group}"
+                                        dependencies.append(Dependency(str(name), rendered, scope))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
                 metadata["parse_error"] = str(exc)
 
@@ -186,7 +186,7 @@ class PythonAdapter(Adapter):
             manifests=manifests,
             lockfiles=lockfiles,
             toolchains=toolchains,
-            dependencies=sorted(dependencies, key=lambda item: (item.name.lower(), item.scope)),
+            dependencies=sorted(dependencies, key=lambda item: (item.name.lower(), item.scope, item.requirement or "")),
             resolved_packages=sorted(resolved_packages, key=lambda item: (item.name.lower(), item.version, item.location or "")),
             metadata=metadata,
         )
