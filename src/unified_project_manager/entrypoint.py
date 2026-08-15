@@ -15,6 +15,7 @@ from .impact_provider_entrypoint import dispatch_impact_provider_command
 from .initializer import InitializationError, execute_initialization, plan_initialization
 from .native_entrypoint import dispatch_native_command
 from .registry import RegistryError, registered_paths
+from .sbom_provider_entrypoint import dispatch_sbom_provider_command
 from .security_entrypoint import dispatch_security_command
 from .storage import project_storage, storage_summary
 from .tasks import TaskError, execute_task, list_native_tasks, load_tasks, plan_native_task, plan_task
@@ -269,6 +270,9 @@ def main(argv: list[str] | None = None) -> int:
     graph_result = dispatch_graph_command(arguments)
     if graph_result is not None:
         return graph_result
+    sbom_provider_result = dispatch_sbom_provider_command(arguments)
+    if sbom_provider_result is not None:
+        return sbom_provider_result
     native_result = dispatch_native_command(arguments)
     if native_result is not None:
         return native_result
