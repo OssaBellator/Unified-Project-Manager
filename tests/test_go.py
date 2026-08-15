@@ -10,7 +10,7 @@ from unified_project_manager.verifier import plan_native_verification
 
 
 class GoTests(unittest.TestCase):
-    def test_discovery_parses_requirements_sum_and_toolchain(self) -> None:
+    def test_discovery_parses_requirements_checksums_and_toolchain(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "go.mod").write_text('''module example.com/app
@@ -32,7 +32,8 @@ golang.org/x/text v0.22.0/go.mod h1:ZWZnaA==
                 [(dependency.name, dependency.scope) for dependency in component.dependencies],
                 [("golang.org/x/sys", "indirect"), ("golang.org/x/text", "runtime")],
             )
-            self.assertEqual([(package.name, package.version) for package in component.resolved_packages], [("golang.org/x/text", "v0.22.0")])
+            self.assertEqual(component.metadata["checksum_entries"], 2)
+            self.assertEqual(component.resolved_packages, [])
 
     def test_go_version_is_minimum(self) -> None:
         version = NumericVersion.parse("go version go1.24.1 linux/amd64")
