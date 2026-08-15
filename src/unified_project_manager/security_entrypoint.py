@@ -122,6 +122,12 @@ def audit_command(argv: list[str]) -> int:
 
 
 def dispatch_security_command(arguments: list[str]) -> int | None:
-    if not arguments or arguments[0] != "audit":
+    if not arguments:
         return None
-    return audit_command(arguments[1:])
+    if arguments[0] == "audit":
+        return audit_command(arguments[1:])
+    if len(arguments) >= 2 and arguments[0] == "projects" and arguments[1] == "audit":
+        from .fleet_security_entrypoint import fleet_audit_command
+
+        return fleet_audit_command(arguments[2:])
+    return None
