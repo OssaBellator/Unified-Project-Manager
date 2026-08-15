@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .discovery import discover
+from .initializer import InitializationError, execute_initialization, plan_initialization
 from .registry import RegistryError, registered_paths
 from .storage import project_storage, storage_summary
 from .tasks import TaskError, execute_task, list_native_tasks, load_tasks, plan_native_task, plan_task
@@ -40,6 +41,17 @@ def _projects_storage_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="upm projects storage", description="Measure known artifact storage across registered projects")
     parser.add_argument("--registry", help="Override the user-level project registry")
     parser.add_argument("--json", action="store_true", dest="as_json")
+    return parser
+
+
+def _go_init_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="upm init", description="Initialize a Go module using go mod init")
+    parser.add_argument("target", nargs="?", default=".")
+    parser.add_argument("--ecosystem", required=True, choices=("go",))
+    parser.add_argument("--module", required=True, help="Go module path, for example example.com/project")
+    parser.add_argument("--apply", action="store_true", help="Execute go mod init; otherwise only preview it")
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--no-verify", action="store_true", help="Skip post-initialization UPM doctor verification")
     return parser
 
 
@@ -173,6 +185,52 @@ def _projects_storage(argv: list[str]) -> int:
     return 0
 
 
+def _go_init(argv: list[str]) -> int:
+    args = _go_init_parser().parse_args(argv)
+    root = Path.cwd().resolve()
+    try:
+        plan = plan_initialization(root, args.target, "go", "go", module=args.module)
+    except InitializationError as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+    if not args.apply:
+        payload = {"executed": False, "plan": plan.to_dict(root)}
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"Component: {plan.component} ({plan.manager})")
+            print(f"Command:   {shlex.join(plan.argv)}")
+            print("Preview only. Re-run with --apply to execute this native initializer.")
+        return 0
+    result = execute_initialization(plan, root, verify=not args.no_verify)
+    if args.as_json:
+        print(json.dumps(result.to_dict(root), indent=2, sort_keys=True))
+    else:
+        print(f"Command: {shlex.join(plan.argv)}")
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    if result.returncode not in (None, 0):
+        return result.returncode if result.returncode and 0 < result.returncode < 126 else 1
+    if result.verification and result.verification.errors:
+        return 1
+    return 0
+
+
+def _is_go_init(arguments: list[str]) -> bool:
+    if not arguments or arguments[0] != "init":
+        return False
+    try:
+        index = arguments.index("--ecosystem")
+    except ValueError:
+        return False
+    return index + 1 < len(arguments) and arguments[index + 1] == "go"
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "storage":
@@ -183,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(arguments[1:])
     if len(arguments) >= 2 and arguments[0] == "projects" and arguments[1] == "storage":
         return _projects_storage(arguments[2:])
+    if _is_go_init(arguments):
+        return _go_init(arguments[1:])
 
     from .cli import main as legacy_main
     return legacy_main(arguments)
