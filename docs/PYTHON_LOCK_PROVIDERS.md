@@ -1,6 +1,6 @@
 # Structured Poetry and PDM lock-provider contract
 
-This document describes the lower-level Poetry/PDM relationship provider implemented on `feature/initial-control-plane`. It is intentionally **not yet advertised as a public native provider**. Public promotion should happen only after graph, why, impact, SBOM, advisory, provider-coverage, and failure behavior are routed together.
+This document describes the lower-level Poetry/PDM relationship provider implemented on `feature/initial-control-plane`. It is intentionally **not yet advertised as a public native provider**. Public promotion should happen only after graph, why, impact, fleet impact, SBOM, advisory, provider-coverage, and failure behavior are routed together.
 
 ## Why static lock evidence
 
@@ -14,6 +14,21 @@ The lower-level provider reads:
 It uses Python's standard-library `tomllib`. No subprocess, environment activation, network access, package installation, or project mutation occurs.
 
 Native manifests and lockfiles remain authoritative. This provider is a normalized observation layer, not a resolver.
+
+## Provider boundary
+
+`python_lock_provider.py` now centralizes the pre-promotion contract:
+
+- Poetry provider id: `poetry-lock`;
+- PDM provider id: `pdm-lock`;
+- shared scope: `structured-lock-dependency-graph`;
+- provider ownership is derived from validated lock plans;
+- validated execution is the only high-level execution path;
+- generic adapter `resolved_packages` are suppressed for provider-owned components when constructing a future native SBOM baseline.
+
+That last rule is important. The general Python adapter records every lock package as a broad static observation. Native Poetry/PDM inventory must not merge the certainty-aware provider result on top of those observations, because doing so could reintroduce orphan or ambiguous packages that structured reachability intentionally excluded.
+
+This boundary remains internal until the full promotion checklist below is satisfied.
 
 ## Identity
 
@@ -90,28 +105,37 @@ Do not add Poetry/PDM to `provider_registry` until all of the following share th
 2. `why --native` exposes conditional paths and ambiguity evidence;
 3. `impact --native` uses the same certainty-aware reachability report;
 4. fleet impact carries the same semantics;
-5. `sbom --native` uses reachable registry package identity and does not flatten markers/ambiguity;
+5. `sbom --native` suppresses generic static lock observations, uses reachable registry package identity, and does not flatten markers/ambiguity;
 6. `audit --native` scans the exact same SBOM identity and reuses retained lock-graph evidence for advisory paths;
 7. project/fleet status advertises coverage only after the public routes above exist;
 8. provider failure/unsupported lock strategy remains explicit rather than silently falling back to a heuristic or environment-dependent CLI command.
 
 ## Current local regression slice
 
-Run:
+Run the comprehensive validated slice:
 
 ```sh
-sh ./scripts/test-python-lock-native-current.sh
+sh ./scripts/test-python-lock-native-validated.sh
+```
+
+The standalone provider-boundary check is:
+
+```sh
+sh ./scripts/test-python-lock-provider-boundary.sh
 ```
 
 The focused suite covers:
 
+- provider ids, scope, ownership, and generic-static-inventory suppression;
+- supported lock-contract validation;
 - Poetry transitive relationships;
 - PDM PEP-508 markers;
 - duplicate locked-name ambiguity;
 - non-registry source identity;
 - conditional versus unconditional paths;
+- multiple retained dependency paths;
 - reachable ambiguity reporting;
 - reachable-only SBOM package identity;
-- omission of conditional/ambiguous SBOM relationships.
+- omission and annotation of conditional/ambiguous SBOM relationships.
 
-This slice is additive and local-only; no GitHub Actions workflow is required or used.
+The provider-boundary test was also run in a reconstructed local slice in this implementation environment: 3 tests passed. This validation is local-only; no GitHub Actions workflow is required or used.
