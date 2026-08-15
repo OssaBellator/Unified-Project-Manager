@@ -9,6 +9,7 @@ from pathlib import Path
 from .cache_entrypoint import dispatch_cache_command
 from .control_entrypoint import dispatch_control_command
 from .discovery import discover
+from .graph_entrypoint import dispatch_graph_command
 from .initializer import InitializationError, execute_initialization, plan_initialization
 from .impact_entrypoint import dispatch_impact_command
 from .native_entrypoint import dispatch_native_command
@@ -257,6 +258,9 @@ def main(argv: list[str] | None = None) -> int:
     impact_result = dispatch_impact_command(arguments)
     if impact_result is not None:
         return impact_result
+    graph_result = dispatch_graph_command(arguments)
+    if graph_result is not None:
+        return graph_result
     native_result = dispatch_native_command(arguments)
     if native_result is not None:
         return native_result
