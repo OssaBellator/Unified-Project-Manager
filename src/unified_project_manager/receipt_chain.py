@@ -151,7 +151,7 @@ def validate_receipt_chain(root: str | Path, path: str | Path | None = None) -> 
 
     entries = data['entries']
     previous = GENESIS
-    expected_paths: set[str] = set()
+    expected_receipts: dict[str, str] = {}
     for expected_sequence, raw in enumerate(entries, start=1):
         if not isinstance(raw, dict):
             return ReceiptChainValidation(False, data['head_hash'], receipt_chain_anchor_digest(data), (), (), (), 'Receipt-chain entry is not an object.')
@@ -162,15 +162,17 @@ def validate_receipt_chain(root: str | Path, path: str | Path | None = None) -> 
         chain_hash = raw.get('chain_hash')
         if sequence != expected_sequence or not all(isinstance(value, str) for value in (receipt_id, receipt_path, previous_hash, chain_hash)):
             return ReceiptChainValidation(False, data['head_hash'], receipt_chain_anchor_digest(data), (), (), (), 'Receipt-chain entry identity/order is invalid.')
+        if receipt_path in expected_receipts:
+            return ReceiptChainValidation(False, data['head_hash'], receipt_chain_anchor_digest(data), (), (), (), f'Receipt-chain path appears more than once: {receipt_path}')
         if previous_hash != previous or chain_hash != _entry_hash(previous, receipt_id, receipt_path, sequence):
             return ReceiptChainValidation(False, data['head_hash'], receipt_chain_anchor_digest(data), (), (), (), 'Receipt-chain hash linkage is invalid.')
-        expected_paths.add(receipt_path)
+        expected_receipts[receipt_path] = receipt_id
         previous = chain_hash
     if previous != data['head_hash']:
         return ReceiptChainValidation(False, data['head_hash'], receipt_chain_anchor_digest(data), (), (), (), 'Receipt-chain head does not match the final entry.')
 
     history = list_receipt_history(root_path)
-    current_paths: set[str] = set()
+    current_receipts: dict[str, str | None] = {}
     invalid_receipts: list[str] = []
     for item in history:
         receipt = Path(item.path).resolve()
@@ -178,19 +180,27 @@ def validate_receipt_chain(root: str | Path, path: str | Path | None = None) -> 
             relative = receipt.relative_to(root_path).as_posix()
         except ValueError:
             relative = str(receipt)
-        current_paths.add(relative)
+        current_receipts[relative] = item.receipt_id
         if not item.valid:
             invalid_receipts.append(relative)
+            continue
+        anchored_id = expected_receipts.get(relative)
+        if anchored_id is not None and item.receipt_id != anchored_id:
+            invalid_receipts.append(relative)
+
+    expected_paths = set(expected_receipts)
+    current_paths = set(current_receipts)
     missing = tuple(sorted(expected_paths - current_paths))
     unexpected = tuple(sorted(current_paths - expected_paths))
-    valid = not missing and not unexpected and not invalid_receipts
-    reason = None if valid else 'Current receipt files do not exactly match the anchored chain manifest.'
+    invalid_tuple = tuple(sorted(set(invalid_receipts)))
+    valid = not missing and not unexpected and not invalid_tuple
+    reason = None if valid else 'Current receipt files do not exactly match the anchored receipt identities and chain manifest.'
     return ReceiptChainValidation(
         valid,
         data['head_hash'],
         receipt_chain_anchor_digest(data),
         missing,
         unexpected,
-        tuple(sorted(invalid_receipts)),
+        invalid_tuple,
         reason,
     )
