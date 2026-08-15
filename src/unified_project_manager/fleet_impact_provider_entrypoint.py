@@ -18,6 +18,8 @@ from .provider_ownership import provider_owned_component_keys
 from .registry import RegistryError, registered_paths
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
+from .yarn_graph import execute_yarn_graph, plan_yarn_graphs
+from .yarn_impact import analyze_yarn_impact
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -56,6 +58,7 @@ def fleet_impact_command(argv: list[str]) -> int:
             go_plans, go_skips = plan_native_graph(graph)
             npm_plans = plan_npm_graphs(graph)
             pnpm_plans = plan_pnpm_graphs(graph)
+            yarn_plans = plan_yarn_graphs(graph)
             cargo_plans = plan_cargo_graphs(graph)
             uv_plans = plan_uv_graphs(graph)
         except (OSError, ValueError) as exc:
@@ -66,6 +69,7 @@ def fleet_impact_command(argv: list[str]) -> int:
             graph,
             npm_plans=npm_plans,
             pnpm_plans=pnpm_plans,
+            yarn_plans=yarn_plans,
             cargo_plans=cargo_plans,
             uv_plans=uv_plans,
         )
@@ -115,6 +119,21 @@ def fleet_impact_command(argv: list[str]) -> int:
                     **impact.to_dict(),
                 })
 
+        for plan in yarn_plans:
+            result = execute_yarn_graph(plan)
+            component = plan.selected_component or plan.component
+            if not result.succeeded:
+                failures.append({
+                    "project": str(root), "provider": "yarn-berry-resolution-graph", "component": component,
+                    "error": result.stderr, "returncode": result.returncode,
+                })
+                continue
+            for impact in analyze_yarn_impact(result, args.package):
+                impacts.append({
+                    "project": str(root), "provider": "yarn-berry-resolution-graph", "scope": "berry-resolution-graph",
+                    **impact.to_dict(),
+                })
+
         for plan in cargo_plans:
             result = execute_cargo_graph(plan)
             if not result.succeeded:
@@ -146,7 +165,7 @@ def fleet_impact_command(argv: list[str]) -> int:
     impacts.sort(key=lambda item: (
         str(item["project"]), str(item["provider"]), str(item["component"]),
         str(item.get("workspace_project", "")), str(item.get("ref", "")),
-        str(item.get("module", "")), str(item.get("package_id", "")),
+        str(item.get("locator", "")), str(item.get("module", "")), str(item.get("package_id", "")),
     ))
     affected_projects = sorted({str(item["project"]) for item in impacts})
 
@@ -181,6 +200,11 @@ def fleet_impact_command(argv: list[str]) -> int:
                 workspace_project = impact.get("workspace_project", ".")
                 print(f"{impact['project']} [{impact['component']}] [pnpm:{workspace_project}]: {impact['name']}{version}")
                 print("  logical path: " + " -> ".join(impact["root_path"]))
+            elif impact["provider"] == "yarn-berry-resolution-graph":
+                marker = " [virtual]" if impact.get("virtual") else ""
+                print(f"{impact['project']} [{impact['component']}] [yarn-berry]: {impact['locator']}{marker}")
+                for path in impact.get("root_paths", []):
+                    print("  locator path: " + " -> ".join(path))
             elif impact["provider"] == "cargo-metadata":
                 print(f"{impact['project']} [{impact['component']}] [cargo]: {impact['name']}@{impact['version']}")
                 for path in impact.get("workspace_paths", []):
