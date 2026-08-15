@@ -109,6 +109,12 @@ def impact_command(argv: list[str]) -> int:
 
 
 def dispatch_impact_provider_command(arguments: list[str]) -> int | None:
-    if not arguments or arguments[0] != "impact" or "--native" not in arguments:
+    if not arguments or "--native" not in arguments:
         return None
-    return impact_command(arguments[1:])
+    if arguments[0] == "impact":
+        return impact_command(arguments[1:])
+    if len(arguments) >= 2 and arguments[0] == "projects" and arguments[1] == "impact":
+        from .fleet_impact_provider_entrypoint import fleet_impact_command
+
+        return fleet_impact_command(arguments[2:])
+    return None
