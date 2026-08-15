@@ -55,6 +55,18 @@ class NativeModule:
     replacement_name: str | None = None
     replacement_version: str | None = None
     replacement_dir: str | None = None
+    indirect: bool = False
+    directory: str | None = None
+    go_mod: str | None = None
+    go_version: str | None = None
+    checksum: str | None = None
+    go_mod_checksum: str | None = None
+    origin: dict[str, Any] | None = None
+    reuse: bool = False
+    replacement_go_version: str | None = None
+    replacement_checksum: str | None = None
+    replacement_go_mod_checksum: str | None = None
+    replacement_origin: dict[str, Any] | None = None
 
     @property
     def is_local_replacement(self) -> bool:
@@ -70,17 +82,53 @@ class NativeModule:
             return self.replacement_version
         return self.version
 
+    @property
+    def effective_go_version(self) -> str | None:
+        if self.replacement_name is not None and self.replacement_go_version:
+            return self.replacement_go_version
+        return self.go_version
+
+    @property
+    def effective_checksum(self) -> str | None:
+        if self.replacement_name is not None:
+            return self.replacement_checksum
+        return self.checksum
+
+    @property
+    def effective_go_mod_checksum(self) -> str | None:
+        if self.replacement_name is not None:
+            return self.replacement_go_mod_checksum
+        return self.go_mod_checksum
+
+    @property
+    def effective_origin(self) -> dict[str, Any] | None:
+        if self.replacement_name is not None:
+            return self.replacement_origin
+        return self.origin
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "component": self.component,
             "name": self.name,
             "version": self.version,
             "main": self.main,
+            "indirect": self.indirect,
+            "directory": self.directory,
+            "go_mod": self.go_mod,
+            "go_version": self.go_version,
+            "checksum": self.checksum,
+            "go_mod_checksum": self.go_mod_checksum,
+            "origin": self.origin,
+            "reuse": self.reuse,
             "replacement": (
                 {
                     "name": self.replacement_name,
                     "version": self.replacement_version,
                     "dir": self.replacement_dir,
+                    "go_version": self.replacement_go_version,
+                    "checksum": self.replacement_checksum,
+                    "go_mod_checksum": self.replacement_go_mod_checksum,
+                    "origin": self.replacement_origin,
                     "local": self.is_local_replacement,
                 }
                 if self.replacement_name is not None
@@ -88,6 +136,10 @@ class NativeModule:
             ),
             "effective_name": self.effective_name,
             "effective_version": self.effective_version,
+            "effective_go_version": self.effective_go_version,
+            "effective_checksum": self.effective_checksum,
+            "effective_go_mod_checksum": self.effective_go_mod_checksum,
+            "effective_origin": self.effective_origin,
         }
 
 
@@ -234,6 +286,8 @@ def parse_go_selected_modules(text: str, component: str) -> list[NativeModule]:
         version = record.get("Version") if isinstance(record.get("Version"), str) else None
         replacement = record.get("Replace")
         replacement_name = replacement_version = replacement_dir = None
+        replacement_go_version = replacement_checksum = replacement_go_mod_checksum = None
+        replacement_origin = None
         if isinstance(replacement, dict):
             if isinstance(replacement.get("Path"), str):
                 replacement_name = replacement["Path"]
@@ -241,6 +295,14 @@ def parse_go_selected_modules(text: str, component: str) -> list[NativeModule]:
                 replacement_version = replacement["Version"]
             if isinstance(replacement.get("Dir"), str):
                 replacement_dir = replacement["Dir"]
+            if isinstance(replacement.get("GoVersion"), str):
+                replacement_go_version = replacement["GoVersion"]
+            if isinstance(replacement.get("Sum"), str):
+                replacement_checksum = replacement["Sum"]
+            if isinstance(replacement.get("GoModSum"), str):
+                replacement_go_mod_checksum = replacement["GoModSum"]
+            if isinstance(replacement.get("Origin"), dict):
+                replacement_origin = dict(replacement["Origin"])
         modules.append(NativeModule(
             component=component,
             name=name,
@@ -249,6 +311,18 @@ def parse_go_selected_modules(text: str, component: str) -> list[NativeModule]:
             replacement_name=replacement_name,
             replacement_version=replacement_version,
             replacement_dir=replacement_dir,
+            indirect=bool(record.get("Indirect")),
+            directory=record.get("Dir") if isinstance(record.get("Dir"), str) else None,
+            go_mod=record.get("GoMod") if isinstance(record.get("GoMod"), str) else None,
+            go_version=record.get("GoVersion") if isinstance(record.get("GoVersion"), str) else None,
+            checksum=record.get("Sum") if isinstance(record.get("Sum"), str) else None,
+            go_mod_checksum=record.get("GoModSum") if isinstance(record.get("GoModSum"), str) else None,
+            origin=dict(record["Origin"]) if isinstance(record.get("Origin"), dict) else None,
+            reuse=bool(record.get("Reuse")),
+            replacement_go_version=replacement_go_version,
+            replacement_checksum=replacement_checksum,
+            replacement_go_mod_checksum=replacement_go_mod_checksum,
+            replacement_origin=replacement_origin,
         ))
     return sorted(modules, key=lambda item: (not item.main, item.name, item.version or ""))
 
