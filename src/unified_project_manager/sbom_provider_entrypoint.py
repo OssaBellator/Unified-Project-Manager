@@ -13,6 +13,8 @@ from .models import ProjectGraph
 from .native_graph import plan_native_graph
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .operations import OperationError, select_component
+from .pnpm_sbom import PnpmSbomError, execute_pnpm_sbom, plan_pnpm_sboms
+from .pnpm_sbom_merge import merge_pnpm_cyclonedx, merge_pnpm_spdx
 from .sbom_providers import cyclonedx_bom_with_providers
 from .spdx import spdx_document
 from .uv_graph import execute_uv_graph, plan_uv_graphs
@@ -75,17 +77,19 @@ def sbom_command(argv: list[str]) -> int:
         if args.native:
             go_plans, _go_skips = plan_native_graph(full_graph, selector=args.component)
             npm_plans = plan_npm_graphs(full_graph, selector=args.component)
+            pnpm_plans = plan_pnpm_sboms(full_graph, args.format, selector=args.component)
             cargo_plans = plan_cargo_graphs(full_graph, selector=args.component)
             uv_plans = plan_uv_graphs(full_graph, selector=args.component)
         else:
-            go_plans, npm_plans, cargo_plans, uv_plans = [], [], [], []
+            go_plans, npm_plans, pnpm_plans, cargo_plans, uv_plans = [], [], [], [], []
         graph = _selected_static_graph(full_graph, args.component, cargo_plans)
-    except (OSError, ValueError) as exc:
+    except (OSError, PnpmSbomError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
     go_results = [execute_native_graph_offline(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
+    pnpm_results = [execute_pnpm_sbom(plan) for plan in pnpm_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
     failures = [
@@ -94,6 +98,9 @@ def sbom_command(argv: list[str]) -> int:
     ] + [
         ("npm-lock-tree", result.plan.component, result.stderr)
         for result in npm_results if not result.succeeded
+    ] + [
+        ("pnpm-native-sbom", result.plan.component, result.stderr)
+        for result in pnpm_results if not result.succeeded
     ] + [
         ("cargo-metadata", result.plan.component, result.stderr)
         for result in cargo_results if not result.succeeded
@@ -106,22 +113,28 @@ def sbom_command(argv: list[str]) -> int:
             print(f"upm: {provider} inventory failed for {component}: {error}", file=sys.stderr)
         return 1
 
-    if args.format == "cyclonedx":
-        document = cyclonedx_bom_with_providers(
-            graph,
-            go_results=go_results,
-            npm_results=npm_results,
-            cargo_results=cargo_results,
-            uv_results=uv_results,
-        )
-    else:
-        document = spdx_document(
-            graph,
-            go_results=go_results,
-            npm_results=npm_results,
-            cargo_results=cargo_results,
-            uv_results=_safe_spdx_uv_results(uv_results),
-        )
+    try:
+        if args.format == "cyclonedx":
+            document = cyclonedx_bom_with_providers(
+                graph,
+                go_results=go_results,
+                npm_results=npm_results,
+                cargo_results=cargo_results,
+                uv_results=uv_results,
+            )
+            document = merge_pnpm_cyclonedx(document, pnpm_results)
+        else:
+            document = spdx_document(
+                graph,
+                go_results=go_results,
+                npm_results=npm_results,
+                cargo_results=cargo_results,
+                uv_results=_safe_spdx_uv_results(uv_results),
+            )
+            document = merge_pnpm_spdx(document, pnpm_results)
+    except PnpmSbomError as exc:
+        print(f"upm: {exc}", file=sys.stderr)
+        return 1
 
     rendered = json.dumps(document, indent=2, sort_keys=True) + "\n"
     if args.output:
