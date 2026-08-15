@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.discovery import discover
-from unified_project_manager.workspace_health import node_workspace_findings
+from unified_project_manager.workspace_health import cargo_workspace_findings, node_workspace_findings, workspace_findings
 
 
 class WorkspaceHealthTests(unittest.TestCase):
@@ -50,6 +50,32 @@ class WorkspaceHealthTests(unittest.TestCase):
             findings = node_workspace_findings(discover(root))
             self.assertEqual(findings[0].code, 'workspace.invalid')
             self.assertEqual(findings[0].severity, 'error')
+
+    def test_stale_cargo_member_pattern_is_local_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'Cargo.toml').write_text('[workspace]\nmembers=["missing/*"]\n', encoding='utf-8')
+            (root / 'Cargo.lock').write_text('version=4\n', encoding='utf-8')
+
+            findings = cargo_workspace_findings(discover(root))
+
+            finding = next(item for item in findings if item.code == 'cargo.workspace.pattern-unmatched')
+            self.assertEqual(finding.severity, 'warning')
+            self.assertIn('missing/*', finding.message)
+
+    def test_aggregate_workspace_health_contains_node_and_cargo_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = root / 'node'; rust = root / 'rust'
+            node.mkdir(); rust.mkdir()
+            (node / 'package.json').write_text('{"workspaces":["missing/*"]}', encoding='utf-8')
+            (rust / 'Cargo.toml').write_text('[workspace]\nmembers=["missing/*"]\n', encoding='utf-8')
+            (rust / 'Cargo.lock').write_text('version=4\n', encoding='utf-8')
+
+            codes = {finding.code for finding in workspace_findings(discover(root))}
+
+            self.assertIn('workspace.pattern-unmatched', codes)
+            self.assertIn('cargo.workspace.pattern-unmatched', codes)
 
 
 if __name__ == '__main__':
