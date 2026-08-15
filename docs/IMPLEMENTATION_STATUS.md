@@ -41,7 +41,8 @@ Vulnerable-symbol reachability is still **not public**. Current groundwork inclu
 9. scanner-declaration identity for provenance only;
 10. Go-native candidate source/build observation;
 11. planned package-pattern/tag/test alignment guard;
-12. public-boundary regression keeping govulncheck out of the eight-provider registry.
+12. deterministic filesystem snapshot/delta support plus a prerequisite-gated real-runtime characterization command;
+13. public-boundary regression keeping govulncheck out of the eight-provider registry.
 
 Everything remains:
 
@@ -127,7 +128,7 @@ govulncheck executable = present
 GOTELEMETRY = off
 ```
 
-They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment.
+They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment. A separate local characterization command returns `blocked`/exit `2` rather than a unittest skip when prerequisites are absent; when runnable it records project/proxy/DB/module-cache/build-cache deltas and requires real scanner declaration alignment plus exact synthetic-symbol correlation.
 
 The Go-native fixture evidence above was produced with these remaining scanner prerequisites unmet:
 
@@ -143,7 +144,7 @@ The Windows full-suite runner does not install missing tools or change telemetry
 
 UPM has **not** created a persisted symbol freshness fingerprint. Neither `go.mod`/`go.sum`, the scanner SBOM, the scan-declaration SHA, nor the Go-native observation alone is accepted as freshness proof.
 
-A public/persisted symbol route remains blocked until real govulncheck execution proves scanner/observation alignment and actual project/non-project side effects are characterized.
+A public/persisted symbol route remains blocked until real govulncheck execution proves scanner/observation alignment and actual project/non-project side effects are characterized. The committed harness observes the isolated fixture/cache roots only and explicitly leaves effects outside those roots unobserved; its existence is not treated as runtime proof.
 
 ## Cache/storage boundary
 
@@ -171,15 +172,16 @@ The private branch is materialized locally and its full Python regression suite 
 - scan-SBOM trust-chain focused invariants: **12/12**;
 - scan-declaration identity: **5/5**;
 - planned build-selection alignment: **6/6**;
+- deterministic Go-symbol side-effect snapshot/delta helpers: **4/4**;
 - real Go normalized source-observation command: successful on Go 1.23.2 with project snapshot unchanged;
-- Windows PowerShell aggregate: **745 tests, 0 failures, 7 environment-dependent skips**;
+- Windows PowerShell aggregate: **749 tests, 0 failures, 7 environment-dependent skips**;
 - optional real govulncheck execution/alignment: committed and prerequisite-gated.
 
 ## Important remaining gaps
 
 1. run real govulncheck against the generated local fixture when the executable exists and telemetry is already `off`;
 2. validate declaration/source-selection alignment and strict correlation against that real stream;
-3. characterize project and non-project cache/tool side effects from the real scanner;
+3. run the committed characterization command, inspect its exact isolated-cache deltas, and separately account for any machine/tool state outside the observed roots before claiming side-effect safety;
 4. only then define conservative persisted symbol freshness semantics;
 5. add runtime/data-flow or exploitability evidence only where ecosystem-native evidence supports it;
 6. deepen physical cache provenance only where manager-native identity supports it;

@@ -20,8 +20,9 @@ The branch now contains:
 4. fail-closed subprocess executor gated by the exact preflight;
 5. one shared project/fleet reporting model over already-built execution/correlation results;
 6. deterministic local vulnerability-DB and versioned-module runtime fixtures;
-7. an optional real govulncheck end-to-end regression gated by existing tool/telemetry state;
-8. a public-boundary regression keeping govulncheck out of the eight-provider registry.
+7. deterministic filesystem snapshot/delta support for runtime side-effect characterization;
+8. an optional real govulncheck end-to-end regression plus explicit characterization command, both gated by existing tool/telemetry state;
+9. a public-boundary regression keeping govulncheck out of the eight-provider registry.
 
 There is still **no public CLI flag/provider route and no persisted symbol evidence**.
 
@@ -86,7 +87,7 @@ Govulncheck JSON mode returns exit 0 regardless of whether vulnerabilities are d
 nonzero = execution failure; stdout is not valid symbol evidence
 ```
 
-The executor remains pre-public/report-only and explicitly says real-runtime project/cache side effects still need validation.
+The executor remains pre-public/report-only. A committed characterization harness can now report project/local-fixture/isolated-cache deltas around a real scanner run, but the actual side-effect result remains unproven until that command runs with real prerequisites.
 
 ## Shared project/fleet reporting
 
@@ -181,6 +182,8 @@ When runnable, it:
 
 That test is committed but **has not run here** because the current prerequisites do not allow it.
 
+For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner declaration alignment; and requires the synthetic symbol to correlate exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
+
 ## Persistence/freshness boundary
 
 Persistence is intentionally **not implemented yet**.
@@ -193,7 +196,8 @@ Ordinary status therefore remains free of hidden symbol analysis and has no symb
 
 ```text
 project mutation = none planned; real-runtime verification still required
-non-project cache/tool mutation = possible
+observed-root side-effect characterization = harness committed; real result pending
+non-project cache/tool mutation = possible; effects outside isolated observed roots remain unobserved
 fresh checksum verification = not claimed (`GOSUMDB=off`)
 reclaimability inference = none
 ```
@@ -219,6 +223,7 @@ Focused reconstructed/local evidence:
 - shared project/fleet reporting: **6/6**;
 - deterministic vulnerability-DB fixture: **7/7**;
 - fully local versioned runtime fixture: **5/5**, including real Go file-proxy -> offline-cache resolution;
+- deterministic side-effect snapshot/delta helpers: **4/4**;
 - public registry remains the same eight providers.
 
 A real govulncheck symbol scan is still not claimed. The deterministic DB/source fixtures now exist, so current live blockers are narrower:
@@ -236,8 +241,8 @@ UPM did not install govulncheck or change telemetry settings.
 Do not add a public symbol route until all remaining items are satisfied atomically:
 
 1. run the optional real-runtime regression after govulncheck is already installed and telemetry is already `off`;
-2. characterize actual non-project cache/tool side effects from that real run;
-3. prove strict correlation against the real govulncheck stream generated from the deterministic fixture;
+2. run the committed characterization command and review its exact isolated-cache deltas without treating unobserved machine state as clean;
+3. prove declaration alignment and strict correlation against the real govulncheck stream generated from the deterministic fixture;
 4. define a conservative source/build-state fingerprint and separate symbol persistence/freshness semantics;
 5. keep ordinary status free of hidden symbol analysis.
 

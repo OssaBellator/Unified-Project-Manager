@@ -1,8 +1,5 @@
 [CmdletBinding()]
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]] $Tests
-)
+param()
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -34,28 +31,8 @@ $env:PYTHONPATH = $pythonPaths -join [IO.Path]::PathSeparator
 
 Push-Location $Root
 try {
-    if ($Tests.Count -gt 0) {
-        $resolvedTests = @(
-            foreach ($test in $Tests) {
-                $candidate = $test
-                if (-not (Test-Path $candidate) -and $test -notmatch '[\\/]' -and -not $test.EndsWith('.py')) {
-                    $localTest = Join-Path 'tests' "$test.py"
-                    if (Test-Path $localTest) {
-                        $candidate = $localTest
-                    }
-                }
-                $candidate
-            }
-        )
-        & $resolved.Exe @($resolved.Prefix) -m unittest @resolvedTests -v
-    }
-    else {
-        & $resolved.Exe @($resolved.Prefix) -m unittest discover -s tests -v
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    & $resolved.Exe @($resolved.Prefix) (Join-Path $Root 'tests/characterize_go_symbol_runtime.py')
+    exit $LASTEXITCODE
 }
 finally {
     Pop-Location

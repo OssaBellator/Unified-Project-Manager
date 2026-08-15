@@ -28,7 +28,7 @@ Windows PowerShell:
 ./scripts/check-all-local-latest.ps1
 ```
 
-`test.ps1` accepts optional test file names or paths, so focused regressions can run without a hosted CI service. `check-all-local-latest.sh` includes the complete pre-public Go symbol stack; the PowerShell aggregate compiles `src`/`tests` and runs the full standard-library unittest discovery suite. No command above invokes GitHub Actions.
+`test.ps1` accepts optional test file names or paths and puts both `src` and `tests` on `PYTHONPATH`, so focused regressions that use shared test support behave like full discovery without a hosted CI service. `check-all-local-latest.sh` includes the complete pre-public Go symbol stack; the PowerShell aggregate compiles `src`/`tests` and runs the full standard-library unittest discovery suite. No command above invokes GitHub Actions.
 
 ## Public Go package-import reachability
 
@@ -49,7 +49,8 @@ The complete local stack covers:
 - planned package-pattern/tag/test alignment;
 - candidate Go-native source/build observation;
 - Go-native vs scanner-SBOM declaration alignment;
-- optional real govulncheck execution and alignment.
+- deterministic filesystem side-effect snapshot/delta support;
+- optional real govulncheck execution, alignment, strict correlation, and isolated-cache characterization.
 
 ### Deterministic runtime fixture
 
@@ -117,6 +118,20 @@ GOTELEMETRY = local
 
 The Windows PowerShell aggregate is intentionally tool-tolerant: real-Go and real-govulncheck regressions skip when their prerequisites are absent rather than installing tools or changing telemetry.
 
+For an explicit promotion-gate check rather than a unittest skip, run:
+
+```powershell
+./scripts/characterize-go-symbol-runtime.ps1
+```
+
+or on Unix-like hosts:
+
+```sh
+sh ./scripts/characterize-go-symbol-runtime.sh
+```
+
+The characterization command returns exit code `2` with `status = blocked` when Go, govulncheck, or already-off telemetry prerequisites are unavailable. When runnable, it snapshots the project, generated local proxy/DB, isolated `GOMODCACHE`, and isolated `GOCACHE` after fixture preparation; records separate source-observation and govulncheck deltas; requires the real scanner SBOM to align with the Go-native observation; and requires the synthetic symbol to correlate exactly once. Project/proxy/DB mutation fails the command. Cache changes are reported, not reclassified as safe or reclaimable. Filesystem effects outside those observed roots remain explicitly `not-observed`.
+
 Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanner alignment is still necessary; local Go 1.23.2 observation is not treated as scanner-runtime proof.
 
 ## Focused reconstructed/local results
@@ -142,4 +157,4 @@ Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanne
 - normalized Go source-observation command: real Go 1.23.2 success with unchanged project snapshot;
 - optional real govulncheck execution/alignment: **committed but prerequisite-gated**.
 
-Current Windows checkout validation: **745 tests run, 0 failures, 7 skips**. The skips are limited to unavailable Go/govulncheck prerequisites and Windows symlink-creation privilege, so they remain explicit environment gaps rather than hidden passes. The Linux sandbox available here lacks `python3`, so the Unix aggregate could only be checked through shell startup/line-ending handling, not executed end-to-end in that container.
+Current Windows checkout validation: **749 tests run, 0 failures, 7 skips**. The skips are limited to unavailable Go/govulncheck prerequisites and Windows symlink-creation privilege, so they remain explicit environment gaps rather than hidden passes. The Linux sandbox available here lacks `python3`, so the Unix aggregate could only be checked through shell startup/line-ending handling, not executed end-to-end in that container.
