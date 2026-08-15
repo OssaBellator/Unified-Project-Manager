@@ -33,8 +33,8 @@ def diagnose(
     run_version: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> DoctorReport:
     report = DoctorReport(root=graph.root)
-    if not graph.components:
-        report.findings.append(Finding("project.empty", "warning", "No supported project manifests were discovered."))
+    if not graph.components and not graph.workspaces:
+        report.findings.append(Finding("project.empty", "warning", "No supported project or workspace manifests were discovered."))
         report.findings.extend(integrity_findings(graph))
         if deep:
             report.findings.extend(installed_findings(graph))
