@@ -27,15 +27,16 @@ SBOM/advisory identity is additionally scoped to locators reachable from active 
 
 The provider no longer forces `YARN_ENABLE_HARDENED_MODE`. Hardened mode was not part of the provider safety contract and forcing that configuration name could make otherwise-supported older Berry runtimes fail before graph reconstruction.
 
-The required fail-closed controls remain unchanged: Berry network access is disabled, install state is redirected outside the project, telemetry is suppressed, and the cache is immutable. A runtime that cannot reconstruct the graph under those constraints still fails explicitly.
+Execution and preview now share `yarn_execution_policy.py`, so the public preview states that hardened mode is `unchanged` rather than claiming UPM disables it. The required fail-closed controls remain unchanged: Berry network access is disabled, install state is redirected outside the project, telemetry is suppressed, and the cache is immutable. A runtime that cannot reconstruct the graph under those constraints still fails explicitly.
 
-A focused regression is available through:
+Focused regressions are available through:
 
 ```sh
+sh ./scripts/test-yarn-execution-policy.sh
 sh ./scripts/test-yarn-execution-compat.sh
 ```
 
-and the same test is included in `scripts/test-yarn-native.sh`.
+and both are included in `scripts/test-yarn-native.sh`.
 
 ## Structured Poetry/PDM provider: implemented below the public line
 
@@ -53,6 +54,14 @@ Implemented lower-level semantics include:
 - reachable-only SBOM inventory;
 - omission of conditional/ambiguous edges from unconditional SBOM relationships;
 - contract validation that rejects unsupported dependency shapes or record-level package conditions.
+
+`python_lock_provider.py` now adds the pre-promotion orchestration boundary:
+
+- provider ids `poetry-lock` and `pdm-lock`;
+- shared `structured-lock-dependency-graph` scope;
+- plan-based component ownership;
+- validated execution as the high-level provider path;
+- suppression of broad adapter `resolved_packages` for provider-owned components before a future native SBOM merge, preventing orphan/ambiguous static lock records from leaking back into certainty-aware inventory.
 
 Promotion remains gated on routing graph, why, impact, fleet impact, SBOM, audit, and provider status together. Until then, `provider_registry` should not claim Poetry/PDM native relationship coverage.
 
@@ -83,13 +92,21 @@ sh ./scripts/check-all-local-latest.sh
 Focused provider drivers include:
 
 ```sh
+sh ./scripts/test-yarn-execution-policy.sh
 sh ./scripts/test-yarn-execution-compat.sh
 sh ./scripts/test-yarn-native.sh
 sh ./scripts/test-native-security.sh
+sh ./scripts/test-python-lock-provider-boundary.sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
-This execution environment still cannot materialize the entire private feature branch as one local checkout, so the latest full branch has not been executed end-to-end here. Focused local/reconstructed validation has covered the Yarn compatibility execution boundary in addition to the previously documented provider slices. Keep full-suite claims conservative until the branch is run from a normal local clone.
+Focused reconstructed/local validation in this execution environment currently includes:
+
+- Yarn execution policy: **3 tests passed**;
+- Yarn refactored Berry 2.x compatibility boundary: **1 test passed**;
+- structured Python lock provider boundary: **3 tests passed**.
+
+This execution environment still cannot materialize the entire private feature branch as one local checkout, so the latest full branch has not been executed end-to-end here. Keep full-suite claims conservative until the branch is run from a normal local clone.
 
 ## Merge hygiene
 
