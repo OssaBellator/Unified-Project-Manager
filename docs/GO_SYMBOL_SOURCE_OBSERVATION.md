@@ -106,6 +106,26 @@ build_configuration_equivalence = not-established
 
 Replacement comparison uses effective module identity, matching strict symbol correlation.
 
+## Positioned finding-frame/source correspondence
+
+`compare_positioned_govulncheck_frame_to_source_observation(...)` adds a narrower fail-closed check for one reported govulncheck frame that contains a source position. It requires exact observed package identity plus effective module/version agreement, then resolves govulncheck's module-relative `Position.Filename` against the observed package's `CompiledGoFiles`/`syntax_go_files`.
+
+The comparison normalizes `/` and `\\` separators, rejects absolute scanner filenames and `..` traversal, accepts absolute `CompiledGoFiles` only when they remain inside the observed package directory, and refuses generated/cache absolute syntax paths outside that directory. Replacement packages use effective module identity for scanner agreement while retaining the logical module namespace when deriving the package-relative path. Standard-library frames and ambiguous package/file candidates remain fail-closed.
+
+A successful result still reports:
+
+```text
+source_selection_equivalence = not-established
+build_configuration_equivalence = not-established
+freshness = not-established
+runtime_reachability = not-evaluated
+exploitability = not-established
+public = false
+persisted = false
+```
+
+This is evidence only that a particular positioned scanner frame corresponds to an observed package/syntax file. It does not prove complete `go/packages` versus `go list` source selection or call-graph freshness.
+
 ## Real local Go evidence
 
 On the generated fully local fixture, the installed Go tool already proved offline package/source observation and project-state immutability.
@@ -127,9 +147,9 @@ This proves the candidate command is locally executable on Go 1.23.2. It does **
 
 `tests/test_go_symbol_real_alignment.py` skips unless `go` and `govulncheck` already exist and `GOTELEMETRY` is already `off`. It never installs a tool or changes telemetry.
 
-When runnable it uses the same generated local DB, versioned module proxy, app, and isolated caches for both the Go-native observation and real govulncheck. Before launching the scanner it requires planned build-selection alignment; afterwards it requires root/module declaration alignment.
+When runnable it uses the same generated local DB, versioned module proxy, app, and isolated caches for both the Go-native observation and real govulncheck. Before launching the scanner it requires planned build-selection alignment; afterwards it requires root/module declaration alignment and requires the synthetic vulnerable `Danger` frame's positioned source to correspond to the observed dependency package/syntax file.
 
-Passing that future check still does not by itself create a persisted freshness fingerprint.
+Passing that future check still does not establish complete source-selection equivalence and does not by itself create a persisted freshness fingerprint.
 
 ## Validation drivers
 
@@ -137,6 +157,7 @@ Passing that future check still does not by itself create a persisted freshness 
 sh ./scripts/test-go-symbol-build-selection.sh
 sh ./scripts/test-go-symbol-source-observation.sh
 sh ./scripts/test-go-symbol-source-alignment.sh
+sh ./scripts/test-go-symbol-frame-source-alignment.sh
 sh ./scripts/test-go-symbol-real-alignment.sh
 sh ./scripts/test-go-symbol-prepublic-all.sh
 ```

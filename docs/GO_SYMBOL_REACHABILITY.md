@@ -21,8 +21,9 @@ The branch now contains:
 5. one shared project/fleet reporting model over already-built execution/correlation results;
 6. deterministic local vulnerability-DB and versioned-module runtime fixtures;
 7. deterministic filesystem snapshot/delta support for runtime side-effect characterization;
-8. an optional real govulncheck end-to-end regression plus explicit characterization command, both gated by existing tool/telemetry state;
-9. a public-boundary regression keeping govulncheck out of the eight-provider registry.
+8. fail-closed positioned finding-frame/source correspondence against the Go-native observed package/syntax-file set;
+9. an optional real govulncheck end-to-end regression plus explicit characterization command, both gated by existing tool/telemetry state;
+10. a public-boundary regression keeping govulncheck out of the eight-provider registry.
 
 There is still **no public CLI flag/provider route and no persisted symbol evidence**.
 
@@ -55,6 +56,24 @@ For Go replacements, import-query identity and symbol-correlation identity inten
 ```text
 package-import query = logical/original module namespace
 symbol correlation   = effective replacement module identity
+```
+
+## Positioned finding-frame/source correspondence
+
+For a govulncheck frame that reports `Position.Filename`, UPM can now perform a narrower fail-closed correspondence check against the candidate Go-native source observation. Exact observed package identity and effective module/version must agree, and the module-relative scanner filename must resolve to one observed `CompiledGoFiles`/`syntax_go_files` entry for that package.
+
+Scanner paths with absolute roots or `..` traversal are refused. `/` and `\\` separators are normalized. Absolute compiled-file entries are accepted only when they remain inside the observed package directory; generated/cache absolute paths outside that directory are not reinterpreted as ordinary module-relative source files. Replacement packages use effective module identity for scanner agreement while deriving their package-relative path deliberately from the logical/effective module namespaces. Standard-library frames and ambiguous package/file candidates remain conservative failures.
+
+Even a match remains only frame/source correspondence:
+
+```text
+source_selection_equivalence = not-established
+build_configuration_equivalence = not-established
+freshness = not-established
+runtime_reachability = not-evaluated
+exploitability = not-established
+public = false
+persisted = false
 ```
 
 ## Offline plan and preflight
@@ -182,7 +201,7 @@ When runnable, it:
 
 That test is committed but **has not run here** because the current prerequisites do not allow it.
 
-For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner declaration alignment; and requires the synthetic symbol to correlate exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
+For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner declaration alignment; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; and requires strict UPM correlation exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
 
 ## Persistence/freshness boundary
 
@@ -223,6 +242,7 @@ Focused reconstructed/local evidence:
 - shared project/fleet reporting: **6/6**;
 - deterministic vulnerability-DB fixture: **7/7**;
 - fully local versioned runtime fixture: **5/5**, including real Go file-proxy -> offline-cache resolution;
+- positioned finding-frame/source correspondence: **11/11**;
 - deterministic side-effect snapshot/delta helpers: **4/4**;
 - public registry remains the same eight providers.
 
@@ -242,7 +262,7 @@ Do not add a public symbol route until all remaining items are satisfied atomica
 
 1. run the optional real-runtime regression after govulncheck is already installed and telemetry is already `off`;
 2. run the committed characterization command and review its exact isolated-cache deltas without treating unobserved machine state as clean;
-3. prove declaration alignment and strict correlation against the real govulncheck stream generated from the deterministic fixture;
+3. prove scanner declaration alignment, positioned finding-frame/source correspondence, and strict correlation against the real govulncheck stream generated from the deterministic fixture without claiming complete source-selection equivalence;
 4. define a conservative source/build-state fingerprint and separate symbol persistence/freshness semantics;
 5. keep ordinary status free of hidden symbol analysis.
 

@@ -20,6 +20,9 @@ from support_go_symbol_side_effects import diff_named_roots, snapshot_named_root
 from support_go_vulndb_fixture import FIXTURE_ALIAS, FIXTURE_ID, FIXTURE_SYMBOL
 from unified_project_manager.go_symbol_build_selection import compare_go_symbol_build_selection
 from unified_project_manager.go_symbol_correlation import correlate_govulncheck_symbols
+from unified_project_manager.go_symbol_frame_source_alignment import (
+    compare_positioned_govulncheck_frame_to_source_observation,
+)
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
 from unified_project_manager.go_symbol_preflight import preflight_govulncheck_symbol
 from unified_project_manager.go_symbol_reachability import build_govulncheck_symbol_plan
@@ -195,14 +198,22 @@ def main() -> int:
         correlation = correlate_govulncheck_symbols(
             execution.report, [_dependency_impact()], component=".:go"
         )
-        synthetic_finding = any(
-            finding.osv == FIXTURE_ID
+        synthetic_findings = tuple(
+            finding
+            for finding in execution.report.symbol_findings
+            if finding.osv == FIXTURE_ID
             and finding.vulnerable_frame is not None
             and finding.vulnerable_frame.symbol == FIXTURE_SYMBOL
             and finding.vulnerable_frame.module == FIXTURE_MODULE
             and finding.vulnerable_frame.version == FIXTURE_VERSION
-            for finding in execution.report.symbol_findings
         )
+        synthetic_finding = len(synthetic_findings) == 1
+        frame_source_alignment = None
+        if synthetic_finding:
+            frame_source_alignment = compare_positioned_govulncheck_frame_to_source_observation(
+                synthetic_findings[0].vulnerable_frame,
+                observation.observation,
+            )
         immutable = [
             label
             for label in ("project", "local_module_proxy", "local_vulnerability_db")
@@ -214,7 +225,9 @@ def main() -> int:
         if not alignment.declared_inventory_match:
             failures.append("real scanner SBOM does not align with the Go-native declared inventory")
         if not synthetic_finding:
-            failures.append("real scanner stream lacks the expected synthetic vulnerable symbol")
+            failures.append("real scanner stream does not contain exactly one expected synthetic vulnerable symbol")
+        elif frame_source_alignment is None or not frame_source_alignment.matched:
+            failures.append("expected synthetic vulnerable frame does not correspond to the observed package/syntax file")
         if len(correlation.matches) != 1 or correlation.unmatched:
             failures.append("real scanner stream did not produce exactly one strict UPM correlation")
 
@@ -225,11 +238,17 @@ def main() -> int:
                 "planned_build_selection_matches": planned.matches,
                 "declared_inventory_match": alignment.declared_inventory_match,
                 "synthetic_symbol_finding": synthetic_finding,
+                "positioned_frame_source_match": (
+                    frame_source_alignment.matched if frame_source_alignment is not None else False
+                ),
                 "strict_correlation_matches": len(correlation.matches),
                 "strict_correlation_unmatched": len(correlation.unmatched),
                 "immutable_root_changes": immutable,
             },
             "alignment": alignment.to_dict(),
+            "frame_source_correspondence": (
+                frame_source_alignment.to_dict() if frame_source_alignment is not None else None
+            ),
             "side_effects": side_effects,
             "public": False,
             "persisted": False,

@@ -41,8 +41,9 @@ Vulnerable-symbol reachability is still **not public**. Current groundwork inclu
 9. scanner-declaration identity for provenance only;
 10. Go-native candidate source/build observation;
 11. planned package-pattern/tag/test alignment guard;
-12. deterministic filesystem snapshot/delta support plus a prerequisite-gated real-runtime characterization command;
-13. public-boundary regression keeping govulncheck out of the eight-provider registry.
+12. fail-closed positioned finding-frame/source correspondence against observed package `CompiledGoFiles`;
+13. deterministic filesystem snapshot/delta support plus a prerequisite-gated real-runtime characterization command;
+14. public-boundary regression keeping govulncheck out of the eight-provider registry.
 
 Everything remains:
 
@@ -115,6 +116,24 @@ A real local Go 1.23.2 check confirms the normalized loader command succeeds, ho
 
 Current govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0. That makes the optional real scanner alignment especially important; successful local Go 1.23.2 observation does not imply scanner-runtime equivalence.
 
+### Positioned finding-frame/source correspondence
+
+A new reconstructed comparator checks one govulncheck frame with `Position.Filename` against the Go-native observed package/syntax-file set. The scanner package must exist exactly once; effective module/version must match; module-relative path traversal or absolute scanner paths are rejected; and absolute `CompiledGoFiles` are usable only when contained by the observed package directory. Replacement identity is explicit, standard-library correspondence is deliberately conservative, and ambiguity fails closed.
+
+This result is intentionally narrower than source-selection equivalence:
+
+```text
+source_selection_equivalence = not-established
+build_configuration_equivalence = not-established
+freshness = not-established
+runtime_reachability = not-evaluated
+exploitability = not-established
+public = false
+persisted = false
+```
+
+Focused reconstructed validation: **11/11**.
+
 ### Self-contained real-runtime fixture
 
 The repo generates a synthetic Go vulnerability DB v1, versioned `example.com/dep@v1.2.3` file module proxy, app calling the synthetic vulnerable `Danger` symbol, and isolated Go caches. Fixture setup contacts only the generated `file://` proxy; analysis switches to `GOPROXY=off`.
@@ -128,7 +147,7 @@ govulncheck executable = present
 GOTELEMETRY = off
 ```
 
-They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment. A separate local characterization command returns `blocked`/exit `2` rather than a unittest skip when prerequisites are absent; when runnable it records project/proxy/DB/module-cache/build-cache deltas and requires real scanner declaration alignment plus exact synthetic-symbol correlation.
+They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment. A separate local characterization command returns `blocked`/exit `2` rather than a unittest skip when prerequisites are absent; when runnable it records project/proxy/DB/module-cache/build-cache deltas and requires real scanner declaration alignment, exactly one expected synthetic symbol finding, positioned `Danger` frame/source correspondence, and exact UPM correlation.
 
 The Go-native fixture evidence above was produced with these remaining scanner prerequisites unmet:
 
@@ -172,15 +191,16 @@ The private branch is materialized locally and its full Python regression suite 
 - scan-SBOM trust-chain focused invariants: **12/12**;
 - scan-declaration identity: **5/5**;
 - planned build-selection alignment: **6/6**;
+- positioned finding-frame/source correspondence: **11/11**;
 - deterministic Go-symbol side-effect snapshot/delta helpers: **4/4**;
 - real Go normalized source-observation command: successful on Go 1.23.2 with project snapshot unchanged;
-- Windows PowerShell aggregate: **749 tests, 0 failures, 7 environment-dependent skips**;
+- Windows PowerShell aggregate: **760 tests, 0 failures, 7 environment-dependent skips**;
 - optional real govulncheck execution/alignment: committed and prerequisite-gated.
 
 ## Important remaining gaps
 
 1. run real govulncheck against the generated local fixture when the executable exists and telemetry is already `off`;
-2. validate declaration/source-selection alignment and strict correlation against that real stream;
+2. validate scanner declaration alignment, positioned finding-frame/source correspondence, and strict correlation against that real stream without upgrading full source-selection equivalence;
 3. run the committed characterization command, inspect its exact isolated-cache deltas, and separately account for any machine/tool state outside the observed roots before claiming side-effect safety;
 4. only then define conservative persisted symbol freshness semantics;
 5. add runtime/data-flow or exploitability evidence only where ecosystem-native evidence supports it;

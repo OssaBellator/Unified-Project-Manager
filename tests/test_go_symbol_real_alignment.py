@@ -9,14 +9,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from support_go_symbol_runtime_fixture import (
+    FIXTURE_MODULE,
+    FIXTURE_VERSION,
     fixture_go_environment,
     prepare_module_cache,
     write_runtime_fixture,
 )
+from support_go_vulndb_fixture import FIXTURE_ID, FIXTURE_SYMBOL
 from unified_project_manager.go_symbol_build_selection import (
     compare_go_symbol_build_selection,
 )
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
+from unified_project_manager.go_symbol_frame_source_alignment import (
+    compare_positioned_govulncheck_frame_to_source_observation,
+)
 from unified_project_manager.go_symbol_preflight import preflight_govulncheck_symbol
 from unified_project_manager.go_symbol_reachability import build_govulncheck_symbol_plan
 from unified_project_manager.go_symbol_scan_alignment import (
@@ -104,6 +110,27 @@ class GoSymbolRealAlignmentTests(unittest.TestCase):
             self.assertEqual(data["freshness"], "not-established")
             self.assertEqual(data["source_selection_equivalence"], "not-established")
             self.assertEqual(data["build_configuration_equivalence"], "not-established")
+
+            synthetic_findings = tuple(
+                finding
+                for finding in symbol_execution.report.symbol_findings
+                if finding.osv == FIXTURE_ID
+                and finding.vulnerable_frame is not None
+                and finding.vulnerable_frame.symbol == FIXTURE_SYMBOL
+                and finding.vulnerable_frame.module == FIXTURE_MODULE
+                and finding.vulnerable_frame.version == FIXTURE_VERSION
+            )
+            self.assertEqual(len(synthetic_findings), 1)
+            frame_alignment = compare_positioned_govulncheck_frame_to_source_observation(
+                synthetic_findings[0].vulnerable_frame,
+                observation_execution.observation,
+            )
+            self.assertTrue(frame_alignment.matched, frame_alignment.to_dict())
+            frame_data = frame_alignment.to_dict()
+            self.assertEqual(frame_data["source_selection_equivalence"], "not-established")
+            self.assertEqual(frame_data["freshness"], "not-established")
+            self.assertEqual(frame_data["runtime_reachability"], "not-evaluated")
+            self.assertEqual(frame_data["exploitability"], "not-established")
 
 
 if __name__ == "__main__":
