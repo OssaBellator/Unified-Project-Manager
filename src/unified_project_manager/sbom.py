@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .models import Component, ProjectGraph, ResolvedPackage
+from .sbom_project_components import add_cyclonedx_project_anchors
 
 CYCLONEDX_SCHEMA = "http://cyclonedx.org/schema/bom-1.7.schema.json"
 CYCLONEDX_SPEC_VERSION = "1.7"
@@ -106,13 +107,14 @@ def cyclonedx_bom(graph: ProjectGraph) -> dict[str, Any]:
                 "occurrences": [{"location": location} for location in sorted(locations)]
             }
 
-    return {
+    document = {
         "$schema": CYCLONEDX_SCHEMA,
         "bomFormat": "CycloneDX",
         "specVersion": CYCLONEDX_SPEC_VERSION,
         "version": 1,
         "components": [components[identity] for identity in sorted(components)],
     }
+    return add_cyclonedx_project_anchors(document, graph)
 
 
 def write_cyclonedx(graph: ProjectGraph, output: str | Path) -> Path:
@@ -182,6 +184,12 @@ def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object])
 
     logical_refs: dict[tuple[str, str], str] = {}
     dependency_sets: dict[str, set[str]] = {}
+    for item in bom.get("dependencies", []):
+        if not isinstance(item, dict) or not isinstance(item.get("ref"), str):
+            continue
+        dependency_sets[item["ref"]] = {
+            value for value in item.get("dependsOn", []) if isinstance(value, str)
+        }
 
     for result in native_results:
         if not getattr(result, "succeeded", False):
