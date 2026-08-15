@@ -45,7 +45,7 @@ class ProviderRegistryTests(unittest.TestCase):
                 if item['component'] == 'yarn:node'
             )
             self.assertTrue(yarn_coverage['provider']['supports_sbom_relationships'])
-            self.assertEqual(yarn_coverage['provider']['network'], 'none')
+            self.assertEqual(yarn_coverage['provider']['network'], 'offline')
             self.assertEqual(yarn_coverage['provider']['mutation'], 'none')
 
     def test_pnpm_workspace_member_inherits_root_relationship_provider(self) -> None:
@@ -95,7 +95,7 @@ class ProviderRegistryTests(unittest.TestCase):
 
             self.assertEqual(coverage['.:node'].provider.provider, 'yarn-berry-resolution-graph')
             self.assertEqual(coverage['packages/app:node'].provider.provider, 'yarn-berry-resolution-graph')
-            self.assertEqual(coverage['packages/app:node'].provider.network, 'none')
+            self.assertEqual(coverage['packages/app:node'].provider.network, 'offline')
             self.assertTrue(coverage['packages/app:node'].provider.supports_sbom_relationships)
 
     def test_cargo_workspace_member_inherits_root_relationship_provider(self) -> None:
@@ -115,15 +115,21 @@ class ProviderRegistryTests(unittest.TestCase):
     def test_network_guarantees_are_provider_specific(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for name in ('go', 'cargo'):
+            for name in ('go', 'cargo', 'yarn'):
                 (root / name).mkdir()
             (root / 'go' / 'go.mod').write_text('module example.com/app\ngo 1.24\n', encoding='utf-8')
             (root / 'cargo' / 'Cargo.toml').write_text('[package]\nname="x"\nversion="0.1.0"\n', encoding='utf-8')
             (root / 'cargo' / 'Cargo.lock').write_text('version=4\n', encoding='utf-8')
+            (root / 'yarn' / 'package.json').write_text('{"packageManager":"yarn@4.6.0"}', encoding='utf-8')
+            (root / 'yarn' / 'yarn.lock').write_text('# lock\n', encoding='utf-8')
             coverage = provider_coverage(discover(root))
-            modes = {item.ecosystem: item.provider.network for item in coverage if item.provider}
-            self.assertEqual(modes['go'], 'offline')
-            self.assertEqual(modes['rust'], 'offline')
+            modes = {
+                (item.ecosystem, item.manager): item.provider.network
+                for item in coverage if item.provider
+            }
+            self.assertEqual(modes[('go', 'go')], 'offline')
+            self.assertEqual(modes[('rust', 'cargo')], 'offline')
+            self.assertEqual(modes[('node', 'yarn')], 'offline')
 
     def test_missing_native_state_blocks_provider_claim(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
