@@ -9,6 +9,7 @@ for test_file in \
   tests/test_python_lock_validation.py \
   tests/test_python_lock_graph.py \
   tests/test_python_lock_reachability.py \
+  tests/test_python_lock_direct_conditions.py \
   tests/test_python_lock_path_multiplicity.py \
   tests/test_python_lock_sbom.py \
   tests/test_python_lock_sbom_uncertainty.py
