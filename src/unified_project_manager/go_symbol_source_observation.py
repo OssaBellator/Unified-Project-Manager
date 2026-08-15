@@ -121,17 +121,24 @@ class GoSymbolPackageInput:
     dep_only: bool
     directory: str
     module: GoSymbolModuleInput | None
+    compiled_go_files: tuple[str, ...]
     source_files: tuple[tuple[str, tuple[str, ...]], ...]
     ignored_files: tuple[tuple[str, tuple[str, ...]], ...]
     imports: tuple[str, ...]
 
     @property
     def selected_files(self) -> tuple[str, ...]:
+        """Return broad Go/native/embed build inputs selected by the Go command."""
         return tuple(sorted({
             file
             for _field, files in self.source_files
             for file in files
         }))
+
+    @property
+    def syntax_go_files(self) -> tuple[str, ...]:
+        """Return the Go files the loader reports as suitable for type checking."""
+        return self.compiled_go_files
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +148,8 @@ class GoSymbolPackageInput:
             "dep_only": self.dep_only,
             "directory": self.directory,
             "module": self.module.to_dict() if self.module is not None else None,
+            "compiled_go_files": list(self.compiled_go_files),
+            "syntax_go_files": list(self.syntax_go_files),
             "source_files": {field: list(files) for field, files in self.source_files},
             "ignored_files": {field: list(files) for field, files in self.ignored_files},
             "selected_files": list(self.selected_files),
@@ -171,8 +180,9 @@ class GoSymbolSourceObservation:
             "govulncheck_equivalence": "not-established",
             "source_state_fingerprint": False,
             "interpretation": (
-                "Go-native package/source selection candidate only; until compared with a real "
-                "govulncheck source scan, matching observations do not establish symbol-evidence freshness"
+                "Go-native package/source selection candidate only; compiled Go syntax inputs are retained "
+                "separately from broader build inputs, but until compared with a real govulncheck source "
+                "scan matching observations do not establish symbol-evidence freshness"
             ),
         }
 
@@ -217,7 +227,15 @@ def build_go_symbol_source_observation_plan(
     return GoSymbolSourceObservationPlan(
         cwd=project,
         env_argv=(executable, "env", "-json"),
-        packages_argv=(executable, "list", "-mod=readonly", "-deps", "-json", "./..."),
+        packages_argv=(
+            executable,
+            "list",
+            "-mod=readonly",
+            "-deps",
+            "-compiled",
+            "-json",
+            "./...",
+        ),
         environment={
             "GOPROXY": "off",
             "GOWORK": "off",
@@ -329,6 +347,11 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
         if not isinstance(directory, str) or not directory:
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} is missing Dir")
 
+        compiled_go_files = _string_list(
+            record.get("CompiledGoFiles"),
+            field="CompiledGoFiles",
+            package=import_path,
+        )
         source_files = tuple(
             (field, _string_list(record.get(field), field=field, package=import_path))
             for field in SOURCE_FILE_FIELDS
@@ -346,6 +369,7 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
             dep_only=bool(record.get("DepOnly")),
             directory=str(Path(directory).expanduser().resolve()),
             module=_module_input(record.get("Module"), import_path),
+            compiled_go_files=compiled_go_files,
             source_files=source_files,
             ignored_files=ignored_files,
             imports=_string_list(record.get("Imports"), field="Imports", package=import_path),
@@ -362,7 +386,7 @@ def execute_go_symbol_source_observation(
     executable = which(plan.env_argv[0])
     if executable is None:
         return GoSymbolSourceObservationExecution(
-            plan, 127, None, "", "Go executable is not available", 
+            plan, 127, None, "", "Go executable is not available",
         )
     environment = dict(os.environ)
     environment.update(plan.environment)
@@ -401,7 +425,7 @@ def execute_go_symbol_source_observation(
         detail = (package_result.stderr or package_result.stdout or "").strip()
         return GoSymbolSourceObservationExecution(
             plan, package_result.returncode, None, detail,
-            f"`go list -mod=readonly -deps -json ./...` failed with exit code {package_result.returncode}",
+            f"`go list -mod=readonly -deps -compiled -json ./...` failed with exit code {package_result.returncode}",
         )
     try:
         packages = parse_go_symbol_package_inputs(package_result.stdout or "")
