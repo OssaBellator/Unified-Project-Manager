@@ -58,6 +58,24 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(summary["bytes"], 12)
             self.assertEqual(summary["categories"]["packages"], 4)
 
+    def test_shared_inode_set_avoids_cross_project_hardlink_double_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = root / "first"; second = root / "second"
+            for project in (first, second):
+                (project / "node_modules" / "pkg").mkdir(parents=True)
+            source = first / "node_modules" / "pkg" / "data.bin"
+            target = second / "node_modules" / "pkg" / "data.bin"
+            source.write_bytes(b"x" * 64)
+            try:
+                os.link(source, target)
+            except OSError:
+                self.skipTest("hardlinks unavailable")
+            seen: set[tuple[int, int]] = set()
+            first_entries = project_storage(ProjectGraph(first, [Component("node", first, "npm")]), seen=seen)
+            second_entries = project_storage(ProjectGraph(second, [Component("node", second, "npm")]), seen=seen)
+            self.assertEqual(storage_summary(first_entries + second_entries)["bytes"], 64)
+
 
 if __name__ == "__main__":
     unittest.main()
