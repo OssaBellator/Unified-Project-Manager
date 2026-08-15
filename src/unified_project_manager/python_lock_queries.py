@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable
+
+from .python_lock_graph import PythonLockGraphResult
+from .python_lock_provider import PYTHON_LOCK_SCOPE, python_lock_provider_name
+from .python_lock_reachability import (
+    PythonLockAmbiguity,
+    PythonLockReachablePackage,
+    analyze_python_lock_reachability,
+)
+
+
+@dataclass(frozen=True)
+class PythonLockProviderQueryResult:
+    """One certainty-aware Poetry/PDM dependency query result.
+
+    This is deliberately command-neutral. Future project `why`, project `impact`,
+    and fleet impact routing should serialize this same object rather than grow
+    separate interpretations of marker/optional/ambiguity evidence.
+    """
+
+    provider: str
+    scope: str
+    component: str
+    manager: str
+    query: str
+    packages: tuple[PythonLockReachablePackage, ...]
+    ambiguities: tuple[PythonLockAmbiguity, ...]
+
+    @property
+    def matched(self) -> bool:
+        return bool(self.packages or self.ambiguities)
+
+    @property
+    def unconditional_matches(self) -> int:
+        return sum(package.unconditional for package in self.packages)
+
+    @property
+    def conditional_matches(self) -> int:
+        return sum(not package.unconditional for package in self.packages)
+
+    @property
+    def uncertain(self) -> bool:
+        return bool(self.ambiguities or self.conditional_matches)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "scope": self.scope,
+            "component": self.component,
+            "manager": self.manager,
+            "query": self.query,
+            "matched": self.matched,
+            "uncertain": self.uncertain,
+            "summary": {
+                "packages": len(self.packages),
+                "unconditional_matches": self.unconditional_matches,
+                "conditional_matches": self.conditional_matches,
+                "ambiguities": len(self.ambiguities),
+            },
+            "packages": [package.to_dict() for package in self.packages],
+            "ambiguities": [ambiguity.to_dict() for ambiguity in self.ambiguities],
+            "interpretation": "dependency reachability only; not source/API/runtime reachability or exploitability",
+        }
+
+
+def query_python_lock_result(
+    result: PythonLockGraphResult,
+    package_name: str,
+) -> PythonLockProviderQueryResult:
+    report = analyze_python_lock_reachability(result, package_name)
+    return PythonLockProviderQueryResult(
+        provider=python_lock_provider_name(result.plan.manager),
+        scope=PYTHON_LOCK_SCOPE,
+        component=result.plan.component,
+        manager=result.plan.manager,
+        query=package_name,
+        packages=report.packages,
+        ambiguities=report.ambiguities,
+    )
+
+
+def query_python_lock_results(
+    results: Iterable[PythonLockGraphResult],
+    package_name: str,
+) -> list[PythonLockProviderQueryResult]:
+    queried = [query_python_lock_result(result, package_name) for result in results]
+    return sorted(
+        queried,
+        key=lambda item: (item.component, item.provider, item.query.lower()),
+    )
