@@ -51,6 +51,34 @@ class ProviderRegistryTests(unittest.TestCase):
             self.assertEqual(coverage['packages/app:node'].provider.provider, 'pnpm-lock-tree')
             self.assertTrue(coverage['packages/app:node'].provider.supports_sbom_relationships)
 
+    def test_npm_workspace_member_inherits_root_relationship_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'package.json').write_text('{"name":"root","packageManager":"npm@11","workspaces":["packages/*"]}', encoding='utf-8')
+            (root / 'package-lock.json').write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding='utf-8')
+            member = root / 'packages' / 'app'
+            member.mkdir(parents=True)
+            (member / 'package.json').write_text('{"name":"app"}', encoding='utf-8')
+
+            coverage = {item.component: item for item in provider_coverage(discover(root))}
+
+            self.assertEqual(coverage['.:node'].provider.provider, 'npm-lock-tree')
+            self.assertEqual(coverage['packages/app:node'].provider.provider, 'npm-lock-tree')
+
+    def test_cargo_workspace_member_inherits_root_relationship_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            member = root / 'member'
+            member.mkdir()
+            (root / 'Cargo.toml').write_text('[workspace]\nmembers=["member"]\n', encoding='utf-8')
+            (root / 'Cargo.lock').write_text('version=4\n', encoding='utf-8')
+            (member / 'Cargo.toml').write_text('[package]\nname="member"\nversion="0.1.0"\n', encoding='utf-8')
+
+            coverage = {item.component: item for item in provider_coverage(discover(root))}
+
+            self.assertEqual(coverage['.:rust'].provider.provider, 'cargo-metadata')
+            self.assertEqual(coverage['member:rust'].provider.provider, 'cargo-metadata')
+
     def test_network_guarantees_are_provider_specific(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
