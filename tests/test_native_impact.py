@@ -45,17 +45,18 @@ class NativeImpactTests(unittest.TestCase):
             self.assertEqual(impact.effective_name, "example.com/new")
             self.assertEqual(impact.selected_version, "v1.1.0")
 
-    def test_public_impact_json_labels_module_requirement_scope(self) -> None:
+    def test_public_impact_json_labels_provider_and_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "go.mod").write_text("module example.com/app\ngo 1.24\n", encoding="utf-8")
             result = _result(root)
             output = io.StringIO()
-            with patch("unified_project_manager.impact_entrypoint.execute_native_graph", return_value=result), redirect_stdout(output):
+            with patch("unified_project_manager.impact_provider_entrypoint.execute_native_graph", return_value=result), redirect_stdout(output):
                 code = main(["impact", "example.com/b", str(root), "--native", "--json"])
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
-            self.assertEqual(data["scope"], "module-requirement")
+            self.assertEqual(data["impacts"][0]["provider"], "go-modules")
+            self.assertEqual(data["impacts"][0]["scope"], "module-requirement")
             self.assertEqual(data["impacts"][0]["direct_dependents"], ["example.com/a"])
             self.assertIn(["example.com/app", "example.com/a", "example.com/b"], data["impacts"][0]["root_paths"])
 
