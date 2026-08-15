@@ -29,10 +29,20 @@ This exercises the higher-risk cross-layer contracts added during the control-pl
 ## Yarn Berry execution compatibility
 
 ```sh
+sh ./scripts/test-yarn-execution-policy.sh
 sh ./scripts/test-yarn-execution-compat.sh
 ```
 
-This focused local check verifies that the Berry provider does not inject the optional hardened-mode configuration while still forcing network refusal, telemetry suppression, immutable cache behavior, temporary install-state isolation, and the resolved Yarn executable path. The same regression is included in `scripts/test-yarn-native.sh`.
+The policy check locks the shared environment/preview contract: network disabled, telemetry disabled, immutable cache, temporary install-state semantics, and hardened mode left unchanged. The compatibility check exercises the provider call boundary with an older Berry 2.x-style runtime and verifies the resolved executable path plus temporary state cleanup. Both are included in `scripts/test-yarn-native.sh`.
+
+## Structured Poetry/PDM provider boundary
+
+```sh
+sh ./scripts/test-python-lock-provider-boundary.sh
+sh ./scripts/test-python-lock-native-validated.sh
+```
+
+The boundary check verifies the internal Poetry/PDM provider ids/scope, plan-based ownership, and suppression of broad adapter `resolved_packages` for native provider-owned components. The validated slice then covers lock-contract validation, relationship parsing, certainty-aware reachability, path multiplicity, and CycloneDX/SPDX uncertainty behavior. Poetry/PDM remain below the public native-provider line until all public routes are integrated atomically.
 
 ## Native-security focused slice
 
