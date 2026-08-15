@@ -56,6 +56,7 @@ def _dependency_impacts(result: SecurityScanResult) -> tuple[list[dict[str, Any]
             yarn_results=inventory.yarn_results,
             cargo_results=inventory.cargo_results,
             uv_results=inventory.uv_results,
+            python_lock_results=inventory.python_lock_results,
         )
     except ValueError as exc:
         return [], str(exc)
@@ -167,6 +168,8 @@ def audit_command(argv: list[str]) -> int:
                 print(f"  {label} [{impact['provider']}] {impact['component']}")
                 for path in impact.get("paths", []):
                     print("    dependency path: " + " -> ".join(path))
+                if impact.get("evidence", {}).get("reachability") == "possible-via-ambiguous-lock-reference":
+                    print("    reachability: possible via ambiguous structured-lock reference")
         else:
             print("No known vulnerabilities were reported for the scanned SBOM.")
         if correlation_warning:
