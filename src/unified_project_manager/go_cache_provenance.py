@@ -17,6 +17,7 @@ class GoCacheUse:
     purl: str
     path: str
     replacement: bool
+    cache_kind: str = 'module-source'
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -33,10 +34,12 @@ class GoCacheGroup:
     bytes: int | None
     files: int | None
     uses: tuple[GoCacheUse, ...]
+    cache_kind: str = 'module-source'
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'path': self.path,
+            'cache_kind': self.cache_kind,
             'purl': self.purl,
             'module': self.module,
             'version': self.version,
@@ -63,6 +66,46 @@ def _module_directory(module: object) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _download_artifact_paths(
+    directory: Path,
+    cache_root: Path,
+) -> list[tuple[str, Path]]:
+    """Map a native-reported module directory to existing download artifacts.
+
+    This deliberately does not encode a logical Go module path or version.
+    Instead it reuses the already-escaped relative path present in the exact
+    module directory reported by Go. If that physical directory does not have
+    the canonical ``name@version`` shape, no download-cache attribution is
+    attempted.
+    """
+
+    try:
+        relative = directory.relative_to(cache_root)
+    except ValueError:
+        return []
+    if not relative.parts or relative.parts[0] == 'cache':
+        return []
+
+    encoded_name, separator, encoded_version = relative.name.rpartition('@')
+    if not separator or not encoded_name or not encoded_version:
+        return []
+
+    download_root = (cache_root / 'cache' / 'download').resolve()
+    artifact_root = download_root / relative.parent / encoded_name / '@v'
+    result: list[tuple[str, Path]] = []
+    for suffix in ('info', 'mod', 'zip', 'ziphash'):
+        candidate = artifact_root / f'{encoded_version}.{suffix}'
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            resolved.relative_to(download_root)
+        except (OSError, ValueError):
+            continue
+        result.append((f'download-{suffix}', resolved))
+    return result
 
 
 def go_cache_uses(
@@ -98,16 +141,50 @@ def go_cache_uses(
             except ValueError:
                 skipped.append({'component': component, 'module': name, 'version': version, 'reason': 'selected module directory is outside GOMODCACHE'})
                 continue
+
+            replacement = getattr(module, 'replacement_name', None) is not None
+            purl = purl_for('go', name, version)
             uses.append(GoCacheUse(
                 project=str(project_path),
                 component=component,
                 module=name,
                 version=version,
-                purl=purl_for('go', name, version),
+                purl=purl,
                 path=str(directory),
-                replacement=getattr(module, 'replacement_name', None) is not None,
+                replacement=replacement,
+                cache_kind='module-source',
             ))
-    return sorted(uses, key=lambda item: (item.path, item.project, item.component)), skipped
+            for cache_kind, artifact in _download_artifact_paths(directory, cache_root):
+                uses.append(GoCacheUse(
+                    project=str(project_path),
+                    component=component,
+                    module=name,
+                    version=version,
+                    purl=purl,
+                    path=str(artifact),
+                    replacement=replacement,
+                    cache_kind=cache_kind,
+                ))
+    return sorted(uses, key=lambda item: (item.path, item.cache_kind, item.project, item.component)), skipped
+
+
+def _measure_cache_path(path: Path, seen: set[tuple[int, int]]) -> tuple[int | None, int | None]:
+    if path.is_symlink():
+        return None, None
+    if path.is_dir():
+        return directory_size(path, seen=seen)
+    if not path.is_file():
+        return None, None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None, None
+    identity = (stat.st_dev, stat.st_ino)
+    if stat.st_ino and identity in seen:
+        return 0, 0
+    if stat.st_ino:
+        seen.add(identity)
+    return stat.st_size, 1
 
 
 def aggregate_go_cache_uses(
@@ -115,16 +192,16 @@ def aggregate_go_cache_uses(
     *,
     measure: bool = False,
 ) -> list[GoCacheGroup]:
-    grouped: dict[tuple[str, str], list[GoCacheUse]] = {}
+    grouped: dict[tuple[str, str, str], list[GoCacheUse]] = {}
     for use in uses:
-        grouped.setdefault((use.path, use.purl), []).append(use)
+        grouped.setdefault((use.path, use.purl, use.cache_kind), []).append(use)
     result: list[GoCacheGroup] = []
     seen: set[tuple[int, int]] = set()
-    for (path_text, purl), occurrences in sorted(grouped.items()):
+    for (path_text, purl, cache_kind), occurrences in sorted(grouped.items()):
         path = Path(path_text)
         size = files = None
-        if measure and path.is_dir() and not path.is_symlink():
-            size, files = directory_size(path, seen=seen)
+        if measure:
+            size, files = _measure_cache_path(path, seen)
         first = occurrences[0]
         result.append(GoCacheGroup(
             path=path_text,
@@ -136,5 +213,6 @@ def aggregate_go_cache_uses(
             bytes=size,
             files=files,
             uses=tuple(sorted(occurrences, key=lambda item: (item.project, item.component))),
+            cache_kind=cache_kind,
         ))
     return result
