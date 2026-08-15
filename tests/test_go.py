@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.discovery import discover
+from unified_project_manager.initializer import InitializationError, plan_initialization
+from unified_project_manager.tasks import plan_native_task
 from unified_project_manager.toolchains import NumericVersion, satisfies
 from unified_project_manager.verifier import plan_native_verification
 
@@ -48,6 +50,21 @@ golang.org/x/text v0.22.0/go.mod h1:ZWZnaA==
             plans, skips = plan_native_verification(discover(root))
             self.assertEqual(skips, [])
             self.assertEqual(plans[0].argv, ("go", "mod", "tidy", "-diff"))
+
+    def test_go_init_requires_module_and_plans_native_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaises(InitializationError):
+                plan_initialization(root, "service", "go")
+            plan = plan_initialization(root, "service", "go", module="example.com/service")
+            self.assertEqual(plan.argv, ("go", "mod", "init", "example.com/service"))
+
+    def test_go_native_test_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example.com/app\ngo 1.23\n", encoding="utf-8")
+            plan = plan_native_task(discover(root), "test")
+            self.assertEqual(plan.argv, ("go", "test", "./..."))
 
 
 if __name__ == "__main__":
