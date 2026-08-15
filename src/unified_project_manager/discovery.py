@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .adapters import DEFAULT_ADAPTERS, Adapter
-from .models import ProjectGraph
+from .models import ProjectGraph, Workspace
 
 IGNORED_DIRECTORIES = {
     ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "target",
@@ -22,15 +22,27 @@ def discover(root: str | Path, adapters: Iterable[Adapter] = DEFAULT_ADAPTERS) -
 
     adapters = tuple(adapters)
     components = []
+    workspaces = []
     for current, directories, _files in os.walk(root_path):
         directories[:] = sorted(
             name for name in directories
             if name not in IGNORED_DIRECTORIES and not name.startswith(".upm")
         )
         directory = Path(current)
+
+        if (directory / "go.work").is_file():
+            workspaces.append(Workspace(
+                ecosystem="go",
+                path=directory,
+                manager="go",
+                manifests=["go.work"],
+                lockfiles=["go.work.sum"] if (directory / "go.work.sum").is_file() else [],
+            ))
+
         for adapter in adapters:
             if adapter.detect(directory):
                 components.append(adapter.inspect(directory))
 
     components.sort(key=lambda item: (item.path.relative_to(root_path).as_posix(), item.ecosystem))
-    return ProjectGraph(root=root_path, components=components)
+    workspaces.sort(key=lambda item: (item.path.relative_to(root_path).as_posix(), item.ecosystem))
+    return ProjectGraph(root=root_path, components=components, workspaces=workspaces)
