@@ -15,6 +15,7 @@ from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
 from .pnpm_graph import PnpmGraphError, execute_pnpm_graph, plan_pnpm_graphs
 from .pnpm_impact import analyze_pnpm_impact
+from .provider_ownership import provider_owned_component_keys
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
 
@@ -60,7 +61,13 @@ def impact_command(argv: list[str]) -> int:
             print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    handled_components = {plan.component for plan in [*npm_plans, *pnpm_plans, *cargo_plans, *uv_plans]}
+    handled_components = provider_owned_component_keys(
+        graph,
+        npm_plans=npm_plans,
+        pnpm_plans=pnpm_plans,
+        cargo_plans=cargo_plans,
+        uv_plans=uv_plans,
+    )
     skips = [skip for skip in go_skips if skip.component not in handled_components]
     impacts: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
