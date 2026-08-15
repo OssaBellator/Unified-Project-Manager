@@ -7,6 +7,17 @@ from pathlib import Path
 
 from .cache_integrity import plan_cache_verification, verify_go_module_cache
 from .discovery import discover
+from .global_storage import global_cache_storage, global_storage_summary
+
+
+def _storage_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="upm cache storage",
+        description="Measure authoritative machine-wide package/build cache locations",
+    )
+    parser.add_argument("--manager", action="append", choices=("go",), help="Limit probing to one manager; repeatable")
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    return parser
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -67,7 +78,36 @@ def cache_verify_command(argv: list[str]) -> int:
     return 0 if results else 1
 
 
+def cache_storage_command(argv: list[str]) -> int:
+    args = _storage_parser().parse_args(argv)
+    managers = tuple(args.manager) if args.manager else ("go",)
+    entries, skips = global_cache_storage(managers=managers)
+    summary = global_storage_summary(entries)
+    if args.as_json:
+        print(json.dumps({
+            "scope": "machine-wide-cache-storage",
+            "summary": summary,
+            "entries": [entry.to_dict() for entry in entries],
+            "skips": [skip.to_dict() for skip in skips],
+            "reclaimable": False,
+        }, indent=2, sort_keys=True))
+    else:
+        if not entries:
+            print("No supported machine-wide cache locations were measured.")
+        for entry in entries:
+            print(f"{entry.bytes / (1024 * 1024):9.2f} MiB  {entry.manager:<8} {entry.category:<13} {entry.path}")
+        print(f"Total measured shared cache: {summary['bytes'] / (1024 * 1024):.2f} MiB")
+        print("Measured bytes are not automatically reclaimable; no cleanup is performed.")
+        for skip in skips:
+            print(f"- {skip.manager}: skipped ({skip.reason})")
+    return 0 if entries else 1
+
+
 def dispatch_cache_command(arguments: list[str]) -> int | None:
-    if not arguments or arguments[0] != "verify" or "--cache" not in arguments:
+    if not arguments:
         return None
-    return cache_verify_command(arguments[1:])
+    if arguments[0] == "verify" and "--cache" in arguments:
+        return cache_verify_command(arguments[1:])
+    if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] == "storage":
+        return cache_storage_command(arguments[2:])
+    return None
