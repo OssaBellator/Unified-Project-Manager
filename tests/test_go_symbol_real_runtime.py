@@ -17,11 +17,17 @@ from support_go_symbol_runtime_fixture import (
     write_runtime_fixture,
 )
 from support_go_vulndb_fixture import FIXTURE_ALIAS, FIXTURE_ID, FIXTURE_SYMBOL
+from unified_project_manager.go_symbol_build_selection import (
+    compare_go_symbol_build_selection,
+)
 from unified_project_manager.go_symbol_correlation import correlate_govulncheck_symbols
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
 from unified_project_manager.go_symbol_preflight import preflight_govulncheck_symbol
 from unified_project_manager.go_symbol_reachability import build_govulncheck_symbol_plan
 from unified_project_manager.go_symbol_reporting import build_go_symbol_project_report
+from unified_project_manager.go_symbol_source_observation import (
+    build_go_symbol_source_observation_plan,
+)
 
 
 class GoSymbolRealRuntimeTests(unittest.TestCase):
@@ -85,6 +91,13 @@ class GoSymbolRealRuntimeTests(unittest.TestCase):
                 fixture.vulnerability_db,
                 executable=govulncheck,
             )
+            observation_plan = build_go_symbol_source_observation_plan(
+                fixture.project,
+                executable=go,
+            )
+            planned = compare_go_symbol_build_selection(plan, observation_plan)
+            self.assertTrue(planned.matches, planned.to_dict())
+
             isolated = fixture_go_environment(fixture)
             # The actual symbol scan remains GOPROXY=off via the plan. These
             # values only pin caches used by Go/govulncheck to the temp fixture.
