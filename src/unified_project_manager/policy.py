@@ -22,6 +22,7 @@ class PolicyConfig:
     allowed_managers: tuple[str, ...] = ()
     denied_managers: tuple[str, ...] = ()
     max_warnings: int | None = None
+    max_errors: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -95,6 +96,9 @@ def load_policy(root: str | Path) -> PolicyConfig:
     max_warnings = value.get("max_warnings")
     if max_warnings is not None and (not isinstance(max_warnings, int) or isinstance(max_warnings, bool) or max_warnings < 0):
         raise PolicyError("upm.toml policy.max_warnings must be a non-negative integer.")
+    max_errors = value.get("max_errors")
+    if max_errors is not None and (not isinstance(max_errors, int) or isinstance(max_errors, bool) or max_errors < 0):
+        raise PolicyError("upm.toml policy.max_errors must be a non-negative integer.")
 
     allowed = _string_list(value.get("allowed_managers"), "allowed_managers")
     denied = _string_list(value.get("denied_managers"), "denied_managers")
@@ -109,6 +113,7 @@ def load_policy(root: str | Path) -> PolicyConfig:
         allowed_managers=allowed,
         denied_managers=denied,
         max_warnings=max_warnings,
+        max_errors=max_errors,
     )
 
 
@@ -155,6 +160,12 @@ def evaluate_policy(graph: ProjectGraph, *, deep: bool = False) -> PolicyReport:
                     f"No configured non-mutating native verifier: {skip.reason}",
                     skip.component,
                 ))
+
+    if config.max_errors is not None and doctor.errors > config.max_errors:
+        report.violations.append(PolicyViolation(
+            "policy.error-budget-exceeded",
+            f"Doctor reported {doctor.errors} errors; policy allows at most {config.max_errors}.",
+        ))
 
     if config.max_warnings is not None and doctor.warnings > config.max_warnings:
         report.violations.append(PolicyViolation(
