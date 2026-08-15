@@ -8,11 +8,12 @@ from pathlib import Path
 from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
 from .cargo_impact import analyze_cargo_impact
 from .discovery import discover
-from .models import ProjectGraph
 from .native_graph import query_native_why
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
 from .operations import OperationError, select_component
+from .uv_graph import execute_uv_graph, plan_uv_graphs
+from .uv_impact import analyze_uv_impact
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,16 +29,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _selected_graph(graph: ProjectGraph, selector: str | None) -> ProjectGraph:
-    if selector is None:
-        return graph
-    try:
-        component = select_component(graph, selector)
-    except OperationError as exc:
-        raise ValueError(str(exc)) from exc
-    return ProjectGraph(graph.root, [component], graph.workspaces)
-
-
 def why_command(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
     root = Path(args.path).expanduser().resolve()
@@ -49,7 +40,16 @@ def why_command(argv: list[str]) -> int:
             print(f"upm: {message}", file=sys.stderr)
         return 2
     try:
-        graph = _selected_graph(discover(root), args.component)
+        graph = discover(root)
+        selected_key = None
+        if args.component is not None:
+            try:
+                selected_key = select_component(graph, args.component).key(graph.root)
+            except OperationError as exc:
+                raise ValueError(str(exc)) from exc
+        npm_plans = plan_npm_graphs(graph, selector=args.component)
+        cargo_plans = plan_cargo_graphs(graph, selector=args.component)
+        uv_plans = plan_uv_graphs(graph, selector=args.component)
     except (OSError, ValueError) as exc:
         if args.as_json:
             print(json.dumps({"error": str(exc)}, indent=2))
@@ -61,30 +61,27 @@ def why_command(argv: list[str]) -> int:
     failures: list[dict[str, object]] = []
     handled: set[str] = set()
 
-    go_components = [component for component in graph.components if component.ecosystem == "go"]
-    if go_components:
-        try:
-            go_results, go_skips = query_native_why(graph, args.package)
-        except ValueError as exc:
-            failures.append({"provider": "go-mod-why", "component": None, "error": str(exc), "returncode": None})
-            go_results, go_skips = [], []
-        for result in go_results:
-            handled.add(result.component)
-            if not result.succeeded:
-                failures.append({"provider": "go-mod-why", "component": result.component, "error": result.stderr, "returncode": result.returncode})
-            elif result.needed:
-                answers.append({
-                    "provider": "go-mod-why",
-                    "scope": "package-import-chain",
-                    "component": result.component,
-                    "query": args.package,
-                    "path": list(result.path),
-                })
-        for skip in go_skips:
-            if skip.ecosystem == "go":
-                handled.add(skip.component)
+    try:
+        go_results, go_skips = query_native_why(graph, args.package, selector=args.component)
+    except ValueError as exc:
+        failures.append({"provider": "go-mod-why", "component": selected_key, "error": str(exc), "returncode": None})
+        go_results, go_skips = [], []
+    for result in go_results:
+        handled.add(result.component)
+        if not result.succeeded:
+            failures.append({"provider": "go-mod-why", "component": result.component, "error": result.stderr, "returncode": result.returncode})
+        elif result.needed:
+            answers.append({
+                "provider": "go-mod-why",
+                "scope": "package-import-chain",
+                "component": result.component,
+                "query": args.package,
+                "path": list(result.path),
+            })
+    for skip in go_skips:
+        if skip.ecosystem == "go":
+            handled.add(skip.component)
 
-    npm_plans = plan_npm_graphs(graph)
     for plan in npm_plans:
         handled.add(plan.component)
         result = execute_npm_graph(plan)
@@ -98,7 +95,6 @@ def why_command(argv: list[str]) -> int:
                 **impact.to_dict(),
             })
 
-    cargo_plans = plan_cargo_graphs(graph)
     for plan in cargo_plans:
         handled.add(plan.component)
         result = execute_cargo_graph(plan)
@@ -112,6 +108,25 @@ def why_command(argv: list[str]) -> int:
                 **impact.to_dict(),
             })
 
+    for plan in uv_plans:
+        handled.add(plan.component)
+        result = execute_uv_graph(plan)
+        if not result.succeeded:
+            failures.append({"provider": "uv-lock", "component": plan.component, "error": result.error, "returncode": None})
+            continue
+        for impact in analyze_uv_impact(result, args.package):
+            answers.append({
+                "provider": "uv-lock",
+                "scope": "universal-lock-graph",
+                **impact.to_dict(),
+            })
+
+    if selected_key and (npm_plans or cargo_plans or uv_plans):
+        handled.add(selected_key)
+
+    target_components = graph.components
+    if selected_key is not None:
+        target_components = [component for component in graph.components if component.key(graph.root) == selected_key]
     skips = [
         {
             "component": component.key(graph.root),
@@ -119,7 +134,7 @@ def why_command(argv: list[str]) -> int:
             "manager": component.manager,
             "reason": "authoritative native why provider is not configured for this component",
         }
-        for component in graph.components
+        for component in target_components
         if component.key(graph.root) not in handled
     ]
     answers.sort(key=lambda item: (
@@ -144,10 +159,16 @@ def why_command(argv: list[str]) -> int:
                 version = f"@{answer['version']}" if answer.get("version") else ""
                 print(f"{answer['component']} [npm logical-tree]: {answer['name']}{version}")
                 print("  " + " -> ".join(answer["root_path"]))
-            else:
+            elif provider == "cargo-metadata":
                 print(f"{answer['component']} [cargo locked-offline]: {answer['name']}@{answer['version']}")
                 for path in answer.get("workspace_paths", []):
                     print("  " + " -> ".join(path))
+            else:
+                print(f"{answer['component']} [uv universal-lock]: {answer['name']}@{answer['version']}")
+                for path in answer.get("project_paths", []):
+                    print("  " + " -> ".join(path))
+                if answer.get("ambiguous_references"):
+                    print(f"  unresolved fork/marker references: {answer['ambiguous_references']}")
         for failure in failures:
             print(f"x {failure.get('component') or 'provider'} [{failure['provider']}]: {failure['error']}")
         for skip in skips:
