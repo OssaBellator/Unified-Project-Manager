@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -122,10 +123,22 @@ def execute_verification(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     which: Callable[[str], str | None] = shutil.which,
 ) -> VerificationResult:
-    if which(plan.argv[0]) is None:
+    executable = which(plan.argv[0])
+    if executable is None:
         return VerificationResult(plan, 127, stderr=f"Executable '{plan.argv[0]}' is not available on PATH.")
+    argv = [executable, *plan.argv[1:]]
+    kwargs: dict[str, Any] = {
+        "cwd": plan.cwd,
+        "text": True,
+        "capture_output": True,
+        "check": False,
+    }
+    if plan.manager == "go":
+        env = dict(os.environ)
+        env["GOWORK"] = "off"
+        kwargs["env"] = env
     try:
-        completed = run(list(plan.argv), cwd=plan.cwd, text=True, capture_output=True, check=False)
+        completed = run(argv, **kwargs)
     except OSError as exc:
         return VerificationResult(plan, 127, stderr=str(exc))
     return VerificationResult(plan, completed.returncode, completed.stdout or "", completed.stderr or "")
