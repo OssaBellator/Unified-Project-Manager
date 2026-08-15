@@ -5,6 +5,7 @@ from typing import Any
 
 from .doctor import diagnose
 from .models import ProjectGraph
+from .policy import evaluate_policy
 from .storage import project_storage, storage_summary
 from .verifier import plan_native_verification
 
@@ -18,6 +19,7 @@ def project_status(
     include_storage: bool = False,
 ) -> dict[str, Any]:
     report = diagnose(graph, deep=deep)
+    policy = evaluate_policy(graph, deep=deep)
     verification_plans, verification_skips = plan_native_verification(graph)
     components = [component.to_dict(graph.root) for component in graph.components]
     result: dict[str, Any] = {
@@ -31,6 +33,7 @@ def project_status(
             "resolved_packages": sum(len(component.resolved_packages) for component in graph.components),
         },
         "health": report.to_dict(),
+        "policy": policy.to_dict(),
         "integrity_snapshot": {
             "path": SNAPSHOT_PATH.as_posix(),
             "exists": (graph.root / SNAPSHOT_PATH).is_file(),
