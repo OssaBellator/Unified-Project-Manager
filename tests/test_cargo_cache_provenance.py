@@ -81,6 +81,27 @@ class CargoCacheProvenanceTests(unittest.TestCase):
             self.assertEqual(uses, [])
             self.assertEqual(len(skipped), 1)
 
+    def test_registry_index_and_git_db_are_not_package_source_attribution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cargo_home = root / '.cargo'
+            registry_index = cargo_home / 'registry' / 'index' / 'github.com-index' / 'serde-1.0.0'
+            git_db = cargo_home / 'git' / 'db' / 'foo-1234'
+            registry_cache = cargo_home / 'registry' / 'cache' / 'github.com-index' / 'serde-1.0.0'
+            for directory in (registry_index, git_db, registry_cache):
+                directory.mkdir(parents=True)
+            result = Result(Plan('.:rust'), [
+                Package('registry+serde#index', 'serde-index', '1.0.0', 'registry+https://github.com/rust-lang/crates.io-index', str(registry_index / 'Cargo.toml')),
+                Package('git+foo#db', 'foo-db', '0.1.0', 'git+https://example.com/foo', str(git_db / 'Cargo.toml')),
+                Package('registry+serde#cache', 'serde-cache', '1.0.0', 'registry+https://github.com/rust-lang/crates.io-index', str(registry_cache / 'Cargo.toml')),
+            ])
+
+            uses, skipped = cargo_cache_uses(root / 'project', [result], cargo_home)
+
+            self.assertEqual(uses, [])
+            self.assertEqual(len(skipped), 3)
+            self.assertTrue(all('registry/src and git/checkouts' in item['reason'] for item in skipped))
+
 
 if __name__ == '__main__':
     unittest.main()
