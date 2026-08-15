@@ -19,6 +19,8 @@ from .pnpm_sbom_merge import merge_pnpm_cyclonedx, merge_pnpm_spdx
 from .sbom_providers import cyclonedx_bom_with_providers
 from .spdx import spdx_document
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
+from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
+from .yarn_sbom_merge import merge_yarn_cyclonedx, merge_yarn_spdx
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -85,18 +87,20 @@ def sbom_command(argv: list[str]) -> int:
             go_plans, _go_skips = plan_native_graph(full_graph, selector=args.component)
             npm_plans = plan_npm_sboms(full_graph, args.format, selector=args.component)
             pnpm_plans = plan_pnpm_sboms(full_graph, args.format, selector=args.component)
+            yarn_plans = plan_yarn_graphs(full_graph, selector=args.component)
             cargo_plans = plan_cargo_graphs(full_graph, selector=args.component)
             uv_plans = plan_uv_graphs(full_graph, selector=args.component)
         else:
-            go_plans, npm_plans, pnpm_plans, cargo_plans, uv_plans = [], [], [], [], []
+            go_plans, npm_plans, pnpm_plans, yarn_plans, cargo_plans, uv_plans = [], [], [], [], [], []
         graph = _selected_static_graph(full_graph, args.component, cargo_plans, uv_plans)
-    except (OSError, NpmSbomError, PnpmSbomError, UvGraphError, ValueError) as exc:
+    except (OSError, NpmSbomError, PnpmSbomError, YarnGraphError, UvGraphError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
     go_results = [execute_native_graph_offline(plan) for plan in go_plans]
     npm_results = [execute_npm_sbom(plan) for plan in npm_plans]
     pnpm_results = [execute_pnpm_sbom(plan) for plan in pnpm_plans]
+    yarn_results = [execute_yarn_graph(plan) for plan in yarn_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
     failures = [
@@ -108,6 +112,9 @@ def sbom_command(argv: list[str]) -> int:
     ] + [
         ("pnpm-native-sbom", result.plan.component, result.stderr)
         for result in pnpm_results if not result.succeeded
+    ] + [
+        ("yarn-berry-resolution-graph", result.plan.selected_component or result.plan.component, result.stderr)
+        for result in yarn_results if not result.succeeded
     ] + [
         ("cargo-metadata", result.plan.component, result.stderr)
         for result in cargo_results if not result.succeeded
@@ -131,6 +138,7 @@ def sbom_command(argv: list[str]) -> int:
             )
             document = merge_npm_cyclonedx(document, npm_results)
             document = merge_pnpm_cyclonedx(document, pnpm_results)
+            document = merge_yarn_cyclonedx(document, yarn_results)
         else:
             document = spdx_document(
                 graph,
@@ -141,7 +149,8 @@ def sbom_command(argv: list[str]) -> int:
             )
             document = merge_npm_spdx(document, npm_results)
             document = merge_pnpm_spdx(document, pnpm_results)
-    except (NpmSbomError, PnpmSbomError, UvGraphError) as exc:
+            document = merge_yarn_spdx(document, yarn_results)
+    except (NpmSbomError, PnpmSbomError, YarnGraphError, UvGraphError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 1
 
