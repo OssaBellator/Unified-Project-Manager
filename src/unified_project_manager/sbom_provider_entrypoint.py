@@ -8,8 +8,9 @@ from types import SimpleNamespace
 
 from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
 from .discovery import discover
+from .go_offline_provider import execute_native_graph_offline
 from .models import ProjectGraph
-from .native_graph import execute_native_graph, plan_native_graph
+from .native_graph import plan_native_graph
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .operations import OperationError, select_component
 from .sbom_providers import cyclonedx_bom_with_providers
@@ -83,7 +84,7 @@ def sbom_command(argv: list[str]) -> int:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    go_results = [execute_native_graph(plan) for plan in go_plans]
+    go_results = [execute_native_graph_offline(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
