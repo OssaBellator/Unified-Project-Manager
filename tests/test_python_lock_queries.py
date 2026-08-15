@@ -62,12 +62,14 @@ class PythonLockQueryContractTests(unittest.TestCase):
         self.assertEqual(payload["scope"], "structured-lock-dependency-graph")
         self.assertTrue(payload["matched"])
         self.assertFalse(payload["uncertain"])
+        self.assertFalse(payload["search_truncated"])
         self.assertEqual(payload["summary"], {
             "packages": 1,
             "unconditional_matches": 1,
             "conditional_matches": 0,
             "ambiguities": 0,
         })
+        self.assertEqual(payload["possible_packages"], [])
         self.assertIn("not source/API/runtime", payload["interpretation"])
 
     def test_conditional_query_uses_same_contract_for_optional_or_marker_paths(self) -> None:
@@ -90,10 +92,11 @@ class PythonLockQueryContractTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["conditional_matches"], 1)
         self.assertEqual(payload["summary"]["unconditional_matches"], 0)
         self.assertTrue(payload["packages"][0]["paths"][0]["conditional"])
+        self.assertFalse(payload["packages"][0]["paths"][0]["possible"])
         self.assertEqual(payload["packages"][0]["paths"][0]["optional_edges"], 1)
         self.assertEqual(payload["packages"][0]["paths"][0]["markers"], ["sys_platform == 'linux'"])
 
-    def test_reachable_ambiguity_retains_conditional_path_without_fabricating_candidate_path(self) -> None:
+    def test_reachable_ambiguity_retains_conditions_and_exposes_all_candidates_as_possible(self) -> None:
         parent = self._package("parent#1", "parent", "1.0.0")
         shared_one = self._package("shared#1", "shared", "1.0.0")
         shared_two = self._package("shared#2", "shared", "2.0.0")
@@ -116,6 +119,9 @@ class PythonLockQueryContractTests(unittest.TestCase):
         self.assertTrue(payload["matched"])
         self.assertTrue(payload["uncertain"])
         self.assertEqual(payload["packages"], [])
+        self.assertEqual(len(payload["possible_packages"]), 2)
+        self.assertTrue(all(item["possible"] for item in payload["possible_packages"]))
+        self.assertTrue(all("?shared" in item["paths"][0]["nodes"] for item in payload["possible_packages"]))
         self.assertEqual(payload["summary"]["ambiguities"], 1)
         ambiguity = payload["ambiguities"][0]
         self.assertEqual(ambiguity["source"], "parent@1.0.0")
@@ -125,6 +131,35 @@ class PythonLockQueryContractTests(unittest.TestCase):
         self.assertEqual(ambiguity["paths"][0]["nodes"][-1], "?shared")
         self.assertEqual(ambiguity["paths"][0]["markers"], ["sys_platform == 'linux'"])
         self.assertEqual(ambiguity["paths"][0]["optional_edges"], 1)
+
+    def test_transitive_dependency_below_ambiguous_candidate_remains_possible(self) -> None:
+        parent = self._package("parent#1", "parent", "1.0.0")
+        shared_one = self._package("shared#1", "shared", "1.0.0")
+        shared_two = self._package("shared#2", "shared", "2.0.0")
+        leaf = self._package("leaf#1", "leaf", "3.0.0")
+        result = self._result(
+            packages=[parent, shared_one, shared_two, leaf],
+            edges=[
+                self._edge("project:.:python", "parent", "parent#1"),
+                self._edge(
+                    "parent#1", "shared", None,
+                    candidates=("shared#1", "shared#2"), ambiguous=True,
+                ),
+                self._edge("shared#1", "leaf", "leaf#1"),
+            ],
+        )
+
+        payload = query_python_lock_result(result, "leaf").to_dict()
+
+        self.assertTrue(payload["matched"])
+        self.assertTrue(payload["uncertain"])
+        self.assertEqual(payload["packages"], [])
+        self.assertEqual(payload["ambiguities"], [])
+        self.assertEqual(len(payload["possible_packages"]), 1)
+        path = payload["possible_packages"][0]["paths"][0]
+        self.assertEqual(path["certainty"], "possible")
+        self.assertIn("?shared", path["nodes"])
+        self.assertEqual(path["nodes"][-1], "leaf@3.0.0")
 
 
 if __name__ == "__main__":
