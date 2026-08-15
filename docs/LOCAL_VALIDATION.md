@@ -16,7 +16,7 @@ This compiles the source/tests and runs the standard-library `unittest` suite th
 sh ./scripts/test-integration.sh
 ```
 
-This exercises higher-risk cross-layer contracts including workspace-aware mutation routing, receipts, native provider routing, native SBOM integration, workspace ownership/health, local evidence/status behavior, and advisory evidence boundaries.
+This exercises higher-risk cross-layer contracts including workspace-aware mutation routing, receipts, native provider routing, native SBOM integration, workspace ownership/health, all-provider fleet inventory/duplicates, local evidence/status behavior, and advisory evidence boundaries.
 
 ## Yarn Berry execution compatibility
 
@@ -71,13 +71,32 @@ Together these cover:
 - advisory consolidation when one locked package occurrence has both resolved and ambiguity-derived alternative paths;
 - public graph, why, impact, SBOM, provider-status, and advisory route integration.
 
+## All-provider fleet inventory and duplicate correlation
+
+```sh
+sh ./scripts/test-fleet-providers.sh
+```
+
+Fleet native inventory/duplicates now route all eight public provider families rather than only Go/npm/Cargo/uv.
+
+The focused fleet regression verifies:
+
+- Poetry/PDM use the same normalized Python package identity across managers;
+- Poetry/PDM fleet rows use certainty-aware reachable structured-lock inventory and exclude orphan lock records;
+- ambiguity-derived Poetry/PDM candidates are labeled `possible` rather than definite;
+- pnpm retains workspace project, alias, dependency scope, depth/directness, and dedupe metadata;
+- Yarn inventory excludes project roots and inactive stored locators by reusing active-root reachability;
+- duplicate groups retain certainty states and remain observation-only (`reclaimable=false`).
+
+The pnpm/Yarn tests mock only manager execution; planning, discovery, scope filtering, and fleet row construction remain real. No package manager is downloaded or invoked by those tests.
+
 ## Native-security focused slice
 
 ```sh
 sh ./scripts/test-native-security.sh
 ```
 
-This concentrates on provider-backed CycloneDX advisory inventory and the OSV scan boundary. It now includes `test_python_lock_security_impact.py`, which verifies transitive possible findings and resolved/possible path consolidation for Poetry/PDM.
+This concentrates on provider-backed CycloneDX advisory inventory and the OSV scan boundary. It includes `test_python_lock_security_impact.py`, which verifies transitive possible findings and resolved/possible path consolidation for Poetry/PDM.
 
 ## Comprehensive local run
 
@@ -85,7 +104,7 @@ This concentrates on provider-backed CycloneDX advisory inventory and the OSV sc
 sh ./scripts/check-all-local-latest.sh
 ```
 
-This runs the baseline check plus integration/provider, native-security, Yarn Berry, and validated Poetry/PDM provider slices in sequence.
+This runs the baseline check plus integration/provider, native-security, Yarn Berry, and validated Poetry/PDM provider slices in sequence. `test-integration.sh` includes the all-provider fleet regression, so the fleet extension is part of the aggregate path without requiring another hosted workflow.
 
 No command above requires or invokes GitHub Actions. Native relationship tests use mocks/fixtures where executing an external package manager is not part of the test contract; provider execution tests assert exact resolved executable paths and explicit network/mutation guarantees.
 
@@ -107,8 +126,10 @@ Separate reconstructed checks also passed for:
 - advisory consolidation where one package occurrence has both a definite resolved path and an additional ambiguity-derived possible path;
 - the shared possible-path text renderer.
 
+The reconstructed all-provider fleet core passed **4/4** checks covering cross-provider Python normalization, structured-lock orphan/possible certainty, propagation of possible certainty to descendants, and reachable-only Yarn scoping. The committed pnpm/Yarn fleet regression additionally verifies their richer occurrence metadata from a normal checkout using mocked manager execution.
+
 An earlier reconstructed run exposed and led to a fix in `PythonLockPath.to_dict()`: nodes and markers are explicitly JSON-ready lists rather than tuple values that only became lists after `json.dumps`.
 
-The committed `test-python-lock-public-provider.sh` and aggregate `check-all-local-latest.sh` are intended for execution from a normal local clone where the complete private branch is available. They are not represented as having run end-to-end in this constrained runtime.
+The committed focused drivers and aggregate `check-all-local-latest.sh` are intended for execution from a normal local clone where the complete private branch is available. They are not represented as having run end-to-end in this constrained runtime.
 
 Some native-provider behavior is additionally validated against real locally available tools when present (for example npm). When a manager/tool is unavailable, tests verify planning/parser contracts without silently downloading that manager during validation.
