@@ -12,6 +12,7 @@ from .go_offline_provider import execute_native_graph_offline
 from .native_graph import NativeGraphError, plan_native_graph
 from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
 from .pnpm_graph import PnpmGraphError, execute_pnpm_graph, plan_pnpm_graphs
+from .provider_ownership import provider_owned_component_keys
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 
 
@@ -57,7 +58,13 @@ def native_graph_command(argv: list[str]) -> int:
             print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    handled_components = {plan.component for plan in [*npm_plans, *pnpm_plans, *cargo_plans, *uv_plans]}
+    handled_components = provider_owned_component_keys(
+        graph,
+        npm_plans=npm_plans,
+        pnpm_plans=pnpm_plans,
+        cargo_plans=cargo_plans,
+        uv_plans=uv_plans,
+    )
     skips = [skip for skip in go_skips if skip.component not in handled_components]
 
     if args.preview:
@@ -147,7 +154,8 @@ def native_graph_command(argv: list[str]) -> int:
             root_label = result.root_name or "(project root)"
             if result.root_version:
                 root_label += f"@{result.root_version}"
-            print(f"  root: {root_label}")
+            scope = f" workspace={result.plan.workspace_selector}" if result.plan.workspace_selector else ""
+            print(f"  root: {root_label}{scope}")
             for package in result.packages:
                 indent = "    " * package.depth
                 version = f"@{package.version}" if package.version else ""
