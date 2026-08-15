@@ -12,6 +12,8 @@ from .native_graph import plan_native_graph
 from .native_impact import analyze_native_impact
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
+from .pnpm_graph import execute_pnpm_graph, plan_pnpm_graphs
+from .pnpm_impact import analyze_pnpm_impact
 from .registry import RegistryError, registered_paths
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
@@ -52,13 +54,14 @@ def fleet_impact_command(argv: list[str]) -> int:
             graph = discover(root)
             go_plans, go_skips = plan_native_graph(graph)
             npm_plans = plan_npm_graphs(graph)
+            pnpm_plans = plan_pnpm_graphs(graph)
             cargo_plans = plan_cargo_graphs(graph)
             uv_plans = plan_uv_graphs(graph)
         except (OSError, ValueError) as exc:
             failures.append({"project": str(root), "provider": None, "component": None, "error": str(exc), "returncode": None})
             continue
 
-        handled_components = {plan.component for plan in [*npm_plans, *cargo_plans, *uv_plans]}
+        handled_components = {plan.component for plan in [*npm_plans, *pnpm_plans, *cargo_plans, *uv_plans]}
         for skip in go_skips:
             if skip.component not in handled_components:
                 skips.append({"project": str(root), **skip.to_dict()})
@@ -88,6 +91,20 @@ def fleet_impact_command(argv: list[str]) -> int:
             for impact in analyze_npm_impact(result, args.package):
                 impacts.append({
                     "project": str(root), "provider": "npm-lock-tree", "scope": "logical-dependency-tree",
+                    **impact.to_dict(),
+                })
+
+        for plan in pnpm_plans:
+            result = execute_pnpm_graph(plan)
+            if not result.succeeded:
+                failures.append({
+                    "project": str(root), "provider": "pnpm-lock-tree", "component": plan.component,
+                    "error": result.stderr, "returncode": result.returncode,
+                })
+                continue
+            for impact in analyze_pnpm_impact(result, args.package):
+                impacts.append({
+                    "project": str(root), "provider": "pnpm-lock-tree", "scope": "logical-dependency-tree",
                     **impact.to_dict(),
                 })
 
@@ -121,7 +138,8 @@ def fleet_impact_command(argv: list[str]) -> int:
 
     impacts.sort(key=lambda item: (
         str(item["project"]), str(item["provider"]), str(item["component"]),
-        str(item.get("ref", "")), str(item.get("module", "")), str(item.get("package_id", "")),
+        str(item.get("project", "")), str(item.get("ref", "")),
+        str(item.get("module", "")), str(item.get("package_id", "")),
     ))
     affected_projects = sorted({str(item["project"]) for item in impacts})
 
@@ -150,6 +168,10 @@ def fleet_impact_command(argv: list[str]) -> int:
             elif impact["provider"] == "npm-lock-tree":
                 version = f"@{impact['version']}" if impact.get("version") else ""
                 print(f"{impact['project']} [{impact['component']}] [npm]: {impact['name']}{version}")
+                print("  logical path: " + " -> ".join(impact["root_path"]))
+            elif impact["provider"] == "pnpm-lock-tree":
+                version = f"@{impact['version']}" if impact.get("version") else ""
+                print(f"{impact['project']} [{impact['component']}] [pnpm:{impact.get('project', '.')}]: {impact['name']}{version}")
                 print("  logical path: " + " -> ".join(impact["root_path"]))
             elif impact["provider"] == "cargo-metadata":
                 print(f"{impact['project']} [{impact['component']}] [cargo]: {impact['name']}@{impact['version']}")
