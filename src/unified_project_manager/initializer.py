@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -103,12 +104,24 @@ def execute_initialization(
     verify: bool = True,
 ) -> CommandResult:
     executable = plan.argv[0]
-    if which(executable) is None:
+    resolved = which(executable)
+    if resolved is None:
         return CommandResult(plan=plan, executed=True, returncode=127, stderr=f"Executable '{executable}' is not available on PATH.")
+
+    kwargs = {
+        "cwd": plan.cwd,
+        "text": True,
+        "capture_output": True,
+        "check": False,
+    }
+    if plan.manager == "go":
+        environment = dict(os.environ)
+        environment["GOWORK"] = "off"
+        kwargs["env"] = environment
 
     try:
         plan.cwd.mkdir(parents=True, exist_ok=True)
-        completed = run(list(plan.argv), cwd=plan.cwd, text=True, capture_output=True, check=False)
+        completed = run([resolved, *plan.argv[1:]], **kwargs)
     except OSError as exc:
         return CommandResult(plan=plan, executed=True, returncode=127, stderr=str(exc))
 
