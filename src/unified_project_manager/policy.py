@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .audit_status import evaluate_audit_status
 from .cache_coverage import cache_integrity_coverage
 from .doctor import diagnose
 from .models import ProjectGraph
@@ -21,10 +22,13 @@ class PolicyConfig:
     require_integrity_snapshot: bool = False
     require_native_verification: bool = False
     require_cache_integrity_verification: bool = False
+    require_advisory_evidence: bool = False
     allowed_managers: tuple[str, ...] = ()
     denied_managers: tuple[str, ...] = ()
     max_warnings: int | None = None
     max_errors: int | None = None
+    max_advisory_age_seconds: int | None = None
+    max_known_vulnerabilities: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -73,6 +77,14 @@ def _string_list(value: object, field_name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value))
 
 
+def _optional_non_negative_int(value: object, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise PolicyError(f"upm.toml policy.{field_name} must be a non-negative integer.")
+    return value
+
+
 def load_policy(root: str | Path) -> PolicyConfig:
     root_path = Path(root).expanduser().resolve()
     path = root_path / "upm.toml"
@@ -94,18 +106,17 @@ def load_policy(root: str | Path) -> PolicyConfig:
         "require_integrity_snapshot",
         "require_native_verification",
         "require_cache_integrity_verification",
+        "require_advisory_evidence",
     ):
         raw = value.get(name, False)
         if not isinstance(raw, bool):
             raise PolicyError(f"upm.toml policy.{name} must be a boolean.")
         bool_fields[name] = raw
 
-    max_warnings = value.get("max_warnings")
-    if max_warnings is not None and (not isinstance(max_warnings, int) or isinstance(max_warnings, bool) or max_warnings < 0):
-        raise PolicyError("upm.toml policy.max_warnings must be a non-negative integer.")
-    max_errors = value.get("max_errors")
-    if max_errors is not None and (not isinstance(max_errors, int) or isinstance(max_errors, bool) or max_errors < 0):
-        raise PolicyError("upm.toml policy.max_errors must be a non-negative integer.")
+    max_warnings = _optional_non_negative_int(value.get("max_warnings"), "max_warnings")
+    max_errors = _optional_non_negative_int(value.get("max_errors"), "max_errors")
+    max_advisory_age_seconds = _optional_non_negative_int(value.get("max_advisory_age_seconds"), "max_advisory_age_seconds")
+    max_known_vulnerabilities = _optional_non_negative_int(value.get("max_known_vulnerabilities"), "max_known_vulnerabilities")
 
     allowed = _string_list(value.get("allowed_managers"), "allowed_managers")
     denied = _string_list(value.get("denied_managers"), "denied_managers")
@@ -118,10 +129,13 @@ def load_policy(root: str | Path) -> PolicyConfig:
         require_integrity_snapshot=bool_fields["require_integrity_snapshot"],
         require_native_verification=bool_fields["require_native_verification"],
         require_cache_integrity_verification=bool_fields["require_cache_integrity_verification"],
+        require_advisory_evidence=bool_fields["require_advisory_evidence"],
         allowed_managers=allowed,
         denied_managers=denied,
         max_warnings=max_warnings,
         max_errors=max_errors,
+        max_advisory_age_seconds=max_advisory_age_seconds,
+        max_known_vulnerabilities=max_known_vulnerabilities,
     )
 
 
@@ -170,12 +184,31 @@ def evaluate_policy(graph: ProjectGraph, *, deep: bool = False) -> PolicyReport:
                 ))
 
     if config.require_cache_integrity_verification:
-        for coverage in cache_integrity_coverage(graph):
-            if not coverage.supported:
+        for item in cache_integrity_coverage(graph):
+            if not item.supported:
                 report.violations.append(PolicyViolation(
                     "policy.cache-integrity-verification-required",
-                    coverage.reason or "No configured authoritative cache-integrity verifier.",
-                    coverage.component,
+                    f"No configured authoritative cache-integrity path: {item.reason}",
+                    item.component,
+                ))
+
+    if config.require_advisory_evidence or config.max_advisory_age_seconds is not None or config.max_known_vulnerabilities is not None:
+        advisory = evaluate_audit_status(graph, max_age_seconds=config.max_advisory_age_seconds)
+        if config.require_advisory_evidence and not advisory.current:
+            report.violations.append(PolicyViolation(
+                "policy.advisory-evidence-required",
+                f"Current local advisory evidence is required, but its state is {advisory.state!r}.",
+            ))
+        if config.max_known_vulnerabilities is not None:
+            if not advisory.current:
+                report.violations.append(PolicyViolation(
+                    "policy.advisory-evidence-unavailable",
+                    "Known-vulnerability budget cannot be evaluated without current local advisory evidence.",
+                ))
+            elif (advisory.vulnerabilities or 0) > config.max_known_vulnerabilities:
+                report.violations.append(PolicyViolation(
+                    "policy.advisory-budget-exceeded",
+                    f"Persisted advisory evidence reports {advisory.vulnerabilities or 0} vulnerabilities; policy allows at most {config.max_known_vulnerabilities}.",
                 ))
 
     if config.max_errors is not None and doctor.errors > config.max_errors:
