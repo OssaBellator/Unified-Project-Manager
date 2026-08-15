@@ -13,6 +13,8 @@ class GovulncheckScanDeclarationIdentity:
     protocol_version: str
     scanner_name: str | None
     scanner_version: str | None
+    scan_mode: str
+    scan_level: str
     database: str
     database_last_modified: str | None
     config_go_version: str | None
@@ -25,6 +27,8 @@ class GovulncheckScanDeclarationIdentity:
             "protocol_version": self.protocol_version,
             "scanner_name": self.scanner_name,
             "scanner_version": self.scanner_version,
+            "scan_mode": self.scan_mode,
+            "scan_level": self.scan_level,
             "database": self.database,
             "database_last_modified": self.database_last_modified,
             "config_go_version": self.config_go_version,
@@ -50,6 +54,8 @@ class GovulncheckScanDeclarationIdentity:
             "protocol_version": self.protocol_version,
             "scanner_name": self.scanner_name,
             "scanner_version": self.scanner_version,
+            "scan_mode": self.scan_mode,
+            "scan_level": self.scan_level,
             "database": self.database,
             "database_last_modified": self.database_last_modified,
             "config_go_version": self.config_go_version,
@@ -87,10 +93,15 @@ def govulncheck_scan_declaration_identity(
         protocol_version=report.config.protocol_version,
         scanner_name=report.config.scanner_name,
         scanner_version=report.config.scanner_version,
+        scan_mode=report.config.scan_mode,
+        scan_level=report.config.scan_level,
         database=report.config.database,
         database_last_modified=report.config.database_last_modified,
         config_go_version=report.config.go_version,
         sbom_go_version=report.sbom.go_version,
-        modules=tuple((module.path, module.version) for module in report.sbom.modules),
-        roots=report.sbom.roots,
+        modules=tuple(sorted(
+            ((module.path, module.version) for module in report.sbom.modules),
+            key=lambda item: (item[0], item[1] or ""),
+        )),
+        roots=tuple(sorted(set(report.sbom.roots))),
     )
