@@ -86,9 +86,10 @@ def correlate_advisory_impact(
 
     This is dependency reachability evidence only. It does not establish that
     vulnerable code is imported, called, exploitable, or reachable at runtime.
-    Structured Poetry/PDM ambiguity remains possible reachability and retains the
-    exact conditional path to the unresolved dependency hop rather than guessing
-    which locked candidate the manager would select for an environment.
+    Structured Poetry/PDM ambiguity is represented as possible reachability and
+    can propagate through dependencies of every ambiguous candidate. Those paths
+    retain explicit ``?dependency`` hops rather than pretending UPM selected one
+    manager-specific environment branch.
     """
     impacts: list[AdvisoryDependencyImpact] = []
     findings = _osv_packages(report)
@@ -181,7 +182,6 @@ def correlate_advisory_impact(
                 if not result.succeeded:
                     continue
                 query = query_python_lock_result(result, name)
-                packages_by_id = {package.package_id: package for package in result.packages}
                 for package in query.packages:
                     if version and package.version != version:
                         continue
@@ -192,28 +192,29 @@ def correlate_advisory_impact(
                         {
                             "package_id": package.package_id,
                             "unconditional": package.unconditional,
+                            "paths_truncated": package.paths_truncated,
+                            "search_truncated": query.search_truncated,
                             "path_conditions": [path.to_dict() for path in package.paths],
                             "reachability": "resolved",
                         },
                     ))
-                for ambiguity in query.ambiguities:
-                    for candidate_id in ambiguity.candidate_ids:
-                        candidate = packages_by_id.get(candidate_id)
-                        if candidate is None or _normalized_python(candidate.name) != target:
-                            continue
-                        if version and candidate.version != version:
-                            continue
-                        impacts.append(AdvisoryDependencyImpact(
-                            advisory_id, ecosystem, name, version,
-                            query.provider, query.scope, query.component,
-                            tuple(path.nodes for path in ambiguity.paths),
-                            {
-                                "package_id": candidate.package_id,
-                                "candidate_version": candidate.version,
-                                "reachability": "possible-via-ambiguous-lock-reference",
-                                "ambiguity": ambiguity.to_dict(),
-                            },
-                        ))
+                for package in query.possible_packages:
+                    if version and package.version != version:
+                        continue
+                    impacts.append(AdvisoryDependencyImpact(
+                        advisory_id, ecosystem, name, version,
+                        query.provider, query.scope, query.component,
+                        tuple(path.nodes for path in package.paths),
+                        {
+                            "package_id": package.package_id,
+                            "candidate_version": package.version,
+                            "paths_truncated": package.paths_truncated,
+                            "search_truncated": query.search_truncated,
+                            "path_conditions": [path.to_dict() for path in package.paths],
+                            "reachability": "possible-via-ambiguous-lock-reference",
+                            "ambiguities": [ambiguity.to_dict() for ambiguity in query.ambiguities],
+                        },
+                    ))
 
     return sorted(impacts, key=lambda item: (
         item.advisory_id, item.ecosystem.lower(), item.package.lower(), item.version or "",
