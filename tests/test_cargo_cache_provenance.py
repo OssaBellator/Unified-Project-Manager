@@ -48,10 +48,12 @@ class CargoCacheProvenanceTests(unittest.TestCase):
             self.assertEqual({use.cache_kind for use in uses}, {'registry-source', 'git-checkout'})
             serde = next(use for use in uses if use.name == 'serde')
             self.assertEqual(serde.purl, 'pkg:cargo/serde@1.0.0')
+            self.assertEqual(Path(serde.path), registry.resolve())
             foo = next(use for use in uses if use.name == 'foo')
             self.assertIsNone(foo.purl)
+            self.assertEqual(Path(foo.path), git.resolve())
             self.assertEqual(len(skipped), 1)
-            self.assertIn('outside CARGO_HOME', skipped[0]['reason'])
+            self.assertIn('canonical CARGO_HOME', skipped[0]['reason'])
 
     def test_same_registry_source_directory_groups_across_projects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -68,6 +70,47 @@ class CargoCacheProvenanceTests(unittest.TestCase):
             group = groups[0]
             self.assertEqual(group.projects, 2)
             self.assertEqual(group.bytes, 12)
+            self.assertEqual(group.identity, 'pkg:cargo/serde@1.0.0')
+            self.assertEqual(group.identities, ('pkg:cargo/serde@1.0.0',))
+            self.assertFalse(group.to_dict()['reclaimable'])
+
+    def test_multi_crate_git_checkout_is_one_physical_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cargo_home = root / '.cargo'
+            checkout = cargo_home / 'git' / 'checkouts' / 'repo-123' / 'abc456'
+            crate_a = checkout / 'crates' / 'a'
+            crate_b = checkout / 'crates' / 'b'
+            crate_a.mkdir(parents=True)
+            crate_b.mkdir(parents=True)
+            (checkout / 'README').write_bytes(b'x' * 2)
+            (crate_a / 'lib.rs').write_bytes(b'x' * 3)
+            (crate_b / 'lib.rs').write_bytes(b'x' * 5)
+            expected_bytes = 10
+
+            result = Result(Plan('.:rust'), [
+                Package('git+https://example.com/repo#a', 'crate-a', '0.1.0', 'git+https://example.com/repo', str(crate_a / 'Cargo.toml')),
+                Package('git+https://example.com/repo#b', 'crate-b', '0.2.0', 'git+https://example.com/repo', str(crate_b / 'Cargo.toml')),
+            ])
+
+            uses, skipped = cargo_cache_uses(root / 'project', [result], cargo_home)
+            self.assertEqual(skipped, [])
+            self.assertEqual({Path(use.path) for use in uses}, {checkout.resolve()})
+
+            groups = aggregate_cargo_cache_uses(uses, measure=True)
+            self.assertEqual(len(groups), 1)
+            group = groups[0]
+            self.assertEqual(group.cache_kind, 'git-checkout')
+            self.assertEqual(group.bytes, expected_bytes)
+            self.assertIsNone(group.identity)
+            self.assertEqual(
+                set(group.identities),
+                {'git+https://example.com/repo#a', 'git+https://example.com/repo#b'},
+            )
+            self.assertEqual(
+                set(group.packages),
+                {('crate-a', '0.1.0'), ('crate-b', '0.2.0')},
+            )
             self.assertFalse(group.to_dict()['reclaimable'])
 
     def test_manifest_outside_cache_is_not_misclassified(self) -> None:
@@ -100,7 +143,21 @@ class CargoCacheProvenanceTests(unittest.TestCase):
 
             self.assertEqual(uses, [])
             self.assertEqual(len(skipped), 3)
-            self.assertTrue(all('registry/src and git/checkouts' in item['reason'] for item in skipped))
+            self.assertTrue(all('canonical CARGO_HOME' in item['reason'] for item in skipped))
+
+    def test_noncanonical_source_object_depth_is_not_guessed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cargo_home = root / '.cargo'
+            shallow = cargo_home / 'git' / 'checkouts' / 'repo-only'
+            shallow.mkdir(parents=True)
+            package = Package('git+foo#x', 'foo', '0.1.0', 'git+https://example.com/foo', str(shallow / 'Cargo.toml'))
+
+            uses, skipped = cargo_cache_uses(root / 'project', [Result(Plan('.:rust'), [package])], cargo_home)
+
+            self.assertEqual(uses, [])
+            self.assertEqual(len(skipped), 1)
+            self.assertIn('canonical CARGO_HOME', skipped[0]['reason'])
 
 
 if __name__ == '__main__':
