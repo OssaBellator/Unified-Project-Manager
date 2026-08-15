@@ -15,6 +15,10 @@ from .operations import OperationError, select_component
 from .pnpm_graph import execute_pnpm_graph, plan_pnpm_graphs
 from .pnpm_impact import analyze_pnpm_impact
 from .provider_ownership import provider_owned_component_keys
+from .python_lock_graph import plan_python_lock_graphs
+from .python_lock_provider import python_lock_provider_name
+from .python_lock_queries import query_python_lock_result
+from .python_lock_validation import execute_validated_python_lock_graph
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
 from .yarn_graph import execute_yarn_graph, plan_yarn_graphs
@@ -57,6 +61,7 @@ def why_command(argv: list[str]) -> int:
         yarn_plans = plan_yarn_graphs(graph, selector=args.component)
         cargo_plans = plan_cargo_graphs(graph, selector=args.component)
         uv_plans = plan_uv_graphs(graph, selector=args.component)
+        python_lock_plans = plan_python_lock_graphs(graph, selector=args.component)
     except (OSError, ValueError) as exc:
         if args.as_json:
             print(json.dumps({"error": str(exc)}, indent=2))
@@ -73,6 +78,7 @@ def why_command(argv: list[str]) -> int:
         yarn_plans=yarn_plans,
         cargo_plans=cargo_plans,
         uv_plans=uv_plans,
+        python_lock_plans=python_lock_plans,
     )
 
     try:
@@ -146,7 +152,17 @@ def why_command(argv: list[str]) -> int:
         for impact in analyze_uv_impact(result, args.package):
             answers.append({"provider": "uv-lock", "scope": "universal-lock-graph", **impact.to_dict()})
 
-    if selected_key and (npm_plans or pnpm_plans or yarn_plans or cargo_plans or uv_plans):
+    for plan in python_lock_plans:
+        result = execute_validated_python_lock_graph(graph, plan)
+        provider = python_lock_provider_name(plan)
+        if not result.succeeded:
+            failures.append({"provider": provider, "component": plan.component, "error": result.error, "returncode": None})
+            continue
+        query = query_python_lock_result(result, args.package)
+        if query.matched:
+            answers.append(query.to_dict())
+
+    if selected_key and (npm_plans or pnpm_plans or yarn_plans or cargo_plans or uv_plans or python_lock_plans):
         handled.add(selected_key)
 
     target_components = graph.components
@@ -200,6 +216,20 @@ def why_command(argv: list[str]) -> int:
                 print(f"{answer['component']} [cargo locked-offline]: {answer['name']}@{answer['version']}")
                 for path in answer.get("workspace_paths", []):
                     print("  " + " -> ".join(path))
+            elif provider in {"poetry-lock", "pdm-lock"}:
+                print(f"{answer['component']} [{provider} structured-lock]")
+                for package in answer.get("packages", []):
+                    certainty = "unconditional" if package.get("unconditional") else "conditional"
+                    print(f"  {package['name']}@{package['version']} [{certainty}]")
+                    for path in package.get("paths", []):
+                        print("    " + " -> ".join(path.get("nodes", [])))
+                        if path.get("markers"):
+                            print("    markers: " + " && ".join(path["markers"]))
+                        if path.get("optional_edges"):
+                            print(f"    optional edges: {path['optional_edges']}")
+                for ambiguity in answer.get("ambiguities", []):
+                    candidates = ", ".join(ambiguity.get("candidate_ids", []))
+                    print(f"  ? {ambiguity['source']} -> {ambiguity['dependency_name']} [ambiguous: {candidates}]")
             else:
                 print(f"{answer['component']} [uv universal-lock]: {answer['name']}@{answer['version']}")
                 for path in answer.get("project_paths", []):
