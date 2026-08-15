@@ -35,7 +35,7 @@ The comprehensive Poetry/PDM slice is:
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
-It now includes the public provider promotion regression in addition to the lower-level certainty/validation tests.
+It includes provider-boundary/validation, graph/reachability, direct-condition handling, command-neutral queries, shared text rendering, path multiplicity/budgets, CycloneDX/SPDX uncertainty, retained native inventory, advisory correlation, and public provider routing.
 
 The dedicated public route check is:
 
@@ -59,13 +59,17 @@ Together these cover:
 - provider coverage/status registration;
 - supported lock-contract validation with fail-closed unsupported semantics;
 - direct optional, marker, Poetry-group, and multi-constraint propagation from `pyproject.toml`;
-- one certainty-aware query contract used by `why`, project impact, and fleet impact;
-- resolved conditional paths and condition-preserving ambiguity paths ending at explicit `?dependency` hops;
-- reachable-only CycloneDX/SPDX inventory;
-- possible scan inventory for reachable ambiguous candidates without fabricated dependency edges;
+- one certainty-aware query contract used by `why`, project impact, fleet impact, and advisory correlation;
+- resolved conditional paths and explicit ambiguity paths ending at `?dependency` hops;
+- separate `possible_packages` that propagate through all ambiguous candidate descendants without claiming an environment-selected branch;
+- distinct same-condition path multiplicity rather than node/condition collapsing;
+- explicit `max_paths_per_package` and `max_search_states` budgets with visible `paths_truncated` / `search_truncated` evidence;
+- shared text rendering for possible-only paths and truncation warnings;
+- reachable-only CycloneDX/SPDX inventory with possible ambiguous scan inventory but no fabricated unconditional relationships;
 - separate conditional, ambiguous, unresolved, and non-registry omission evidence;
 - exact native CycloneDX inventory retaining the same Poetry/PDM graph results for advisory correlation;
-- public graph, why, impact, SBOM, and advisory route integration.
+- advisory consolidation when one locked package occurrence has both resolved and ambiguity-derived alternative paths;
+- public graph, why, impact, SBOM, provider-status, and advisory route integration.
 
 ## Native-security focused slice
 
@@ -73,7 +77,7 @@ Together these cover:
 sh ./scripts/test-native-security.sh
 ```
 
-This concentrates on provider-backed CycloneDX advisory inventory and the OSV scan boundary. Poetry/PDM now participate through the same retained native inventory object as the other public providers.
+This concentrates on provider-backed CycloneDX advisory inventory and the OSV scan boundary. It now includes `test_python_lock_security_impact.py`, which verifies transitive possible findings and resolved/possible path consolidation for Poetry/PDM.
 
 ## Comprehensive local run
 
@@ -89,13 +93,21 @@ No command above requires or invokes GitHub Actions. Native relationship tests u
 
 This implementation environment still cannot materialize the full private branch as one normal checkout. Accordingly, full-suite claims remain conservative.
 
-A reconstructed current Poetry/PDM promotion-core slice was executed locally and passed **3/3** after fixing a serializer mismatch discovered by that run. It covered:
+The current reconstructed structured-lock reachability rewrite passed **5/5** focused tests covering:
 
-- resolved marker-conditional structured-lock reachability;
-- ambiguity paths retaining marker and optional-edge conditions;
-- OSV correlation for both resolved packages and ambiguity-only candidate findings.
+- resolved marker/optional conditional paths;
+- direct ambiguity with explicit candidate paths;
+- transitive possible reachability below an ambiguous candidate;
+- preservation of distinct same-condition parent paths plus per-package path caps;
+- search-state budget truncation.
 
-The reconstructed run also exposed and led to a fix in `PythonLockPath.to_dict()`: nodes and markers are now explicitly JSON-ready lists rather than tuple values that only became lists after `json.dumps`.
+Separate reconstructed checks also passed for:
+
+- the command-neutral query/advisory contract on a transitive possible package, retaining the full `?dependency` candidate path;
+- advisory consolidation where one package occurrence has both a definite resolved path and an additional ambiguity-derived possible path;
+- the shared possible-path text renderer.
+
+An earlier reconstructed run exposed and led to a fix in `PythonLockPath.to_dict()`: nodes and markers are explicitly JSON-ready lists rather than tuple values that only became lists after `json.dumps`.
 
 The committed `test-python-lock-public-provider.sh` and aggregate `check-all-local-latest.sh` are intended for execution from a normal local clone where the complete private branch is available. They are not represented as having run end-to-end in this constrained runtime.
 
