@@ -35,11 +35,12 @@ def manager_version_findings(
         if declared is None:
             continue
         manager, requirement = declared
-        if component.manager != manager or which(manager) is None:
+        executable = which(manager)
+        if component.manager != manager or executable is None:
             continue
         if manager not in versions:
             try:
-                completed = run([manager, "--version"], text=True, capture_output=True, check=False)
+                completed = run([executable, "--version"], text=True, capture_output=True, check=False)
             except OSError as exc:
                 versions[manager] = (None, str(exc))
             else:
