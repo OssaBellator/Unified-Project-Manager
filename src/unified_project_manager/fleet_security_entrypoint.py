@@ -8,6 +8,7 @@ from typing import Any
 
 from .audit_evidence import AuditEvidenceError, build_audit_evidence, write_audit_evidence
 from .discovery import discover
+from .go_import_reachability import collect_go_import_reachability
 from .registry import RegistryError, registered_paths
 from .security import SecurityScanError, SecurityScanResult, execute_security_scan, plan_security_scan
 from .security_impact import correlate_advisory_impact
@@ -28,6 +29,14 @@ def _parser() -> argparse.ArgumentParser:
         "--native-go",
         action="store_true",
         help="Compatibility mode: use authoritative offline selected Go modules during applied scans",
+    )
+    parser.add_argument(
+        "--go-import-reachability",
+        action="store_true",
+        help=(
+            "After applied --native scans, query vulnerable Go modules with offline `go mod why -m` "
+            "and report package-import reachability separately from dependency/runtime reachability"
+        ),
     )
     parser.add_argument("--apply", action="store_true", help="Execute OSV-Scanner; preview is the default because scanning may use the network")
     parser.add_argument("--json", action="store_true", dest="as_json")
@@ -80,8 +89,22 @@ def _dependency_impacts(result: SecurityScanResult) -> tuple[list[dict[str, Any]
     return [impact.to_dict() for impact in impacts], None
 
 
+def _go_import_reachability(graph: object, impacts: list[dict[str, Any]], *, enabled: bool) -> list[dict[str, Any]]:
+    if not enabled or not impacts:
+        return []
+    return [item.to_dict() for item in collect_go_import_reachability(graph, impacts)]
+
+
 def fleet_audit_command(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
+    if args.go_import_reachability and not args.native:
+        message = "--go-import-reachability requires --native so source evidence is correlated to retained native scan inventory."
+        if args.as_json:
+            print(json.dumps({"error": message}, indent=2))
+        else:
+            print(f"upm: {message}", file=sys.stderr)
+        return 2
+
     try:
         roots = registered_paths(args.registry)
     except RegistryError as exc:
@@ -120,6 +143,13 @@ def fleet_audit_command(argv: list[str]) -> int:
             "network_may_be_used": True,
             "provider_inventory_network": False if args.native else None,
             "native_go_inventory_network": "offline" if args.native_go and not args.native else "not-used",
+            "go_import_reachability": {
+                "requested": args.go_import_reachability,
+                "executed": False,
+                "network": "offline" if args.go_import_reachability else None,
+                "persisted": False if args.go_import_reachability else None,
+                "scope": "package-import-graph" if args.go_import_reachability else None,
+            },
             "projects": projects,
             "missing": missing,
             "planning_failures": planning_failures,
@@ -136,6 +166,11 @@ def fleet_audit_command(argv: list[str]) -> int:
                 print(f"Skipped {len(missing)} missing registered project(s).")
             if args.native:
                 print("Native provider inventory is local/offline and is not executed during preview.")
+            if args.go_import_reachability:
+                print(
+                    "Go package-import reachability is opt-in and will run offline after each applied scan; "
+                    "it is report-only and does not establish API/runtime exploitability."
+                )
             print("Preview only. OSV-Scanner may use the network; re-run with --apply to execute and persist valid scan evidence.")
         return 0
 
@@ -146,6 +181,8 @@ def fleet_audit_command(argv: list[str]) -> int:
     evidence_failures = 0
     vulnerable_projects = 0
     clean_projects = 0
+    go_import_observations = 0
+    go_import_query_failures = 0
 
     for root, graph, plan in planned:
         try:
@@ -158,6 +195,7 @@ def fleet_audit_command(argv: list[str]) -> int:
                 "inventory_error": str(exc),
                 "dependency_impacts": [],
                 "dependency_impact_warning": None,
+                "go_import_reachability": [],
                 "evidence": None,
                 "evidence_path": None,
                 "evidence_error": None,
@@ -165,6 +203,16 @@ def fleet_audit_command(argv: list[str]) -> int:
             continue
 
         dependency_impacts, correlation_warning = _dependency_impacts(result)
+        go_import_reachability = _go_import_reachability(
+            graph,
+            dependency_impacts,
+            enabled=args.go_import_reachability and result.scanner_succeeded,
+        )
+        go_import_observations += len(go_import_reachability)
+        go_import_query_failures += sum(
+            1 for item in go_import_reachability if item.get("state") == "query-failed"
+        )
+
         evidence = None
         evidence_path = None
         evidence_error = None
@@ -200,6 +248,7 @@ def fleet_audit_command(argv: list[str]) -> int:
             "inventory_error": None,
             "dependency_impacts": dependency_impacts,
             "dependency_impact_warning": correlation_warning,
+            "go_import_reachability": go_import_reachability,
             "evidence": evidence.to_dict() if evidence else None,
             "evidence_path": str(evidence_path) if evidence_path else None,
             "evidence_error": evidence_error,
@@ -215,6 +264,8 @@ def fleet_audit_command(argv: list[str]) -> int:
         "planning_failures": len(planning_failures),
         "missing_projects": len(missing),
         "unique_vulnerabilities": len(vulnerability_ids),
+        "go_import_reachability_observations": go_import_observations,
+        "go_import_reachability_query_failures": go_import_query_failures,
     }
     payload = {
         "executed": True,
@@ -245,6 +296,17 @@ def fleet_audit_command(argv: list[str]) -> int:
                         print("      dependency path: " + " -> ".join(path))
                     if impact.get("evidence", {}).get("reachability") == "possible-via-ambiguous-lock-reference":
                         print("      reachability: possible via ambiguous structured-lock reference")
+                for source in item["go_import_reachability"]:
+                    label = f"{source['advisory_id']} {source['package']}"
+                    if source.get("version"):
+                        label += f"@{source['version']}"
+                    print(f"    {label} [go-mod-why] {source['component']}")
+                    print(f"      package-import reachability: {source['state']}")
+                    if source.get("import_path"):
+                        print("      import path: " + " -> ".join(source["import_path"]))
+                    if source.get("error"):
+                        print(f"      import query error: {source['error']}")
+                    print("      API/runtime reachability: not evaluated; exploitability not established")
             else:
                 print(f"✓ {item['project']}: clean for scanned inventory")
             if item["dependency_impact_warning"]:
