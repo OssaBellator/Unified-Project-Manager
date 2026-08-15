@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 
 from .cache_integrity import plan_cache_verification, verify_go_module_cache
+from .cache_provenance import collect_cache_provenance
 from .discovery import discover
 from .global_storage import global_cache_storage, global_storage_summary
+from .registry import RegistryError
 from .shared_cache_integrity import (
     execute_shared_cache_plan,
     plan_shared_cache_checks,
@@ -25,6 +27,33 @@ def _storage_parser() -> argparse.ArgumentParser:
         action="append",
         choices=("go", "npm", "pnpm", "uv", "cargo"),
         help="Limit probing to one manager; repeatable",
+    )
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    return parser
+
+
+def _provenance_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="upm cache provenance",
+        description=(
+            "Attribute measured Go/Cargo cache bytes to explicitly registered projects "
+            "using native physical package identity"
+        ),
+    )
+    parser.add_argument(
+        "--manager",
+        action="append",
+        choices=("go", "cargo"),
+        help="Limit physical attribution to one supported manager; repeatable",
+    )
+    parser.add_argument("--registry", help="Override the user-level project registry")
+    parser.add_argument(
+        "--closed-universe",
+        action="store_true",
+        help=(
+            "Assert that the registered project list is the complete relevant project universe; "
+            "this never makes unattributed bytes reclaimable"
+        ),
     )
     parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
@@ -135,6 +164,57 @@ def cache_storage_command(argv: list[str]) -> int:
     return 0 if entries else 1
 
 
+def cache_provenance_command(argv: list[str]) -> int:
+    args = _provenance_parser().parse_args(argv)
+    managers = tuple(args.manager) if args.manager else ("go", "cargo")
+    try:
+        report = collect_cache_provenance(
+            args.registry,
+            managers=managers,
+            closed_universe=args.closed_universe,
+        )
+    except (RegistryError, OSError, ValueError) as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+
+    if args.as_json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        universe = report["project_universe"]
+        state = "closed" if universe["closed"] else "open"
+        if universe["closed_asserted"] and not universe["closed"]:
+            state = "closure assertion invalidated by missing/unreadable registered projects"
+        print(
+            f"Registered project universe: {universe['observed']}/{universe['registered']} observed; {state}."
+        )
+        for manager in report["managers"]:
+            total = manager["total_bytes"]
+            attributed = manager["attributed_bytes"]
+            unattributed = manager["unattributed_bytes"]
+            ratio = manager["coverage_ratio"]
+            rendered_ratio = "n/a" if ratio is None else f"{ratio * 100:.1f}%"
+            print(
+                f"{manager['manager']}: {attributed / (1024 * 1024):.2f} MiB attributed / "
+                f"{total / (1024 * 1024):.2f} MiB measured ({rendered_ratio}); "
+                f"{unattributed / (1024 * 1024):.2f} MiB unattributed."
+            )
+            if not manager["measurement_consistent"]:
+                print("  x Attributed bytes exceed the measured cache total; observation is inconsistent.")
+        for failure in report["provider_failures"]:
+            print(
+                f"x {failure['manager']} {failure['project']} "
+                f"[{failure.get('component') or 'project'}]: {failure.get('error') or 'provider failed'}"
+            )
+        for skip in report["storage_skips"]:
+            print(f"- {skip['manager']}: storage skipped ({skip['reason']})")
+        print("Unattributed bytes are not known unused, and this command makes no reclaim recommendation.")
+
+    return 0 if report["observation_complete"] else 1
+
+
 def cache_check_command(argv: list[str]) -> int:
     args = _check_parser().parse_args(argv)
     managers = tuple(args.manager) if args.manager else ("pnpm",)
@@ -209,6 +289,8 @@ def dispatch_cache_command(arguments: list[str]) -> int | None:
         return cache_verify_command(arguments[1:])
     if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] == "storage":
         return cache_storage_command(arguments[2:])
+    if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] == "provenance":
+        return cache_provenance_command(arguments[2:])
     if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] == "check":
         return cache_check_command(arguments[2:])
     if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] == "verify":
