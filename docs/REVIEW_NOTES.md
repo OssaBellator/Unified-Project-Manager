@@ -4,7 +4,7 @@ These notes capture the current review boundary for `feature/initial-control-pla
 
 ## Public native providers
 
-The public native-provider surface currently consists of:
+The public native-provider surface consists of:
 
 - Go;
 - npm;
@@ -15,117 +15,150 @@ The public native-provider surface currently consists of:
 - Poetry;
 - PDM.
 
-Public graph/why/impact/fleet/SBOM/advisory behavior is documented in `NATIVE_PROVIDERS.md`. Poetry/PDM's conservative structured-lock contract is detailed in `PYTHON_LOCK_PROVIDERS.md`.
+Public graph/why/impact/fleet/SBOM/advisory behavior is documented in `NATIVE_PROVIDERS.md`. Poetry/PDM's structured-lock uncertainty contract is detailed in `PYTHON_LOCK_PROVIDERS.md`.
 
 Yarn Classic remains outside the Berry provider.
 
-## Yarn Berry review boundary
+## Yarn Berry boundary
 
-The Berry provider uses exact descriptor/locator resolution identity and preserves workspace/virtual package structure. Project install-state persistence is redirected to a temporary path, network is disabled inside Berry, and cache mutation is blocked.
+The Berry provider preserves exact descriptor/locator and workspace/virtual identity. Network access is disabled inside Berry, install state is redirected outside the project, telemetry is suppressed, and supported cache mutation is blocked.
 
-SBOM/advisory identity is scoped to locators reachable from active workspace/project roots. A stored Yarn package record that is not reachable from a workspace root is not promoted merely because `yarn info --all --recursive` returned it.
+The provider does not force `YARN_ENABLE_HARDENED_MODE`; execution and preview share `yarn_execution_policy.py`, and preview reports hardened mode as `unchanged`.
 
-The provider does not force `YARN_ENABLE_HARDENED_MODE`. Execution and preview share `yarn_execution_policy.py`, and preview correctly reports hardened mode as `unchanged`. Required fail-closed controls remain network refusal, temporary install state, telemetry suppression, and immutable cache behavior.
+SBOM/advisory/fleet inventory includes only locators reachable from active project/workspace roots. Stored but inactive Yarn records are not promoted merely because `yarn info --all --recursive` returned them.
 
-Focused regressions:
+## Poetry/PDM public uncertainty model
+
+Poetry/PDM are public as `poetry-lock` and `pdm-lock`, sharing `structured-lock-dependency-graph` scope.
+
+Public routing includes graph, why, project/fleet impact, CycloneDX/SPDX, project/fleet advisory, provider status, and fleet native inventory/duplicate correlation.
+
+The shared reachability model:
+
+- distinguishes resolved `packages` from ambiguity-derived `possible_packages`;
+- renders every unresolved hop as `?dependency`;
+- conservatively traverses all ambiguous candidates and propagates possible state through descendants;
+- preserves marker/optional conditions and ambiguity-hop count on every path;
+- preserves distinct same-condition parent paths;
+- uses explicit path/search budgets (`64` paths per package, `10000` traversal states by default);
+- surfaces `paths_truncated` / `search_truncated` rather than hiding incomplete explanations;
+- shares one text renderer across why/project impact/fleet impact.
+
+Advisory correlation reuses the same validated structured-lock result that produced the exact scanned BOM. Direct or transitive ambiguity-derived findings are labeled `possible-via-ambiguous-lock-reference`. If one locked package occurrence has both a resolved path and a possible alternative path, UPM emits one consolidated advisory impact containing both path classes.
+
+Unsupported lock relationship shapes or package-record-level conditions remain explicit provider failures.
+
+## All-provider fleet inventory
+
+`projects inventory --native` and `projects duplicates --native` cover all eight public provider families.
+
+Provider-specific occurrence evidence is preserved. In particular, pnpm retains workspace/alias/scope/depth/directness/dedupe metadata, Yarn uses active-root-reachable locators only, and Poetry/PDM use certainty-aware `unconditional` / `conditional` / `possible` rows while excluding orphan lock records.
+
+Cross-project duplicate groups remain observation-only. `reclaimable=false` is explicit.
+
+## Mixed-project SBOM topology
+
+Aggregate SBOMs include a deterministic project topology layer; see `SBOM_PROJECT_COMPONENTS.md`.
+
+CycloneDX uses one aggregate application root plus one application anchor per discovered component. SPDX mirrors that model with aggregate/component `APPLICATION` packages and aggregate `CONTAINS` relationships.
+
+Anchor identity and aggregate naming are clone-location-independent. The topology layer deliberately does **not** manufacture component→package edges from generic normalized inventory. Native/provider relationship evidence remains authoritative.
+
+Provider merge regressions cover Go/npm/pnpm/Yarn/Poetry-PDM CycloneDX/SPDX paths and a full static Poetry native inventory pipeline. Application anchors remain topology-only and do not inflate advisory package counts.
+
+## Public cache provenance boundary
+
+`upm cache provenance` is now public for Go and Cargo physical attribution over explicitly registered projects.
 
 ```sh
-sh ./scripts/test-yarn-execution-policy.sh
-sh ./scripts/test-yarn-execution-compat.sh
+upm cache provenance
+upm cache provenance --manager go
+upm cache provenance --manager cargo
+upm cache provenance --closed-universe --json
 ```
 
-Both are included in `scripts/test-yarn-native.sh`.
+This is an observation command, not a cleanup planner.
 
-## Poetry/PDM public promotion
+### Go
 
-The structured TOML providers for `poetry.lock` and `pdm.lock` are public as `poetry-lock` and `pdm-lock`, sharing `structured-lock-dependency-graph` scope.
+Go physical identity starts from the selected module directory returned by the offline native graph. UPM does not recreate Go's module-cache escaping from logical package names.
 
-Promotion is routed across the public surface rather than represented by provider-status metadata alone:
+When the native directory has canonical escaped `name@version` form, UPM reuses that physical path to attribute existing selected-version `.info`, `.mod`, `.zip`, and `.ziphash` files under `GOMODCACHE/cache/download`. Lock/list metadata and other versions are not attributed to that selected occurrence.
 
-- `graph --native` exposes static validated structured-lock packages, resolved/unresolved/ambiguous edges, and marker/optional conditions;
-- `why --native`, project `impact --native`, and fleet impact serialize the same command-neutral certainty-aware query object;
-- native CycloneDX/SPDX suppress broad Python adapter lock observations before merging certainty-aware reachable registry identities;
-- native project/fleet audit retains the same validated Poetry/PDM graph results alongside the exact CycloneDX document scanned by OSV-Scanner;
-- `provider_registry` reports Poetry/PDM coverage with `execution=false`, `network=none`, and `mutation=none`.
+Noncanonical physical paths fail closed for download-artifact mapping. `GOCACHE` build bytes remain outside selected-module package attribution.
 
-### Reachability hardening completed during promotion review
+### Cargo
 
-A deeper consistency pass found that the SBOM layer already propagated `possible` inventory through dependencies of every ambiguous candidate, while public why/impact/advisory reachability stopped at the first ambiguous hop. That could admit a transitive package to the OSV scan without retaining a dependency explanation for it.
+Cargo physical source identity starts from `manifest_path` returned by `cargo metadata --locked --offline`.
 
-The shared reachability model now:
+Attribution is restricted to exact source/check-out roots:
 
-- keeps resolved `packages` separate from ambiguity-derived `possible_packages`;
-- renders each unresolved ambiguity hop as `?dependency` before branching into every candidate;
-- propagates possible reachability through descendants of each candidate rather than only exposing direct candidates;
-- retains marker/optional conditions and ambiguity-hop count on every path;
-- keeps the direct ambiguity record with candidate IDs and the path ending at `?dependency`;
-- lets advisory correlation explain transitive possible findings with the same full path that justified their scan inventory.
+- `CARGO_HOME/registry/src`;
+- `CARGO_HOME/git/checkouts`.
 
-For example, `project -> parent -> ?shared -> shared@1 -> leaf` means `leaf` is possible via one unresolved branch; it does not mean UPM selected `shared@1` for a concrete environment.
+`registry/index`, `registry/cache`, `git/db`, workspace/path dependencies, and unrelated directories are not package-source attribution simply because they live below `CARGO_HOME`.
 
-The same review exposed a pre-existing path-multiplicity test contract that the implementation had not satisfied. Reachability is now path-sensitive and bounded:
+### Closure and reclaim semantics
 
-- distinct same-condition parent paths are retained instead of being collapsed by a node/condition visited set;
-- `max_paths_per_package` defaults to 64;
-- `max_search_states` defaults to 10000;
-- returned package/ambiguity objects carry `paths_truncated` when necessary;
-- the query result carries `search_truncated` if the traversal budget is reached.
+The optional `--closed-universe` flag is an explicit user assertion that the registered project list represents the complete relevant project universe. Missing/unreadable registered projects invalidate that assertion.
 
-`python_lock_render.py` is shared by project why, project impact, and fleet impact text output so possible-only queries, ambiguity paths, conditions, and truncation warnings are visible outside JSON too.
+Project-universe closure is separate from `observation_complete`: native/storage failures, applicable provider coverage gaps, missing/ambiguous cache roots, or inconsistent physical byte measurements make the observation incomplete even when the project registry itself is asserted closed.
 
-Unsupported lock dependency shapes or package-record-level conditions remain explicit provider failures. Public support does not imply UPM will guess arbitrary future Poetry/PDM lock semantics.
+The safety fields remain unconditional:
 
-A serializer bug found during reconstructed local validation was also fixed: `PythonLockPath.to_dict()` returns JSON-ready lists for path nodes and markers rather than relying on `json.dumps` to convert tuples implicitly.
+```text
+unattributed_means_unused = false
+reclaimable_bytes = null
+reclaimable = false
+```
+
+npm, pnpm, and uv physical package-cache provenance remains deliberately unsupported instead of heuristically reverse-engineering opaque cache/store layouts merely to claim coverage.
 
 ## Exact advisory evidence contract
 
 Project and fleet advisory flows share the same rule:
 
 - provider-backed inventory is constructed once for an applied native scan;
-- the exact CycloneDX document given to OSV-Scanner is retained on the result;
+- the exact CycloneDX document given to OSV-Scanner is retained;
 - persisted evidence fingerprints that exact document;
 - native inventory is not rebuilt after scanning;
 - successful scanner output without the exact scanned BOM is an evidence failure;
-- fleet output distinguishes planning, native-inventory, scanner, and evidence failures;
 - ordinary status never reruns scanner/providers merely to manufacture freshness.
-
-Poetry/PDM participate in this same retained-evidence path through `NativeCycloneDxInventory.python_lock_results`. Resolved findings retain conditional path evidence; direct or transitive ambiguity-derived findings are labeled `possible-via-ambiguous-lock-reference` and retain the full `?dependency` candidate path.
 
 ## Local validation boundary
 
 No GitHub Actions workflow is part of this project.
 
-The latest aggregate local driver is:
+Aggregate local driver:
 
 ```sh
 sh ./scripts/check-all-local-latest.sh
 ```
 
-Focused provider drivers include:
+Focused drivers include:
 
 ```sh
-sh ./scripts/test-yarn-execution-policy.sh
-sh ./scripts/test-yarn-execution-compat.sh
 sh ./scripts/test-yarn-native.sh
 sh ./scripts/test-native-security.sh
-sh ./scripts/test-python-lock-provider-boundary.sh
-sh ./scripts/test-python-lock-direct-conditions.sh
-sh ./scripts/test-python-lock-query-contract.sh
-sh ./scripts/test-python-lock-sbom-uncertainty.sh
-sh ./scripts/test-python-lock-native-inventory.sh
-sh ./scripts/test-python-lock-public-provider.sh
 sh ./scripts/test-python-lock-native-validated.sh
+sh ./scripts/test-fleet-providers.sh
+sh ./scripts/test-sbom-project-components.sh
+sh ./scripts/test-cache-provenance.sh
 ```
 
-`test-python-lock-native-validated.sh` now also includes the path-multiplicity and shared text-renderer regressions.
+Focused reconstructed/local validation in this execution environment includes:
 
-Focused reconstructed/local validation in this execution environment includes the previously recorded Yarn and structured-lock slices plus the current reachability hardening:
+- Poetry/PDM reachability hardening: **5/5**;
+- all-provider fleet core: **4/4**;
+- mixed-project SBOM anchors: **5/5**;
+- cache physical mapping: **5/5**;
+- cache provenance report semantics: **6/6**;
+- separate structured-lock advisory consolidation/text-rendering checks;
+- previously recorded Yarn/provider/security slices.
 
-- the current reachability rewrite passed **5/5 reconstructed tests** covering conditional paths, direct ambiguity, transitive possible branches, same-condition path multiplicity/path caps, and search-state truncation;
-- a separate reconstructed query/advisory check confirmed that a transitive package below an ambiguous candidate is reported as `possible-via-ambiguous-lock-reference` with the full `?dependency` path;
-- the shared possible-path text-renderer smoke check passed.
+The cache mapping slice covers native escaped Go selected-download mapping/noncanonical refusal/inode accounting and Cargo exact source-root admission versus index/cache/db/local rejection. The report-semantics slice covers manager totals/build-cache exclusion, no-reclaim invariants, closure invalidation, provider failure/skip incompleteness, and measurement inconsistency.
 
-The end-to-end public-provider shell driver is committed and included in `test-python-lock-native-validated.sh`, which is included by `check-all-local-latest.sh`. This execution environment still cannot materialize the entire private branch as one checkout, so that full driver and the full aggregate have not been claimed as executed here.
+The committed full regressions include additional public command routing and locked-provider coverage checks. This execution environment still cannot materialize the entire private branch as one checkout, so the full aggregate is not claimed as executed here.
 
 ## Merge hygiene
 
