@@ -41,12 +41,31 @@ go mod why -m <module>
 
 through the existing `GOPROXY=off` wrapper.
 
-Go defines `go mod why -m` as a query over the **package import graph**, finding a path to any package in the target module rather than querying the module requirement graph. The default package graph can include test imports, so UPM records `test_imports_may_contribute=true`.
+Go defines `go mod why -m` as a query over the **package import graph**, finding a path to any package in the target module rather than querying the module requirement graph.
+
+#### Build-constraint scope
+
+The current Go command implementation loads the `why` package graph with `imports.AnyTags()`. UPM therefore records:
+
+```text
+build_constraints = any-tags
+current_build_configuration_reachability = not-evaluated
+```
+
+A positive package-import result is intentionally broader than “reachable in this exact production build.” UPM does not relabel it as current-build reachability.
+
+The default package graph can also include test imports, so UPM records:
+
+```text
+test_imports_may_contribute = true
+```
+
+These fields are emitted for both positive and negative successful queries because they describe the query semantics, not the answer.
 
 States are explicit:
 
-- `package-import-reachable` — the query succeeded and returned an import path;
-- `not-package-import-reachable` — the query succeeded and Go reported that the main module does not need a package in that module under the query's package graph;
+- `package-import-reachable` — the query succeeded and returned an import path in Go's any-build-tag package graph;
+- `not-package-import-reachable` — the query succeeded and Go reported that the main module does not need a package in that module under the same any-build-tag package graph;
 - `query-failed` — the import query could not be completed. This is not converted into a negative reachability result.
 
 Each row also retains the already-known dependency path for context, but the dependency path and import path remain separate fields.
@@ -57,7 +76,7 @@ Not implemented as a public evidence provider.
 
 Package-import reachability does not prove that a vulnerable function, method, type, symbol, or API is referenced.
 
-Current Go import evidence therefore reports:
+Current Go import evidence reports:
 
 ```text
 api_reachability = not-evaluated
@@ -119,4 +138,4 @@ Source/import enrichment never changes a valid scanner result into a false clean
 
 If `go mod why -m` cannot complete, the row is `query-failed` with its error/return code. The independently valid OSV evidence may still be persisted because scanner validity and source-reachability enrichment are separate evidence layers.
 
-Likewise, a successful `not-package-import-reachable` result is not a statement that an advisory is impossible to exploit through all configurations, generated code, build tags, reflection, plugins, runtime loading, or future source changes. It is only the result of the Go package-import graph queried at that moment.
+Likewise, a successful `not-package-import-reachable` result is not a statement that an advisory is impossible to exploit through all build configurations, generated code, reflection, plugins, runtime loading, or future source changes. It is only the result of Go's any-build-tag package-import graph queried at that moment.
