@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
@@ -138,8 +139,18 @@ def execute_native_exec(
     if executable is None:
         return NativeExecResult(plan, 127, stderr=f"Executable '{plan.argv[0]}' is not available on PATH.")
     argv = [executable, *plan.argv[1:]]
+    kwargs = {
+        "cwd": plan.cwd,
+        "text": True,
+        "capture_output": True,
+        "check": False,
+    }
+    if plan.manager == "go":
+        environment = dict(os.environ)
+        environment["GOWORK"] = "off"
+        kwargs["env"] = environment
     try:
-        completed = run(argv, cwd=plan.cwd, text=True, capture_output=True, check=False)
+        completed = run(argv, **kwargs)
     except OSError as exc:
         return NativeExecResult(plan, 127, stderr=str(exc))
     result = NativeExecResult(
