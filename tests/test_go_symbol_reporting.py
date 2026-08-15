@@ -11,7 +11,9 @@ from unified_project_manager.go_symbol_reachability import (
     GovulncheckConfig,
     GovulncheckFinding,
     GovulncheckFrame,
+    GovulncheckModule,
     GovulncheckReport,
+    GovulncheckSBOM,
     build_govulncheck_symbol_plan,
 )
 from unified_project_manager.go_symbol_reporting import (
@@ -68,6 +70,14 @@ class GoSymbolReportingTests(unittest.TestCase):
                     ),
                 ),
             ),
+            GovulncheckSBOM(
+                go_version="go1.24.0",
+                modules=(
+                    GovulncheckModule("example.com/app", None),
+                    GovulncheckModule(module, "v1.2.3"),
+                ),
+                roots=("example.com/app",),
+            ),
         )
         return GovulncheckSymbolExecution(plan, preflight, 0, report, "", None, True)
 
@@ -99,6 +109,7 @@ class GoSymbolReportingTests(unittest.TestCase):
             self.assertIsNotNone(report.correlation)
             self.assertEqual(report.correlated_matches, 1)
             self.assertEqual(report.unmatched_symbol_findings, 0)
+            self.assertTrue(execution.report.sbom.has_module("example.com/dep", "v1.2.3"))
             data = report.to_dict()
             self.assertFalse(data["public"])
             self.assertFalse(data["persisted"])
