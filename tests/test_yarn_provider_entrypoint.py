@@ -63,6 +63,9 @@ class YarnProviderEntrypointTests(unittest.TestCase):
             self.assertEqual(yarn["commands"], [["yarn", "info", "--recursive", "--virtuals", "--json"]])
             self.assertEqual(yarn["execution_guards"]["network"], "disabled")
             self.assertEqual(yarn["execution_guards"]["install_state"], "temporary")
+            self.assertEqual(yarn["execution_guards"]["cache"], "immutable")
+            self.assertEqual(yarn["execution_guards"]["telemetry"], "disabled")
+            self.assertEqual(yarn["execution_guards"]["hardened_mode"], "unchanged")
             self.assertEqual(data["skips"], [])
             self.assertEqual(member, root / "packages" / "app")
 
