@@ -5,6 +5,7 @@ import sys
 from .batch_operation_entrypoint import dispatch_batch_operation_command
 from .exec_receipt_entrypoint import dispatch_exec_receipt_command
 from .operation_receipt_entrypoint import dispatch_operation_receipt_command
+from .repair_receipt_entrypoint import dispatch_repair_receipt_command
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,6 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     exec_result = dispatch_exec_receipt_command(arguments)
     if exec_result is not None:
         return exec_result
+    repair_result = dispatch_repair_receipt_command(arguments)
+    if repair_result is not None:
+        return repair_result
 
     from .entrypoint import main as existing_main
 
