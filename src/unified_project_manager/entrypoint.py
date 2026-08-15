@@ -15,6 +15,7 @@ from .impact_provider_entrypoint import dispatch_impact_provider_command
 from .initializer import InitializationError, execute_initialization, plan_initialization
 from .native_entrypoint import dispatch_native_command
 from .registry import RegistryError, registered_paths
+from .security_entrypoint import dispatch_security_command
 from .storage import project_storage, storage_summary
 from .tasks import TaskError, execute_task, list_native_tasks, load_tasks, plan_native_task, plan_task
 from .workspace_entrypoint import dispatch_workspace_command
@@ -256,6 +257,9 @@ def main(argv: list[str] | None = None) -> int:
     cache_result = dispatch_cache_command(arguments)
     if cache_result is not None:
         return cache_result
+    security_result = dispatch_security_command(arguments)
+    if security_result is not None:
+        return security_result
     impact_provider_result = dispatch_impact_provider_command(arguments)
     if impact_provider_result is not None:
         return impact_provider_result
