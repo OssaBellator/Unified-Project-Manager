@@ -35,6 +35,16 @@ def observed_files(graph: ProjectGraph) -> dict[str, dict[str, str]]:
                     continue
                 relative = path.relative_to(graph.root).as_posix()
                 files[relative] = {"component": key, "kind": kind}
+
+    for workspace in graph.workspaces:
+        key = workspace.key(graph.root)
+        for kind, names in (("workspace-manifest", workspace.manifests), ("workspace-state", workspace.lockfiles)):
+            for name in names:
+                path = workspace.path / name
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(graph.root).as_posix()
+                files[relative] = {"component": key, "kind": kind}
     return files
 
 
@@ -56,6 +66,14 @@ def build_state(graph: ProjectGraph) -> dict[str, Any]:
                 "manager": component.manager,
             }
             for component in graph.components
+        ],
+        "workspaces": [
+            {
+                "key": workspace.key(graph.root),
+                "ecosystem": workspace.ecosystem,
+                "manager": workspace.manager,
+            }
+            for workspace in graph.workspaces
         ],
         "files": files,
     }
