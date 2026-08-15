@@ -109,7 +109,14 @@ The same trust-boundary and reachability tests are included in `scripts/test-nat
 sh ./scripts/test-go-symbol-reachability.sh
 ```
 
-This driver currently validates only the lower-level govulncheck parser/planner contract. It does **not** execute govulncheck and it does not make symbol reachability a public UPM capability.
+This driver validates lower-level govulncheck groundwork only. It does **not** execute govulncheck and it does not make symbol reachability a public UPM capability.
+
+It currently runs:
+
+- `tests/test_go_symbol_reachability.py` — protocol/parser/local-plan contract;
+- `tests/test_go_symbol_correlation.py` — strict correlation to existing UPM Go advisory impacts;
+- `tests/test_go_symbol_public_boundary.py` — govulncheck remains outside the public relationship-provider registry;
+- `tests/test_go_symbol_preflight.py` — executable/local-state/telemetry inspection without launching govulncheck.
 
 The focused contract covers:
 
@@ -118,15 +125,20 @@ The focused contract covers:
 - local `file://` vulnerability database requirement;
 - module-, package-, and symbol-level finding separation;
 - only first-frame function/method findings being classified as called-symbol evidence;
-- OSV alias retention without treating alias overlap alone as exact UPM advisory correlation;
+- strict component + advisory id/alias + effective-module + exact-version correlation;
+- Go replacement correlation using effective replacement module identity rather than the logical import namespace;
+- alias/module/version mismatch, missing versions, cross-component/provider rows, and multi-advisory ambiguity failing closed;
+- duplicate exact dependency impacts consolidating their dependency paths into one symbol match;
 - offline plan guards `GOPROXY=off`, `GOWORK=off`, `GOSUMDB=off`, and `GOTOOLCHAIN=local`;
-- fail-closed telemetry preflight requiring Go telemetry mode already `off` rather than mutating the user's telemetry configuration.
+- read-only preflight revalidating project/DB state, both executables, and `go env GOTELEMETRY`;
+- telemetry mode required to already be `off`; UPM does not mutate telemetry settings;
+- govulncheck remaining absent from the eight-provider public registry.
 
-The pre-public symbol driver is included by `scripts/check-all-local-latest.sh` so parser/planner compatibility remains covered even before execution is promoted.
+The pre-public symbol driver is included by `scripts/check-all-local-latest.sh` so parser/correlation/preflight compatibility remains covered before execution is promoted.
 
 A real govulncheck symbol execution is **not** claimed in this environment. The current runtime has no `govulncheck` executable, no usable local vulnerability database was found, and `go env GOTELEMETRY` reports `local` rather than the provider's required `off`. None of those conditions were changed automatically: UPM did not install govulncheck, download a vulnerability database, or alter the user's telemetry mode.
 
-See `GO_SYMBOL_REACHABILITY.md` for the public-promotion gate and side-effect/integrity boundaries.
+See `GO_SYMBOL_REACHABILITY.md` for the remaining public-promotion gate and side-effect/integrity boundaries.
 
 ## Native-security focused slice
 
@@ -142,7 +154,7 @@ This concentrates on provider-backed CycloneDX advisory inventory, the OSV scan 
 sh ./scripts/check-all-local-latest.sh
 ```
 
-This runs the baseline check plus integration/provider, native-security, Yarn Berry, validated Poetry/PDM provider, cache-provenance, and pre-public Go symbol parser/planner slices in sequence.
+This runs the baseline check plus integration/provider, native-security, Yarn Berry, validated Poetry/PDM provider, cache-provenance, and pre-public Go symbol slices in sequence.
 
 No command above requires or invokes GitHub Actions.
 
@@ -163,9 +175,12 @@ Focused reconstructed/local validation currently includes:
 - Go package-import reachability core: **7/7** reconstructed checks passed for positive import reachability, replacement-aware logical/effective module identity, successful negative, query failure, provider skip, query deduplication, non-Go filtering, and the any-build-tag/current-build-not-evaluated evidence contract;
 - Go relationship execution environment: **3/3** reconstructed checks passed for graph isolation, why isolation, and preservation of unrelated environment while overriding `GOPROXY`/`GOWORK`;
 - real local Go 1.23.2 source-query immutability: **1/1** isolated check passed, with `go mod why -m` returning the expected path while `go.mod` and `go.sum` remained byte-for-byte unchanged;
-- pre-public govulncheck parser/planner contract: **8/8** reconstructed checks passed for evidence-level separation, alias/order handling, protocol/mode/level/local-DB refusal boundaries, ambiguous message refusal, offline plan guards, and telemetry fail-closed behavior.
+- pre-public govulncheck parser/planner contract: **8/8** reconstructed checks passed;
+- strict govulncheck-to-UPM symbol correlation: **9/9** reconstructed checks passed;
+- govulncheck executable/local-state/telemetry preflight: **6/6** reconstructed checks passed;
+- live preflight blockers independently confirmed: Go is `/usr/local/go/bin/go`, telemetry is `local`, govulncheck is absent, and no candidate local vulnerability DB was found.
 
-The project/fleet CLI reachability regressions and pre-public symbol test driver are committed and included in local scripts, but they are not represented as having run end-to-end in this constrained runtime.
+The project/fleet Go import-reachability CLI regressions and pre-public symbol test driver are committed and included in local scripts, but the private branch is not represented as having run end-to-end in this constrained runtime.
 
 The committed focused drivers and aggregate `check-all-local-latest.sh` are intended for execution from a normal local clone where the complete private branch is available. They are not represented as having run end-to-end here.
 
