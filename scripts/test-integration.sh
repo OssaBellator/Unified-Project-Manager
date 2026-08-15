@@ -29,6 +29,7 @@ for test_file in \
   tests/test_uv_workspace_operations.py \
   tests/test_uv_workspace_batch_entrypoint.py \
   tests/test_uv_workspace_provider_routing.py \
+  tests/test_uv_workspace_sbom_routing.py \
   tests/test_provider_selection.py \
   tests/test_provider_ownership.py \
   tests/test_provider_registry.py \
