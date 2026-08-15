@@ -10,7 +10,7 @@ The plan executes:
 
 ```text
 go env -json
-go list -mod=readonly -deps -json ./...
+go list -mod=readonly -deps -compiled -json ./...
 ```
 
 with:
@@ -23,6 +23,21 @@ GOTOOLCHAIN = local
 ```
 
 The observation is deliberately read-only at the project level. Non-project Go cache/tool state may still be touched by the Go tool.
+
+## Why `-compiled` matters
+
+Govulncheck source-symbol analysis loads packages through `golang.org/x/tools/go/packages` with syntax/type information. The Go packages loader defines `Syntax` as syntax trees for `CompiledGoFiles`, and its Go-command driver requests compiled file information when syntax/types are needed.
+
+UPM therefore keeps two source views separate:
+
+```text
+selected_files    = broader Go/Cgo/C/C++/assembly/embed build inputs
+syntax_go_files   = CompiledGoFiles reported as suitable for type checking
+```
+
+Those sets may differ. In particular, cgo processing can produce compiled Go inputs that are not the same paths as the raw Cgo/Go source list.
+
+UPM does **not** hash `CompiledGoFiles` as a freshness claim yet. Generated/cache paths can appear there, and real govulncheck alignment remains a promotion gate.
 
 ## Build environment retained
 
@@ -39,20 +54,39 @@ UPM keeps resolved Go build inputs such as:
 
 Machine-local cache paths such as `GOMODCACHE` are not promoted into the semantic build-environment record merely because `go env -json` reports them.
 
+`GOFLAGS` is retained because it can affect the Go command's effective build configuration. The separate build-selection guard currently validates the explicit scanner/observation package-pattern, build-tag, and test-selection arguments; resolved ambient build configuration still remains candidate evidence rather than runtime-equivalence proof.
+
 ## Package/source inputs retained
 
-For each package returned by `go list -deps -json`, UPM records:
+For each package returned by `go list -deps -compiled -json`, UPM records:
 
 - import path and package name;
 - standard-library versus module package;
 - root versus dependency-only state;
 - package directory;
 - original and effective module path/version, including replacements;
-- selected Go/Cgo/C/C++/Objective-C/header/Fortran/assembly/Swig/syso/embed inputs when reported;
+- raw selected Go/Cgo/C/C++/Objective-C/header/Fortran/assembly/Swig/syso/embed inputs when reported;
+- `CompiledGoFiles` separately as `syntax_go_files`;
 - ignored Go/other files separately;
 - package imports.
 
-Incomplete packages, package errors, dependency errors, malformed module identity, or malformed file lists fail the observation rather than producing a partial freshness claim.
+Pseudo-packages such as `unsafe` may legitimately have no `CompiledGoFiles`; absence is retained rather than fabricated. Incomplete packages, package errors, dependency errors, malformed module identity, or malformed file lists fail the observation rather than producing a partial freshness claim.
+
+## Planned build-selection guard
+
+`compare_go_symbol_build_selection(...)` compares the scanner and observation command plans before the optional real-runtime tests are allowed to launch govulncheck.
+
+The current accepted candidate is:
+
+```text
+patterns = ["./..."]
+tags = []
+tests = false
+```
+
+Package-pattern or build-tag drift is explicit. Test-enabled selection remains fail-closed even when both command lines request tests, because UPM has not yet proven equivalence between govulncheck's `go/packages` test loading and `go list -test` package variants.
+
+See `GO_SYMBOL_BUILD_SELECTION.md`.
 
 ## Candidate-only semantics
 
@@ -93,17 +127,20 @@ A module/root inventory match is evidence of agreement at that level only. It do
 
 Replacement comparison uses the Go-native observation's **effective** module identity, matching the existing strict govulncheck symbol-correlation contract.
 
-## Real local Go check
+## Real local Go checks
 
 The deterministic versioned runtime fixture is reused for source observation. After `example.com/dep@v1.2.3` is populated from the generated local `file://` module proxy, the candidate observation runs with `GOPROXY=off` and isolated `GOMODCACHE`/`GOCACHE`.
 
-A real installed Go 1.23.2 check in this implementation environment successfully:
+The existing real fixture check validates that the app and dependency sources are selected, the expected module/version is reported, and the prepared project snapshot is unchanged.
 
-- selected the app's `main.go`;
-- selected the dependency's `dep.go`;
-- reported `example.com/dep@v1.2.3`;
-- retained resolved Go build environment identity;
-- left the prepared `go.mod`, `go.sum`, and `main.go` snapshot unchanged.
+A separate live Go sanity check for the compiled-input change also confirmed:
+
+```text
+GoFiles          = [main.go]
+CompiledGoFiles  = [main.go]
+IgnoredGoFiles   = [windows_only.go]
+project snapshot = unchanged
+```
 
 This validates the Go-native observation boundary, not govulncheck equivalence.
 
@@ -122,14 +159,18 @@ When runnable it uses the same generated local DB, local module proxy, versioned
 1. the Go-native source/build observation;
 2. the real pre-public govulncheck scan.
 
-It then requires the two declarations to agree on roots and effective module/version inventory. Passing that future check still does **not** establish a source/build freshness fingerprint; it only validates the alignment assumption needed before designing one.
+Before launching the scanner it now also requires the planned build-selection guard to pass. It then requires the two declarations to agree on roots and effective module/version inventory.
+
+Passing that future check still does **not** establish a source/build freshness fingerprint; it only validates the alignment assumptions needed before designing one.
 
 ## Validation drivers
 
 ```sh
+sh ./scripts/test-go-symbol-build-selection.sh
 sh ./scripts/test-go-symbol-source-observation.sh
 sh ./scripts/test-go-symbol-source-alignment.sh
 sh ./scripts/test-go-symbol-real-alignment.sh
+sh ./scripts/test-go-symbol-prepublic-all.sh
 ```
 
 The real alignment driver is expected to skip in environments that do not already satisfy govulncheck/telemetry prerequisites.
