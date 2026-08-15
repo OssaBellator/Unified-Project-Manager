@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .go_offline_provider import execute_native_graph_offline
 from .models import ProjectGraph
-from .native_graph import NativeGraphResult, execute_native_graph, plan_native_graph
+from .native_graph import NativeGraphResult, plan_native_graph
 from .sbom import cyclonedx_bom, cyclonedx_bom_with_native
 
 
@@ -36,6 +37,7 @@ class SecurityScanPlan:
             "native_go": self.native_go,
             "argv": list(self.argv_template),
             "network_may_be_used": True,
+            "native_go_inventory_network": "offline" if self.native_go else "not-used",
             "temporary_sbom": True,
         }
 
@@ -96,14 +98,14 @@ class SecurityScanResult:
 def _native_go_results(
     graph: ProjectGraph,
     *,
-    execute: Callable[[object], NativeGraphResult] = execute_native_graph,
+    execute: Callable[[object], NativeGraphResult] = execute_native_graph_offline,
 ) -> list[NativeGraphResult]:
     plans, _skips = plan_native_graph(graph)
     results = [execute(plan) for plan in plans]
     failures = [result for result in results if not result.succeeded]
     if failures:
         rendered = "; ".join(f"{result.plan.component}: {result.stderr}" for result in failures)
-        raise SecurityScanError(f"Could not build authoritative Go inventory for advisory scan: {rendered}")
+        raise SecurityScanError(f"Could not build authoritative offline Go inventory for advisory scan: {rendered}")
     return results
 
 
@@ -111,7 +113,7 @@ def build_security_bom(
     graph: ProjectGraph,
     *,
     native_go: bool = False,
-    execute_go: Callable[[object], NativeGraphResult] = execute_native_graph,
+    execute_go: Callable[[object], NativeGraphResult] = execute_native_graph_offline,
 ) -> dict[str, Any]:
     if native_go:
         return cyclonedx_bom_with_native(graph, _native_go_results(graph, execute=execute_go))
@@ -139,7 +141,7 @@ def execute_security_scan(
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     which: Callable[[str], str | None] = shutil.which,
-    execute_go: Callable[[object], NativeGraphResult] = execute_native_graph,
+    execute_go: Callable[[object], NativeGraphResult] = execute_native_graph_offline,
 ) -> SecurityScanResult:
     executable = which("osv-scanner")
     if executable is None:
