@@ -4,6 +4,8 @@ import argparse
 import json
 import sys
 
+from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
+from .cargo_impact import analyze_cargo_impact
 from .discovery import discover
 from .native_graph import execute_native_graph, plan_native_graph
 from .native_impact import analyze_native_impact
@@ -47,13 +49,14 @@ def fleet_impact_command(argv: list[str]) -> int:
             graph = discover(root)
             go_plans, go_skips = plan_native_graph(graph)
             npm_plans = plan_npm_graphs(graph)
+            cargo_plans = plan_cargo_graphs(graph)
         except (OSError, ValueError) as exc:
             failures.append({"project": str(root), "provider": None, "component": None, "error": str(exc), "returncode": None})
             continue
 
-        npm_components = {plan.component for plan in npm_plans}
+        handled_components = {plan.component for plan in [*npm_plans, *cargo_plans]}
         for skip in go_skips:
-            if skip.component not in npm_components:
+            if skip.component not in handled_components:
                 skips.append({"project": str(root), **skip.to_dict()})
 
         for plan in go_plans:
@@ -84,9 +87,23 @@ def fleet_impact_command(argv: list[str]) -> int:
                     **impact.to_dict(),
                 })
 
+        for plan in cargo_plans:
+            result = execute_cargo_graph(plan)
+            if not result.succeeded:
+                failures.append({
+                    "project": str(root), "provider": "cargo-metadata", "component": plan.component,
+                    "error": result.stderr, "returncode": result.returncode,
+                })
+                continue
+            for impact in analyze_cargo_impact(result, args.package):
+                impacts.append({
+                    "project": str(root), "provider": "cargo-metadata", "scope": "locked-offline-dependency-graph",
+                    **impact.to_dict(),
+                })
+
     impacts.sort(key=lambda item: (
         str(item["project"]), str(item["provider"]), str(item["component"]),
-        str(item.get("ref", "")), str(item.get("module", "")),
+        str(item.get("ref", "")), str(item.get("module", "")), str(item.get("package_id", "")),
     ))
     affected_projects = sorted({str(item["project"]) for item in impacts})
 
@@ -112,10 +129,14 @@ def fleet_impact_command(argv: list[str]) -> int:
                 print(rendered)
                 for path in impact.get("root_paths", []):
                     print("  root path: " + " -> ".join(path))
-            else:
+            elif impact["provider"] == "npm-lock-tree":
                 version = f"@{impact['version']}" if impact.get("version") else ""
                 print(f"{impact['project']} [{impact['component']}] [npm]: {impact['name']}{version}")
                 print("  logical path: " + " -> ".join(impact["root_path"]))
+            else:
+                print(f"{impact['project']} [{impact['component']}] [cargo]: {impact['name']}@{impact['version']}")
+                for path in impact.get("workspace_paths", []):
+                    print("  workspace path: " + " -> ".join(path))
         for failure in failures:
             print(f"x {failure['project']} [{failure.get('component') or 'project'}]: {failure['error']}")
         if missing:
