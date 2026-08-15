@@ -12,8 +12,8 @@ The implementation targets Python 3.11+ and has no runtime dependency outside th
 
 | Ecosystem | Native managers/tooling | Current control-plane coverage |
 | --- | --- | --- |
-| Node | npm, pnpm, Yarn, Bun | discovery, ownership, workspaces, direct/resolved inventory, package scripts, operations, native verification, npm logical transitive graph, cache/store coverage |
-| Python | uv, Poetry, PDM, pip | PEP 621/dependency groups/Poetry/requirements discovery, resolved lock inventory, operations, native verification, installed `.venv` checks, conservative uv universal-lock graph |
+| Node | npm, pnpm, Yarn, Bun | discovery, ownership, workspaces, direct/resolved inventory, package scripts, operations, native verification, npm/pnpm/Yarn Berry relationship graphs, cache/store coverage |
+| Python | uv, Poetry, PDM, pip | PEP 621/dependency groups/Poetry/requirements discovery, resolved lock inventory, operations, native verification, installed `.venv` checks, conservative uv universal-lock plus validated Poetry/PDM structured-lock graphs |
 | Rust | Cargo | package/workspace discovery, `Cargo.lock` inventory, operations/tasks, locked offline metadata graph, native verification, storage/provenance |
 | Go | Go modules/workspaces | `go.mod` + `go.work`, checksum/workspace state, offline selected-module graph, replacements, impact/why, cache verification, provenance, tasks, operations/workspace sync |
 
@@ -34,7 +34,15 @@ Across those ecosystems UPM provides:
 
 ## Local validation
 
-Run the complete local suite:
+Run the aggregate local suite:
+
+```sh
+sh ./scripts/check-all-local-latest.sh
+```
+
+That layers the baseline compile/unit suite with integration/provider, native-security, Yarn Berry, and validated Poetry/PDM provider slices.
+
+The baseline repository check remains independently runnable:
 
 ```sh
 sh ./scripts/check.sh
@@ -46,6 +54,15 @@ A smaller cross-cutting integration slice is also available:
 
 ```sh
 sh ./scripts/test-integration.sh
+```
+
+Focused provider/security drivers include:
+
+```sh
+sh ./scripts/test-native-security.sh
+sh ./scripts/test-yarn-native.sh
+sh ./scripts/test-python-lock-native-validated.sh
+sh ./scripts/test-fleet-providers.sh
 ```
 
 Run UPM without installation:
@@ -229,6 +246,22 @@ npm ls --all --json --package-lock-only
 
 Logical occurrence identity is preserved, so two copies of the same package/version below different parents are not silently collapsed into one occurrence. npm impact/why therefore reports logical dependency paths.
 
+### pnpm: workspace-aware logical lock-tree relationships
+
+pnpm native relationship queries use:
+
+```text
+pnpm list --depth Infinity --json --lockfile-only
+```
+
+Workspace queries preserve project roots, aliases, dependency scope, parent paths, and pnpm dedupe metadata. Fleet native inventory carries that same logical occurrence context instead of flattening every pnpm observation to name/version only.
+
+### Yarn Berry 2+: isolated stored-resolution relationships
+
+Yarn Berry native graph mode uses `yarn info --all --recursive --virtuals --json` with Berry network access disabled, install state redirected outside the project, telemetry disabled, and immutable cache behavior. Exact locators, descriptors, virtual packages, and workspace identity are retained.
+
+Stored Yarn records are not automatically active dependencies: SBOM/advisory/fleet inventory is limited to locators reachable from active workspace/project roots. Yarn Classic is not claimed by this provider.
+
 ### Cargo: locked offline metadata graph
 
 Cargo native relationships use:
@@ -251,6 +284,21 @@ upm why some-package . --native --component backend
 upm impact some-package . --native --component backend
 ```
 
+### Poetry and PDM: validated structured-lock graphs
+
+Poetry/PDM relationship analysis reads `poetry.lock` / `pdm.lock` statically with no manager subprocess, environment activation, network access, or project mutation.
+
+Both use `structured-lock-dependency-graph` scope. Exact-one-candidate references become resolved edges; duplicate-name candidates remain explicit ambiguity; missing candidates remain unresolved. Marker/optional conditions are preserved rather than flattened.
+
+Public `why`, project/fleet impact, SBOM, advisory correlation, and fleet inventory share the same certainty model:
+
+- resolved `unconditional` / `conditional` paths;
+- ambiguity-derived `possible` paths containing explicit `?dependency` hops;
+- possible state propagating through descendants of every ambiguous candidate;
+- bounded path/search traversal with visible truncation rather than silent path loss.
+
+Unsupported structured-lock semantics fail closed instead of falling back to environment-dependent Poetry/PDM commands.
+
 ## Native semantic verification
 
 Structural parsing and authoritative semantic verification remain separate:
@@ -272,12 +320,15 @@ UPM can scan a temporary CycloneDX SBOM with OSV-Scanner when it is installed:
 upm audit .
 upm audit . --apply
 upm audit . --apply --json
+upm audit . --native --apply
 upm audit . --native-go --apply
 ```
 
-Audit is preview-first because OSV-Scanner may use the network. `--native-go` enriches inventory through the offline Go provider before OSV scanning, so Go dependency discovery itself does not silently contact a module proxy.
+Audit is preview-first because OSV-Scanner may use the network. `--native` builds one provider-backed inventory before scanning; the provider inventory itself follows each provider's local/offline contract. `--native-go` remains a compatibility mode that enriches only through the offline Go provider.
 
-A valid applied scan persists `.upm/audits/osv.json`, including the canonical SHA-256 of the exact SBOM that was scanned. Static-inventory evidence can therefore be classified locally as current/stale and clean/vulnerable. Native-Go evidence is retained with its inventory mode rather than being incorrectly treated as reproducible without rerunning the native inventory query.
+A valid applied scan persists `.upm/audits/osv.json`, including the canonical SHA-256 of the exact SBOM that was scanned. Static-inventory evidence can therefore be classified locally as current/stale and clean/vulnerable. Native-provider evidence is retained with its inventory mode rather than being incorrectly treated as reproducible without rerunning the relevant provider inventory.
+
+For Poetry/PDM, the validated structured-lock results that produced the exact scanned BOM are retained for dependency-path correlation. Direct and transitive ambiguity-derived findings remain possible evidence with `?dependency` hops; resolved and possible alternative paths for the same locked package occurrence are consolidated rather than duplicated.
 
 OSV-Scanner exit code `1` is treated as a valid scan containing findings, not as scanner failure.
 
@@ -285,7 +336,9 @@ For explicitly registered projects, the same preview/apply boundary is available
 
 ```sh
 upm projects audit
+upm projects audit --native
 upm projects audit --apply
+upm projects audit --native --apply
 upm projects audit --apply --json
 ```
 
@@ -310,7 +363,7 @@ upm sbom . --format spdx --native
 
 Registry resolutions receive canonical Package URLs where native provenance supports that identity. Git/path/local packages retain deterministic local identities rather than fabricated registry provenance.
 
-Native relationship enrichment currently covers Go, npm, Cargo, and uv. For uv universal locks, marker-conditional or ambiguous edges are **not** flattened into unconditional SBOM dependencies. CycloneDX records omission counts as UPM properties; SPDX omits those relationships entirely because SPDX 2.3 `DEPENDS_ON` cannot encode the original marker condition without changing its meaning.
+Native relationship enrichment covers Go, npm, pnpm, Yarn Berry 2+, Cargo, uv, Poetry, and PDM. Provider-specific uncertainty remains explicit: uv and Poetry/PDM do not flatten conditional/ambiguous relationships into unconditional dependencies, Yarn only admits active-root-reachable stored resolutions, and registry identity is only emitted where provenance supports it. CycloneDX can record provider-specific omission/reachability properties; SPDX 2.3 conservatively omits relationships whose original conditions cannot be represented without changing their meaning.
 
 ## Cache and store integrity
 
@@ -445,7 +498,7 @@ The default registry is `~/.upm/projects.json`; `--registry` can override it.
 
 Evidence-aware fleet status reuses the same local project status model and does not run scanners or relationship providers. Missing/unreadable registered projects are explicit fleet blockers.
 
-Native fleet inventory, duplicate correlation, and impact support Go, npm, Cargo, and uv while retaining provider-specific scope labels and project/component context. Duplicate observations are never automatically labeled reclaimable.
+Native fleet inventory, duplicate correlation, and impact now cover all eight public provider families while retaining provider-specific scope labels and project/component context. pnpm preserves logical workspace/alias/scope/dedupe occurrences; Yarn fleet inventory excludes inactive stored locators; Poetry/PDM fleet inventory carries `unconditional`, `conditional`, or `possible` certainty and excludes orphan structured-lock records. Duplicate observations are never automatically labeled reclaimable.
 
 ## Project policy
 
