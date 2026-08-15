@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import tempfile
@@ -128,6 +129,43 @@ class ReceiptEntrypointTests(unittest.TestCase):
             self.assertEqual(clear_code, 0)
             self.assertNotIn("receipt-chain", clear["summary"]["blockers"])
             self.assertEqual(clear["local_evidence"]["summary"]["receipt_chain_state"], "valid")
+
+    def test_receipt_chain_detects_different_valid_receipt_at_anchored_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._project(root)
+            apply_code, applied = self._apply_add(root, "foo", "1.0.0")
+            self.assertEqual(apply_code, 0)
+            anchor_code, _anchored = self._json([
+                "receipts", "chain", str(root), "--apply", "--json"
+            ])
+            self.assertEqual(anchor_code, 0)
+
+            receipt_path = Path(applied["receipt_path"])
+            data = json.loads(receipt_path.read_text(encoding="utf-8"))
+            original_id = data["receipt_id"]
+            data["operation"] = "rewritten-valid-receipt"
+            stable = {
+                "operation": data.get("operation"),
+                "commands": data.get("commands"),
+                "before": data.get("before"),
+                "after": data.get("after"),
+                "created_at": data.get("created_at"),
+            }
+            data["receipt_id"] = hashlib.sha256(
+                json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            self.assertNotEqual(data["receipt_id"], original_id)
+            receipt_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            code, status = self._json(["receipts", str(root), "--json"])
+
+            self.assertEqual(code, 1)
+            self.assertEqual(status["invalid_receipts"], 0)
+            self.assertFalse(status["receipt_chain"]["valid"])
+            anchored_invalid = status["receipt_chain"]["invalid_receipts"]
+            self.assertEqual(anchored_invalid, [receipt_path.relative_to(root).as_posix()])
+            self.assertEqual(status["state"], "current")
 
     def test_receipts_absent_is_clean_non_mutating_status(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
