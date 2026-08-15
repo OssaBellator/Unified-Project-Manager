@@ -22,6 +22,8 @@ class GoSymbolScanIdentityTests(unittest.TestCase):
         database="file:///tmp/vulndb",
         database_last_modified="2026-08-15T00:00:00Z",
         scanner_version="v1.6.0",
+        scan_mode="source",
+        scan_level="symbol",
         modules=None,
         roots=None,
         include_sbom=True,
@@ -33,8 +35,8 @@ class GoSymbolScanIdentityTests(unittest.TestCase):
             database=database,
             database_last_modified=database_last_modified,
             go_version="go1.24.0",
-            scan_level="symbol",
-            scan_mode="source",
+            scan_level=scan_level,
+            scan_mode=scan_mode,
         )
         sbom = None
         if include_sbom:
@@ -63,13 +65,19 @@ class GoSymbolScanIdentityTests(unittest.TestCase):
         self.assertEqual(one.sha256, two.sha256)
         self.assertEqual(len(one.sha256), 64)
 
-    def test_identity_changes_when_scanner_database_or_build_list_changes(self) -> None:
+    def test_identity_changes_when_scanner_database_scan_semantics_or_build_list_changes(self) -> None:
         base = govulncheck_scan_declaration_identity(self._report()).sha256
         database = govulncheck_scan_declaration_identity(
             self._report(database="file:///tmp/other-db")
         ).sha256
         scanner = govulncheck_scan_declaration_identity(
             self._report(scanner_version="v1.7.0")
+        ).sha256
+        mode = govulncheck_scan_declaration_identity(
+            self._report(scan_mode="binary")
+        ).sha256
+        level = govulncheck_scan_declaration_identity(
+            self._report(scan_level="package")
         ).sha256
         module = govulncheck_scan_declaration_identity(self._report(
             modules=(
@@ -80,12 +88,14 @@ class GoSymbolScanIdentityTests(unittest.TestCase):
         roots = govulncheck_scan_declaration_identity(self._report(
             roots=("example.com/app/other",),
         )).sha256
-        self.assertEqual(len({base, database, scanner, module, roots}), 5)
+        self.assertEqual(len({base, database, scanner, mode, level, module, roots}), 7)
 
-    def test_identity_retains_database_modified_and_go_versions(self) -> None:
+    def test_identity_retains_database_scan_semantics_and_go_versions(self) -> None:
         identity = govulncheck_scan_declaration_identity(self._report())
         data = identity.to_dict()
         self.assertEqual(data["database_last_modified"], "2026-08-15T00:00:00Z")
+        self.assertEqual(data["scan_mode"], "source")
+        self.assertEqual(data["scan_level"], "symbol")
         self.assertEqual(data["config_go_version"], "go1.24.0")
         self.assertEqual(data["sbom_go_version"], "go1.24.0")
         self.assertEqual(data["scope"], "govulncheck-scan-declaration")
