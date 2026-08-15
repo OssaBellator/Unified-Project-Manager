@@ -16,6 +16,10 @@ from .npm_sbom_merge import merge_npm_cyclonedx, merge_npm_spdx
 from .operations import OperationError, select_component
 from .pnpm_sbom import PnpmSbomError, execute_pnpm_sbom, plan_pnpm_sboms
 from .pnpm_sbom_merge import merge_pnpm_cyclonedx, merge_pnpm_spdx
+from .python_lock_graph import plan_python_lock_graphs
+from .python_lock_provider import python_lock_provider_name, suppress_python_lock_static_inventory
+from .python_lock_sbom import merge_python_lock_cyclonedx, merge_python_lock_spdx
+from .python_lock_validation import execute_validated_python_lock_graph
 from .sbom_providers import cyclonedx_bom_with_providers
 from .spdx import spdx_document
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
@@ -41,9 +45,10 @@ def _selected_static_graph(
     selector: str | None,
     cargo_plans: list[object],
     uv_plans: list[object],
+    python_lock_plans: list[object],
 ) -> ProjectGraph:
     if selector is None:
-        return graph
+        return suppress_python_lock_static_inventory(graph, python_lock_plans)
     try:
         selected = select_component(graph, selector)
     except OperationError as exc:
@@ -72,7 +77,8 @@ def _selected_static_graph(
             else component
             for component in components
         ]
-    return ProjectGraph(graph.root, components, graph.workspaces)
+    selected_graph = ProjectGraph(graph.root, components, graph.workspaces)
+    return suppress_python_lock_static_inventory(selected_graph, python_lock_plans)
 
 
 def sbom_command(argv: list[str]) -> int:
@@ -90,9 +96,10 @@ def sbom_command(argv: list[str]) -> int:
             yarn_plans = plan_yarn_graphs(full_graph, selector=args.component)
             cargo_plans = plan_cargo_graphs(full_graph, selector=args.component)
             uv_plans = plan_uv_graphs(full_graph, selector=args.component)
+            python_lock_plans = plan_python_lock_graphs(full_graph, selector=args.component)
         else:
-            go_plans, npm_plans, pnpm_plans, yarn_plans, cargo_plans, uv_plans = [], [], [], [], [], []
-        graph = _selected_static_graph(full_graph, args.component, cargo_plans, uv_plans)
+            go_plans, npm_plans, pnpm_plans, yarn_plans, cargo_plans, uv_plans, python_lock_plans = [], [], [], [], [], [], []
+        graph = _selected_static_graph(full_graph, args.component, cargo_plans, uv_plans, python_lock_plans)
     except (OSError, NpmSbomError, PnpmSbomError, YarnGraphError, UvGraphError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
@@ -103,6 +110,7 @@ def sbom_command(argv: list[str]) -> int:
     yarn_results = [execute_yarn_graph(plan) for plan in yarn_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
+    python_lock_results = [execute_validated_python_lock_graph(full_graph, plan) for plan in python_lock_plans]
     failures = [
         ("go-modules", result.plan.component, result.stderr)
         for result in go_results if not result.succeeded
@@ -121,6 +129,9 @@ def sbom_command(argv: list[str]) -> int:
     ] + [
         ("uv-lock", result.plan.component, result.error)
         for result in uv_results if not result.succeeded
+    ] + [
+        (python_lock_provider_name(result.plan), result.plan.component, result.error)
+        for result in python_lock_results if not result.succeeded
     ]
     if failures:
         for provider, component, error in failures:
@@ -139,6 +150,7 @@ def sbom_command(argv: list[str]) -> int:
             document = merge_npm_cyclonedx(document, npm_results)
             document = merge_pnpm_cyclonedx(document, pnpm_results)
             document = merge_yarn_cyclonedx(document, yarn_results)
+            document = merge_python_lock_cyclonedx(document, python_lock_results)
         else:
             document = spdx_document(
                 graph,
@@ -150,7 +162,8 @@ def sbom_command(argv: list[str]) -> int:
             document = merge_npm_spdx(document, npm_results)
             document = merge_pnpm_spdx(document, pnpm_results)
             document = merge_yarn_spdx(document, yarn_results)
-    except (NpmSbomError, PnpmSbomError, YarnGraphError, UvGraphError) as exc:
+            document = merge_python_lock_spdx(document, python_lock_results)
+    except (NpmSbomError, PnpmSbomError, YarnGraphError, UvGraphError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 1
 
