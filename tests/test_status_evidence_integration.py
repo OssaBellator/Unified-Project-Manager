@@ -57,6 +57,35 @@ class StatusEvidenceIntegrationTests(unittest.TestCase):
             self.assertIn("workspace-errors", data["summary"]["blockers"])
             self.assertTrue(data["workspace_health"])
 
+    def test_uv_workspace_missing_shared_lock_is_local_status_blocker_without_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="root"\nversion="0.1.0"\n'
+                '[tool.uv.workspace]\nmembers=["packages/*"]\n',
+                encoding="utf-8",
+            )
+            member = root / "packages" / "app"
+            member.mkdir(parents=True)
+            (member / "pyproject.toml").write_text(
+                '[project]\nname="app"\nversion="0.1.0"\n', encoding="utf-8"
+            )
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = main(["status", str(root), "--json"])
+
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertIn("workspace-errors", data["summary"]["blockers"])
+            self.assertTrue(any(
+                item["code"] in {"uv.workspace.lock-missing", "uv.workspace.invalid"}
+                for item in data["workspace_health"]
+            ))
+            self.assertFalse(data["local_evidence"]["network_executed"])
+            self.assertFalse(data["local_evidence"]["native_provider_execution"])
+            self.assertFalse(data["local_evidence"]["scanner_execution"])
+
 
 if __name__ == "__main__":
     unittest.main()
