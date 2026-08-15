@@ -8,7 +8,7 @@ from pathlib import Path
 from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
 from .cargo_impact import analyze_cargo_impact
 from .discovery import discover
-from .native_graph import query_native_why
+from .go_offline_provider import query_native_why_offline
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
 from .operations import OperationError, select_component
@@ -62,7 +62,7 @@ def why_command(argv: list[str]) -> int:
     handled: set[str] = set()
 
     try:
-        go_results, go_skips = query_native_why(graph, args.package, selector=args.component)
+        go_results, go_skips = query_native_why_offline(graph, args.package, selector=args.component)
     except ValueError as exc:
         failures.append({"provider": "go-mod-why", "component": selected_key, "error": str(exc), "returncode": None})
         go_results, go_skips = [], []
@@ -153,7 +153,7 @@ def why_command(argv: list[str]) -> int:
         for answer in answers:
             provider = answer["provider"]
             if provider == "go-mod-why":
-                print(f"{answer['component']} [go package-import-chain]")
+                print(f"{answer['component']} [go package-import-chain, offline]")
                 print("  " + " -> ".join(answer["path"]))
             elif provider == "npm-lock-tree":
                 version = f"@{answer['version']}" if answer.get("version") else ""
