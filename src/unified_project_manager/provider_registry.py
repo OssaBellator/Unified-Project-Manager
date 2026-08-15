@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from .models import Component, ProjectGraph
+from .pnpm_graph import plan_pnpm_graphs, pnpm_provider_component_keys
 
 NetworkMode = Literal['none', 'offline', 'may-use-network']
 MutationMode = Literal['none', 'project-read-only']
@@ -151,11 +152,17 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
 
 
 def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
+    pnpm_plans = plan_pnpm_graphs(graph)
+    pnpm_owned = pnpm_provider_component_keys(graph, pnpm_plans)
     result: list[ProviderCoverage] = []
     for component in graph.components:
+        key = component.key(graph.root)
         provider, reason = provider_for_component(component)
+        if provider is None and key in pnpm_owned:
+            provider = PNPM_PROVIDER
+            reason = None
         result.append(ProviderCoverage(
-            component=component.key(graph.root),
+            component=key,
             ecosystem=component.ecosystem,
             manager=component.manager,
             provider=provider,
