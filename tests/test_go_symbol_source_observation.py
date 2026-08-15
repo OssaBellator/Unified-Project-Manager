@@ -13,6 +13,7 @@ from unified_project_manager.go_symbol_source_observation import (
     execute_go_symbol_source_observation,
     parse_go_symbol_build_environment,
     parse_go_symbol_package_inputs,
+    validate_go_symbol_loader_profile_version,
 )
 
 
@@ -27,7 +28,9 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
             self.assertEqual(
                 plan.packages_argv,
                 (
-                    "/tools/go", "list", "-mod=readonly", "-deps", "-compiled", "-json", "./..."
+                    "/tools/go", "list", "-e", "-mod=readonly", "-deps=true",
+                    "-compiled=true", "-test=false", "-export=false", "-find=false",
+                    "-buildvcs=false", "-pgo=off", "-json", "--", "./...",
                 ),
             )
             self.assertEqual(plan.environment["GOPROXY"], "off")
@@ -35,6 +38,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
             self.assertEqual(plan.environment["GOSUMDB"], "off")
             self.assertEqual(plan.environment["GOTOOLCHAIN"], "local")
             data = plan.to_dict()
+            self.assertEqual(data["minimum_loader_profile_go"], "1.21")
             self.assertEqual(data["freshness"], "not-established")
             self.assertEqual(data["govulncheck_equivalence"], "not-established")
             self.assertEqual(data["project_mutation"], "none-planned")
@@ -67,6 +71,25 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
             with self.subTest(missing=missing):
                 with self.assertRaisesRegex(GoSymbolSourceObservationError, missing):
                     parse_go_symbol_build_environment(json.dumps(value))
+
+    def test_loader_profile_requires_go_1_21_or_newer(self) -> None:
+        for version in ("go1.21", "go1.23.2", "devel go1.27-abcdef"):
+            environment = parse_go_symbol_build_environment(json.dumps({
+                "GOOS": "linux", "GOARCH": "amd64", "GOVERSION": version,
+            }))
+            validate_go_symbol_loader_profile_version(environment)
+
+        old = parse_go_symbol_build_environment(json.dumps({
+            "GOOS": "linux", "GOARCH": "amd64", "GOVERSION": "go1.20.14",
+        }))
+        with self.assertRaisesRegex(GoSymbolSourceObservationError, "requires Go 1.21\+"):
+            validate_go_symbol_loader_profile_version(old)
+
+        unknown = parse_go_symbol_build_environment(json.dumps({
+            "GOOS": "linux", "GOARCH": "amd64", "GOVERSION": "devel unknown",
+        }))
+        with self.assertRaisesRegex(GoSymbolSourceObservationError, "Could not interpret GOVERSION"):
+            validate_go_symbol_loader_profile_version(unknown)
 
     def test_package_parser_preserves_compiled_selected_ignored_module_and_import_inputs(self) -> None:
         stream = "\n".join([
@@ -161,7 +184,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(GoSymbolSourceObservationError, reason):
                     parse_go_symbol_package_inputs(json.dumps(record))
 
-    def test_execution_uses_resolved_go_and_same_guards_for_env_and_packages(self) -> None:
+    def test_execution_uses_normalized_loader_profile_and_same_guards(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plan = build_go_symbol_source_observation_plan(root)
@@ -213,10 +236,41 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 self.assertEqual(kwargs["env"]["GOSUMDB"], "off")
                 self.assertEqual(kwargs["env"]["GOTOOLCHAIN"], "local")
                 self.assertEqual(kwargs["env"]["UPM_SOURCE_OBSERVATION_SENTINEL"], "present")
-            self.assertIn("-compiled", calls[1][0])
+            package_argv = calls[1][0]
+            for flag in (
+                "-e", "-deps=true", "-compiled=true", "-test=false", "-export=false",
+                "-find=false", "-buildvcs=false", "-pgo=off", "--",
+            ):
+                self.assertIn(flag, package_argv)
             self.assertEqual(result.observation.root_packages, ("example.com/app",))
             self.assertEqual(result.observation.packages[0].syntax_go_files, ("main.go",))
             self.assertFalse(result.to_dict()["persisted"])
+
+    def test_unsupported_go_version_blocks_before_package_loading(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = build_go_symbol_source_observation_plan(root)
+            calls = []
+
+            def run(argv, **kwargs):
+                calls.append(argv)
+                if argv[1:3] != ["env", "-json"]:
+                    raise AssertionError("package loading must not run for unsupported Go")
+                return subprocess.CompletedProcess(
+                    argv,
+                    0,
+                    json.dumps({"GOOS": "linux", "GOARCH": "amd64", "GOVERSION": "go1.20.14"}),
+                    "",
+                )
+
+            result = execute_go_symbol_source_observation(
+                plan,
+                run=run,
+                which=lambda _name: "/tools/go",
+            )
+            self.assertFalse(result.succeeded)
+            self.assertEqual(len(calls), 1)
+            self.assertIn("requires Go 1.21+", result.error or "")
 
     def test_execution_failure_and_parse_failure_are_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
