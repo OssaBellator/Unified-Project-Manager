@@ -6,6 +6,7 @@ import shlex
 import sys
 from pathlib import Path
 
+from .audit_evidence import AuditEvidenceError, build_audit_evidence, write_audit_evidence
 from .discovery import discover
 from .security import SecurityScanError, execute_security_scan, plan_security_scan
 
@@ -16,8 +17,8 @@ def _parser() -> argparse.ArgumentParser:
         description="Preview or execute vulnerability scanning over a temporary UPM CycloneDX SBOM",
     )
     parser.add_argument("path", nargs="?", default=".")
-    parser.add_argument("--native-go", action="store_true", help="Enrich the temporary SBOM with authoritative selected Go modules during execution")
-    parser.add_argument("--apply", action="store_true", help="Run OSV-Scanner; preview is the default because scanning may use the network")
+    parser.add_argument("--native-go", action="store_true", help="Enrich the temporary SBOM with authoritative offline selected Go modules during execution")
+    parser.add_argument("--apply", action="store_true", help="Run OSV-Scanner and persist evidence; preview is the default because scanning may use the network")
     parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
@@ -43,16 +44,16 @@ def audit_command(argv: list[str]) -> int:
         return 2
 
     if not args.apply:
-        payload = {"executed": False, "plan": plan.to_dict()}
+        payload = {"executed": False, "plan": plan.to_dict(), "evidence_will_be_persisted": True}
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             count = str(plan.package_count)
             if not plan.package_count_exact:
-                count += "+ (Go inventory resolved on apply)"
+                count += "+ (Go inventory resolved on apply, offline)"
             print(f"Packages represented before native enrichment: {count}")
             print(f"Command: {shlex.join(plan.argv_template)}")
-            print("Preview only. OSV-Scanner may use network access; re-run with --apply to execute.")
+            print("Preview only. OSV-Scanner may use network access; re-run with --apply to execute and persist advisory evidence.")
         return 0
 
     try:
@@ -64,8 +65,35 @@ def audit_command(argv: list[str]) -> int:
             print(f"upm: {exc}", file=sys.stderr)
         return 2
 
+    evidence = None
+    evidence_path = None
+    if result.scanner_succeeded:
+        if result.bom is None:
+            message = "OSV-Scanner completed but UPM did not retain the exact scanned SBOM; refusing to persist unverifiable evidence."
+            if args.as_json:
+                print(json.dumps({"error": message, "result": result.to_dict()}, indent=2, sort_keys=True))
+            else:
+                print(f"upm: {message}", file=sys.stderr)
+            return 2
+        try:
+            evidence = build_audit_evidence(
+                result.bom,
+                result,
+                inventory_mode="native-go" if plan.native_go else "static-resolved",
+            )
+            evidence_path = write_audit_evidence(root, evidence)
+        except (AuditEvidenceError, OSError, ValueError) as exc:
+            if args.as_json:
+                print(json.dumps({"error": f"Could not persist advisory evidence: {exc}", "result": result.to_dict()}, indent=2, sort_keys=True))
+            else:
+                print(f"upm: could not persist advisory evidence: {exc}", file=sys.stderr)
+            return 2
+
     if args.as_json:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        payload = result.to_dict()
+        payload["evidence"] = evidence.to_dict() if evidence else None
+        payload["evidence_path"] = str(evidence_path) if evidence_path else None
+        print(json.dumps(payload, indent=2, sort_keys=True))
     elif not result.scanner_succeeded:
         print(f"OSV-Scanner failed with exit code {result.returncode}.")
         if result.stderr:
@@ -79,6 +107,12 @@ def audit_command(argv: list[str]) -> int:
             )
         else:
             print("No known vulnerabilities were reported for the scanned SBOM.")
+        if evidence_path:
+            try:
+                rendered_path = evidence_path.relative_to(root).as_posix()
+            except ValueError:
+                rendered_path = str(evidence_path)
+            print(f"Advisory evidence: {rendered_path}")
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
 
