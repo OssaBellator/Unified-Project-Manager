@@ -23,11 +23,12 @@ Across those ecosystems UPM provides:
 - normalized components, workspace manifests, manager ownership, direct dependencies, resolved inventory, and toolchain requirements;
 - structural `doctor` findings, workspace health, portable integrity snapshots, and composed `status`;
 - preview-first native mutation with automatically persisted mutation receipts;
+- optional deterministic receipt-chain anchoring for local tamper evidence;
 - native semantic verification and ecosystem-specific cache/store checks;
 - direct, resolved, and authoritative native graph/why/impact views;
-- project policy and registered-project fleet policy/impact/storage views;
+- project policy and registered-project fleet policy/impact/status/storage views;
 - CycloneDX 1.7 and SPDX 2.3 JSON SBOM export;
-- preview-first OSV-Scanner advisory scanning with persisted evidence;
+- preview-first OSV-Scanner advisory scanning with persisted project/fleet evidence;
 - machine-wide cache/storage observation and explicit native cache maintenance;
 - JSON output for automation without requiring a hosted control plane.
 
@@ -84,10 +85,11 @@ It composes already-available evidence rather than silently running scanners or 
 - authoritative relationship-provider coverage;
 - persisted advisory-evidence state;
 - latest mutation-receipt state/drift;
+- optional receipt-chain validation when `.upm/receipt-chain.json` exists;
 - optional installed-state checks with `--deep`;
 - optional local artifact measurement with `--storage`.
 
-Current blockers include doctor errors, workspace errors, policy violations, current known vulnerabilities, and invalid/drifted receipt state. Missing optional advisory or mutation-receipt evidence is reported but is not itself a blocker unless policy requires it.
+Current blockers include doctor errors, workspace errors, policy violations, current known vulnerabilities, invalid/drifted receipt state, and a broken receipt chain when one has been explicitly anchored. Missing optional advisory, mutation-receipt, or receipt-chain evidence is reported but is not itself a blocker unless policy requires the corresponding evidence.
 
 `status` does **not** run OSV-Scanner, native graph providers, cache maintenance, or filesystem storage traversal unless the explicitly documented status option asks for that local traversal.
 
@@ -130,11 +132,34 @@ The same receipt model is used for applied:
 
 - package `install`, `sync`, `add`, and `remove`;
 - workspace-aware `install --all` and `sync --all`;
+- in-root `go work sync`;
 - `repair`;
 - native-manager `exec`;
 - `init`.
 
 Sensitive command arguments are redacted before persistence. Preview-only commands do not create mutation receipts.
+
+Inspect the receipt history and current native-state drift locally:
+
+```sh
+upm receipts .
+upm receipts . --json
+```
+
+The command is read-only and network-free. It returns non-zero when stored receipts are invalid or the current native project state differs from the latest receipt baseline.
+
+### Optional receipt hash chain
+
+UPM can build a deterministic local chain over the current receipt set:
+
+```sh
+upm receipts chain .
+upm receipts chain . --apply
+```
+
+The command is preview-first. `--apply` writes `.upm/receipt-chain.json` and exposes a deterministic anchor digest. Once a chain exists, later receipt additions/removals/changes make the old chain invalid until the user explicitly re-anchors it.
+
+The chain is **tamper-evident but not externally authenticated**. UPM does not claim the local chain proves authenticity against an attacker who can rewrite both the receipts and the chain manifest; the anchor digest is provided so a separate trust system can record it if desired.
 
 UPM refuses mutation when manager/component/workspace ownership is ambiguous rather than choosing a plausible command and hoping it is correct.
 
@@ -165,6 +190,8 @@ upm workspace sync . --apply
 Static discovery can report workspace presence without Go installed. Authoritative membership/replacement inspection delegates to `go work edit -json`.
 
 `go work sync` is preview-first. UPM preflights workspace members and refuses external-member mutation unless explicitly allowed because native workspace synchronization can update member `go.mod` files.
+
+An internal-only applied workspace sync writes a complete project mutation receipt, including partial state after native failure. If `--allow-external` permits member modules outside the selected project root, UPM intentionally **does not** write a project receipt: doing so would falsely imply that out-of-root mutations were fully captured. The command instead reports `receipt_scope=external-unrepresented` and preserves the native changed-file report.
 
 Component-scoped Go package operations/tasks/exec disable ambient workspace inheritance with `GOWORK=off`; explicit workspace commands instead bind to the discovered workspace.
 
@@ -254,6 +281,16 @@ A valid applied scan persists `.upm/audits/osv.json`, including the canonical SH
 
 OSV-Scanner exit code `1` is treated as a valid scan containing findings, not as scanner failure.
 
+For explicitly registered projects, the same preview/apply boundary is available fleet-wide:
+
+```sh
+upm projects audit
+upm projects audit --apply
+upm projects audit --apply --json
+```
+
+Valid real scans persist evidence inside each scanned project, so a subsequent `upm projects status` can surface clean/vulnerable/stale states without silently rescanning.
+
 ## SBOM export
 
 CycloneDX 1.7 JSON:
@@ -324,7 +361,7 @@ upm cache storage
 upm cache storage --manager go --manager cargo
 ```
 
-Current project-local roots include Node `node_modules`, Python `.venv`/`__packages__`-style environments where configured, and Cargo `target`.
+Current project-local roots include Node `node_modules`, Python `.venv`/`__pypackages__` environments where configured, and Cargo `target`.
 
 Shared cache roots include Go, npm, pnpm, uv, and Cargo stores. Symlinks are not followed and hardlinked physical bytes are counted once where inode identity is available.
 
@@ -374,6 +411,8 @@ UPM rejects shell command strings, dependency cycles, unknown task dependencies,
 
 Native fallback supports Node package scripts, Cargo `build/check/run/test`, and Go `build/test/vet/run`. If multiple components expose the same task, `--component` is required.
 
+Task execution is intentionally not described as a complete package-state mutation receipt: user-authored tasks may create arbitrary build/test outputs outside UPM's native manifest/lock-state evidence model.
+
 ## Initialize projects
 
 ```sh
@@ -393,9 +432,10 @@ UPM monitors only projects explicitly registered by the user; there is no home-d
 upm projects add ~/code/my-app
 upm projects list
 upm projects status
+upm projects audit
 upm projects policy
-upm projects inventory
-upm projects duplicates
+upm projects inventory --native
+upm projects duplicates --native
 upm projects impact some-package --native
 upm projects storage
 upm projects remove ~/code/my-app
@@ -403,7 +443,9 @@ upm projects remove ~/code/my-app
 
 The default registry is `~/.upm/projects.json`; `--registry` can override it.
 
-Native fleet impact supports Go, npm, Cargo, and uv while retaining provider-specific scope labels and project/component context.
+Evidence-aware fleet status reuses the same local project status model and does not run scanners or relationship providers. Missing/unreadable registered projects are explicit fleet blockers.
+
+Native fleet inventory, duplicate correlation, and impact support Go, npm, Cargo, and uv while retaining provider-specific scope labels and project/component context. Duplicate observations are never automatically labeled reclaimable.
 
 ## Project policy
 
@@ -433,9 +475,9 @@ Policy evaluation does not rewrite native state or trigger hidden scanners.
 1. **Native tools remain authoritative.** UPM orchestrates instead of becoming another resolver.
 2. **Normalize observations, not ecosystem semantics away.** Meaningful differences remain visible.
 3. **Preview before mutation or network access.** Applied operations/scans are explicit.
-4. **Record mutations.** Applied package/init/repair/exec workflows retain redacted before/after evidence.
+4. **Record mutations truthfully.** Applied package/init/repair/exec/in-root workspace workflows retain redacted before/after native-state evidence; out-of-root mutations are not mislabeled complete.
 5. **Refuse ambiguity.** Manager, workspace, component, and universal-lock fork uncertainty is never guessed away.
-6. **Separate integrity layers.** Structural state, native semantic verification, installed drift, advisory evidence, cache corruption, and storage are distinct signals.
+6. **Separate integrity layers.** Structural state, native semantic verification, installed drift, advisory evidence, receipt history, cache corruption, and storage are distinct signals.
 7. **Prefer explicit uncertainty.** Unsupported or conditional evidence is surfaced rather than converted to fabricated certainty.
 8. **Measurement is not cleanup.** Duplicate versions/cache bytes are observations, not deletion instructions.
 9. **Policy is enforcement, not repair.** Evaluation never rewrites project state.
