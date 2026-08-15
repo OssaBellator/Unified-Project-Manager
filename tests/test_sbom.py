@@ -14,6 +14,11 @@ class SbomTests(unittest.TestCase):
         self.assertEqual(purl_for("node", "@angular/core", "20.0.0"), "pkg:npm/%40angular/core@20.0.0")
         self.assertEqual(purl_for("python", "My_Package", "1.2.3"), "pkg:pypi/my-package@1.2.3")
         self.assertEqual(purl_for("rust", "serde", "1.0.219"), "pkg:cargo/serde@1.0.219")
+        self.assertEqual(purl_for("go", "golang.org/x/text", "v0.22.0"), "pkg:golang/golang.org/x/text@v0.22.0")
+
+    def test_go_purl_requires_namespace_and_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "namespace/name"):
+            purl_for("go", "single-segment", "v1.0.0")
 
     def test_cyclonedx_deduplicates_same_package_version_across_locations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
