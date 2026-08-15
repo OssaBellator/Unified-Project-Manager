@@ -32,7 +32,7 @@ class ProviderRegistryTests(unittest.TestCase):
             unsupported = [item for item in summary['coverage'] if not item['supported']]
             self.assertEqual(unsupported[0]['manager'], 'yarn')
             pnpm_coverage = next(item for item in summary['coverage'] if item['manager'] == 'pnpm')
-            self.assertFalse(pnpm_coverage['provider']['supports_sbom_relationships'])
+            self.assertTrue(pnpm_coverage['provider']['supports_sbom_relationships'])
 
     def test_pnpm_workspace_member_inherits_root_relationship_provider(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -49,6 +49,7 @@ class ProviderRegistryTests(unittest.TestCase):
             self.assertTrue(coverage['.:node'].supported)
             self.assertTrue(coverage['packages/app:node'].supported)
             self.assertEqual(coverage['packages/app:node'].provider.provider, 'pnpm-lock-tree')
+            self.assertTrue(coverage['packages/app:node'].provider.supports_sbom_relationships)
 
     def test_network_guarantees_are_provider_specific(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
