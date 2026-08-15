@@ -6,9 +6,9 @@ This document describes a **pre-public** provider boundary for Go vulnerable-sym
 
 `go mod why -m` can establish that some package from a module is present in Go's package import graph. It cannot establish that a vulnerable function or method is called.
 
-Go's official `govulncheck` tool provides the stronger semantic layer UPM needs: source mode can perform static call-graph analysis and emit symbol-level findings with call traces.
+Go's official `govulncheck` source mode supplies a stronger semantic layer: static call-graph analysis can emit symbol-level findings with call traces.
 
-UPM therefore treats these as distinct evidence classes:
+UPM therefore keeps these evidence classes separate:
 
 ```text
 dependency graph < package import graph < vulnerable symbol/call graph
@@ -18,22 +18,22 @@ Even symbol/call-graph evidence is still not runtime/data-flow reachability or e
 
 ## Current implementation state
 
-The branch currently contains only:
+The branch currently contains pre-public groundwork only:
 
 - a govulncheck v1 streaming-JSON parser;
 - explicit module/package/symbol finding classification;
-- OSV alias retention for future cross-scanner correlation;
+- OSV alias retention;
 - an offline local-database plan builder;
-- telemetry-mode fail-closed validation;
+- read-only telemetry/executable/local-state preflight;
+- strict correlation from symbol findings to existing UPM Go advisory impacts;
+- an explicit regression keeping govulncheck out of the public provider registry;
 - focused local tests and a dedicated local driver.
 
-There is **no subprocess executor and no public CLI flag** for this provider yet.
-
-That is deliberate. Public promotion is blocked until the execution/preflight boundary is proven end-to-end and correlation with UPM's existing OSV-Scanner evidence is exact enough to avoid mismatching advisories.
+There is **no govulncheck subprocess executor and no public CLI flag** yet.
 
 ## JSON evidence contract
 
-UPM accepts only the current govulncheck protocol it has explicitly modeled:
+UPM accepts only the govulncheck protocol and evidence mode it has explicitly modeled:
 
 ```text
 protocol_version = v1.0.0
@@ -42,9 +42,9 @@ scan_level = symbol
 db = file://...
 ```
 
-All four values are mandatory for this provider. Missing mode/level values are not treated as implied defaults because the evidence class depends on them.
+All four values are mandatory. Missing source/symbol mode values are not treated as implied defaults because the evidence class depends on them.
 
-The first JSON message must contain only `config`. Subsequent streaming messages may appear in any order, matching the govulncheck protocol's documented ordering guarantees.
+The first JSON message must contain only `config`. Subsequent protocol messages may arrive in any valid order.
 
 Govulncheck may emit several findings for one vulnerability while analysis progresses:
 
@@ -54,23 +54,39 @@ Govulncheck may emit several findings for one vulnerability while analysis progr
 
 Only the third class is treated as vulnerable-symbol/call-graph evidence. UPM does not flatten module/package findings into a called-symbol claim.
 
-For methods, UPM retains receiver + function separately and exposes the combined symbol for rendering.
+## Strict advisory correlation
 
-## OSV identity and aliases
+Govulncheck findings reference a Go OSV ID; the corresponding OSV message may include CVE/GHSA aliases. UPM retains those aliases, but alias overlap alone is never enough to attach symbol evidence to an existing advisory occurrence.
 
-Govulncheck emits Go vulnerability OSV records and findings that reference the Go OSV ID. The OSV record may also contain aliases such as CVE or GHSA IDs.
+`correlate_govulncheck_symbols(...)` requires all of the following:
 
-UPM retains:
+1. the UPM dependency impact is a `go-modules` impact for the exact component being analyzed;
+2. its advisory ID is either the finding's GO OSV ID or an alias carried by that exact govulncheck OSV record;
+3. the govulncheck vulnerable frame's module equals the UPM impact's **effective module** identity;
+4. the module version matches exactly and is present on both sides.
+
+If any condition fails, the finding stays in `unmatched` with an explicit reason. Missing versions fail closed. If multiple different UPM advisory aliases would claim one symbol finding, correlation is refused as ambiguous.
+
+Multiple otherwise-identical UPM dependency-impact rows consolidate their dependency paths into one symbol match instead of duplicating the symbol claim.
+
+### Go replacement identity
+
+Go vulnerability analysis uses replacement module path/version for vulnerability lookup/reporting. UPM therefore correlates a govulncheck frame against `evidence.effective_name`, not the logical required module path.
+
+This is intentionally different from `go mod why -m`, whose import query uses the logical/original module namespace. For a replacement, UPM may therefore retain:
 
 ```text
-GO-... -> aliases[]
+import query target = logical required module
+symbol correlation module = effective replacement module
 ```
 
-This is groundwork only. A future public integration must prove correlation between the exact govulncheck finding and the exact advisory occurrence already reported by UPM's OSV-Scanner flow. Alias overlap alone must not manufacture a package/version match.
+without pretending those identities are interchangeable.
+
+The symbol frame's package import path is retained as reported and is not used as a substitute for module/version identity.
 
 ## Offline plan boundary
 
-The pre-public plan requires a local vulnerability database directory and converts it to a `file://` URI passed explicitly with `-db`.
+The pre-public plan requires a caller-supplied local vulnerability database directory and converts it to a `file://` URI.
 
 Planned command shape:
 
@@ -78,7 +94,7 @@ Planned command shape:
 govulncheck -format json -mode source -scan symbol -db file:///... ./...
 ```
 
-The plan also sets:
+The plan sets:
 
 ```text
 GOPROXY = off
@@ -87,34 +103,38 @@ GOSUMDB = off
 GOTOOLCHAIN = local
 ```
 
-These guards mean:
+These guards prevent module-proxy fallback, ambient workspace inheritance, checksum-database network lookup, and automatic Go toolchain download.
 
-- no module-proxy fallback;
-- no ambient parent `go.work` inheritance;
-- no checksum-database network lookup;
-- no automatic Go toolchain download.
+Because `GOSUMDB=off`, this symbol provider does **not** claim fresh dependency checksum verification. Integrity evidence remains separate.
 
-Because `GOSUMDB=off`, this symbol provider does **not** claim to freshly verify dependency checksums. Source-integrity verification remains a separate evidence concern.
+## Read-only preflight boundary
 
-## Telemetry boundary
+`preflight_govulncheck_symbol(...)` does not launch govulncheck. It revalidates:
 
-Govulncheck participates in Go telemetry. Users may configure telemetry mode as `local`, `on`, or `off`.
+- project directory still exists;
+- local vulnerability database still exists;
+- `go` is resolvable;
+- the planned govulncheck executable is resolvable;
+- `go env GOTELEMETRY` succeeds and reports exactly `off`.
 
-A future executor is allowed to run only when telemetry mode is already:
+The telemetry query runs under the same no-network/single-module environment guards as the plan. Preflight never changes telemetry configuration.
+
+Its result explicitly says:
 
 ```text
-off
+executes_govulncheck = false
+mutates_telemetry_configuration = false
+project_mutation = none
+network = none
 ```
 
-UPM will not change the user's telemetry configuration automatically merely to enable this provider.
+If telemetry is `local`, `on`, missing, or cannot be inspected, preflight is not ready. UPM will not run a settings-changing command merely to satisfy the provider.
 
-This is stricter than the default Go telemetry behavior because the provider's intended execution contract is no network and no hidden telemetry upload.
+## Mutation and side-effect boundary
 
-## Mutation boundary
+The future symbol analysis is intended to avoid project manifest/source mutation. UPM does **not** claim that a govulncheck subprocess would be globally side-effect free.
 
-The planned symbol analysis is intended to avoid project manifest/source mutation. However, UPM does **not** claim that a future govulncheck subprocess is globally side-effect free.
-
-Source analysis may use or update non-project Go/tool caches and local analysis state. Therefore the provider contract is:
+Source analysis may use or update non-project Go/tool caches and local analysis state. Therefore the eventual execution contract must remain:
 
 ```text
 project mutation = none planned
@@ -122,20 +142,21 @@ non-project cache/tool mutation = possible
 reclaimability inference = none
 ```
 
-A public executor must preserve this distinction in preview/output rather than describing the operation as universally read-only.
+A real executor test is still required before promotion.
 
 ## Reachability interpretation
 
 A symbol-level govulncheck finding means static analysis found a call path to a vulnerable symbol under the scan's source/build configuration.
 
-It does not prove:
+It does not prove that the path executes in production, that attacker-controlled data reaches the operation, that all dynamic/reflection/unsafe behavior is modeled, or that the vulnerability is exploitable.
 
-- that the call path executes in production;
-- that attacker-controlled data reaches the vulnerable operation;
-- that reflection/unsafe/dynamic behavior is fully modeled;
-- that the vulnerability is exploitable in the deployed system.
+Pre-public matched rows therefore retain:
 
-Govulncheck itself documents conservative handling of function pointers/interfaces and limitations around reflection/unsafe analysis. UPM must preserve those limitations instead of upgrading a static call trace into an exploitability verdict.
+```text
+runtime_reachability = not-evaluated
+exploitability = not-established
+persisted = false
+```
 
 ## Validation
 
@@ -145,28 +166,37 @@ Dedicated local driver:
 sh ./scripts/test-go-symbol-reachability.sh
 ```
 
-The reconstructed constrained-runtime slice currently passes **8/8** checks covering:
+It currently includes parser/planner, strict correlation, public-boundary, and preflight regressions.
 
-- module/package/symbol finding separation;
-- symbol/receiver rendering;
-- OSV alias retention independent of message order;
-- protocol-version refusal;
-- missing/wrong source-mode or symbol-level refusal;
-- remote/non-file database refusal;
-- ambiguous JSON-message refusal;
-- local-DB plan guards and telemetry fail-closed behavior.
+Focused reconstructed/local evidence in this constrained runtime:
 
-The full private branch still has not been materialized and run end-to-end in this execution environment.
+- parser/planner contract: **8/8** checks passed;
+- strict dependency-impact/symbol correlation: **9/9** checks passed;
+- read-only telemetry/executable/local-state preflight: **6/6** checks passed;
+- public registry remains the same eight relationship providers; govulncheck is not advertised.
 
-## Promotion gate
+A real symbol scan is not claimed. In this environment:
 
-Do not add a public `--go-symbol-reachability` flag until all of these are true atomically:
+```text
+govulncheck executable = absent
+Go executable = /usr/local/go/bin/go
+GOTELEMETRY = local
+usable local vulnerability DB = not found
+```
 
-1. telemetry preflight is implemented without mutating user telemetry settings;
-2. the subprocess execution boundary is locally tested with a real govulncheck runtime and local file DB;
-3. project-state mutation is checked explicitly;
-4. cache/tool side effects are represented honestly;
-5. govulncheck OSV/package/version/symbol findings are correlated to existing UPM advisory occurrences without alias-only guessing;
-6. project and fleet output share one correlation model;
-7. persistence/freshness semantics are defined separately from existing OSV scan evidence;
-8. ordinary status remains free of hidden symbol analysis.
+UPM did not install govulncheck, download a database, or change telemetry settings.
+
+The full private branch still has not been materialized and run end-to-end here.
+
+## Remaining promotion gate
+
+Do not add a public `--go-symbol-reachability` flag until all remaining items are satisfied atomically:
+
+1. execute govulncheck against a real local `file://` vulnerability DB after the existing preflight passes;
+2. verify project-state mutation and characterize actual non-project cache/tool side effects during that execution;
+3. bind the already-strict correlation core to real govulncheck output and existing UPM OSV-Scanner occurrences without weakening module/version requirements;
+4. share one project/fleet output model;
+5. define separate persistence/freshness semantics for symbol evidence;
+6. keep ordinary status free of hidden symbol analysis.
+
+The existing parser, correlation, and preflight code are groundwork for that gate, not a partial public promotion.
