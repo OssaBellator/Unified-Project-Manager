@@ -16,9 +16,9 @@ from .python_lock_reachability import (
 class PythonLockProviderQueryResult:
     """One certainty-aware Poetry/PDM dependency query result.
 
-    This is deliberately command-neutral. Future project `why`, project `impact`,
-    and fleet impact routing should serialize this same object rather than grow
-    separate interpretations of marker/optional/ambiguity evidence.
+    Project `why`, project `impact`, fleet impact, and advisory correlation use
+    this same object so resolved, conditional, possible, and ambiguity evidence
+    cannot drift between command surfaces.
     """
 
     provider: str
@@ -27,11 +27,13 @@ class PythonLockProviderQueryResult:
     manager: str
     query: str
     packages: tuple[PythonLockReachablePackage, ...]
+    possible_packages: tuple[PythonLockReachablePackage, ...]
     ambiguities: tuple[PythonLockAmbiguity, ...]
+    search_truncated: bool = False
 
     @property
     def matched(self) -> bool:
-        return bool(self.packages or self.ambiguities)
+        return bool(self.packages or self.possible_packages or self.ambiguities)
 
     @property
     def unconditional_matches(self) -> int:
@@ -43,7 +45,12 @@ class PythonLockProviderQueryResult:
 
     @property
     def uncertain(self) -> bool:
-        return bool(self.ambiguities or self.conditional_matches)
+        return bool(
+            self.ambiguities
+            or self.possible_packages
+            or self.conditional_matches
+            or self.search_truncated
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +61,11 @@ class PythonLockProviderQueryResult:
             "query": self.query,
             "matched": self.matched,
             "uncertain": self.uncertain,
+            "search_truncated": self.search_truncated,
+            # Keep the existing summary keys stable for callers that compare the
+            # command-neutral contract exactly. Possible matches are represented
+            # explicitly in `possible_packages` rather than being relabeled as
+            # conditional resolved packages.
             "summary": {
                 "packages": len(self.packages),
                 "unconditional_matches": self.unconditional_matches,
@@ -61,6 +73,7 @@ class PythonLockProviderQueryResult:
                 "ambiguities": len(self.ambiguities),
             },
             "packages": [package.to_dict() for package in self.packages],
+            "possible_packages": [package.to_dict() for package in self.possible_packages],
             "ambiguities": [ambiguity.to_dict() for ambiguity in self.ambiguities],
             "interpretation": "dependency reachability only; not source/API/runtime reachability or exploitability",
         }
@@ -78,7 +91,9 @@ def query_python_lock_result(
         manager=result.plan.manager,
         query=package_name,
         packages=report.packages,
+        possible_packages=report.possible_packages,
         ambiguities=report.ambiguities,
+        search_truncated=report.search_truncated,
     )
 
 
