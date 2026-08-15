@@ -5,7 +5,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from unified_project_manager.tasks import TaskError, execute_task, load_tasks, plan_task
+from unified_project_manager.models import Component, ProjectGraph
+from unified_project_manager.tasks import (
+    TaskError,
+    execute_task,
+    list_native_tasks,
+    load_tasks,
+    plan_native_task,
+    plan_task,
+)
 
 
 class TaskTests(unittest.TestCase):
@@ -73,6 +81,43 @@ cwd = "../outside"
             self.assertTrue(result.succeeded)
             self.assertEqual(calls[0][0], ["python", "-m", "unittest"])
             self.assertNotIn("shell", calls[0][1])
+
+
+class NativeTaskTests(unittest.TestCase):
+    def test_node_script_uses_authoritative_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            component = Component(
+                "node",
+                root / "frontend",
+                "pnpm",
+                metadata={"scripts": {"test": "vitest"}, "name": "frontend"},
+            )
+            graph = ProjectGraph(root, [component])
+            plan = plan_native_task(graph, "test")
+            self.assertEqual(plan.argv, ("pnpm", "run", "test"))
+            self.assertEqual(plan.cwd, root / "frontend")
+
+    def test_cargo_core_task_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph = ProjectGraph(root, [Component("rust", root / "engine", "cargo", metadata={"name": "engine"})])
+            plan = plan_native_task(graph, "check")
+            self.assertEqual(plan.argv, ("cargo", "check"))
+            tasks = list_native_tasks(graph)
+            self.assertIn("test", {task["name"] for task in tasks})
+
+    def test_ambiguous_native_task_requires_component(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph = ProjectGraph(root, [
+                Component("node", root / "frontend", "npm", metadata={"scripts": {"test": "vitest"}}),
+                Component("rust", root / "engine", "cargo"),
+            ])
+            with self.assertRaisesRegex(TaskError, "--component"):
+                plan_native_task(graph, "test")
+            plan = plan_native_task(graph, "test", selector="frontend")
+            self.assertEqual(plan.argv, ("npm", "run", "test"))
 
 
 if __name__ == "__main__":
