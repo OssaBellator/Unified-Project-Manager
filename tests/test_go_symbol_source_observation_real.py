@@ -32,7 +32,7 @@ class GoSymbolSourceObservationRealTests(unittest.TestCase):
         }
 
     @unittest.skipUnless(shutil.which("go"), "Go executable is not available")
-    def test_real_go_observes_selected_sources_offline_without_project_mutation(self) -> None:
+    def test_real_go_observes_selected_and_compiled_sources_offline_without_project_mutation(self) -> None:
         go = shutil.which("go")
         self.assertIsNotNone(go)
         with tempfile.TemporaryDirectory() as temporary:
@@ -43,6 +43,7 @@ class GoSymbolSourceObservationRealTests(unittest.TestCase):
             before = self._snapshot(fixture.project)
 
             plan = build_go_symbol_source_observation_plan(fixture.project, executable=go)
+            self.assertIn("-compiled", plan.packages_argv)
             isolated = fixture_go_environment(fixture)
             inherited = {
                 "GOMODCACHE": isolated["GOMODCACHE"],
@@ -68,11 +69,13 @@ class GoSymbolSourceObservationRealTests(unittest.TestCase):
             self.assertFalse(app.dep_only)
             self.assertTrue(app.module.main)
             self.assertIn("main.go", app.selected_files)
+            self.assertIn("main.go", app.syntax_go_files)
             self.assertTrue(dep.dep_only)
             self.assertEqual(dep.module.path, FIXTURE_MODULE)
             self.assertEqual(dep.module.version, FIXTURE_VERSION)
             self.assertFalse(dep.module.replaced)
             self.assertIn("dep.go", dep.selected_files)
+            self.assertIn("dep.go", dep.syntax_go_files)
             self.assertEqual(observation.root_packages, (FIXTURE_APP_MODULE,))
 
             self.assertEqual(self._snapshot(fixture.project), before)
