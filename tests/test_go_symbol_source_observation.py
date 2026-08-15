@@ -6,7 +6,6 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from unified_project_manager.go_symbol_source_observation import (
     GoSymbolSourceObservationError,
@@ -27,7 +26,9 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
             self.assertEqual(plan.env_argv, ("/tools/go", "env", "-json"))
             self.assertEqual(
                 plan.packages_argv,
-                ("/tools/go", "list", "-mod=readonly", "-deps", "-json", "./..."),
+                (
+                    "/tools/go", "list", "-mod=readonly", "-deps", "-compiled", "-json", "./..."
+                ),
             )
             self.assertEqual(plan.environment["GOPROXY"], "off")
             self.assertEqual(plan.environment["GOWORK"], "off")
@@ -55,10 +56,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
         self.assertEqual(environment.get("GOFLAGS"), "-tags=integration")
         self.assertEqual(environment.get("GOAMD64"), "v3")
         self.assertIsNone(environment.get("GOMODCACHE"))
-        self.assertEqual(
-            environment.to_dict()["GOVERSION"],
-            "go1.24.0",
-        )
+        self.assertEqual(environment.to_dict()["GOVERSION"], "go1.24.0")
 
     def test_build_environment_requires_goos_goarch_and_goversion(self) -> None:
         for value, missing in (
@@ -70,18 +68,16 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(GoSymbolSourceObservationError, missing):
                     parse_go_symbol_build_environment(json.dumps(value))
 
-    def test_package_parser_preserves_selected_ignored_module_and_import_inputs(self) -> None:
+    def test_package_parser_preserves_compiled_selected_ignored_module_and_import_inputs(self) -> None:
         stream = "\n".join([
             json.dumps({
                 "Dir": "/tmp/dep/pkg",
                 "ImportPath": "example.com/dep/pkg",
                 "Name": "pkg",
                 "DepOnly": True,
-                "Module": {
-                    "Path": "example.com/dep",
-                    "Version": "v1.2.3",
-                },
+                "Module": {"Path": "example.com/dep", "Version": "v1.2.3"},
                 "GoFiles": ["dep_linux.go", "dep.go"],
+                "CompiledGoFiles": ["dep.go", "dep_linux.go", "/tmp/go-build/cgo_generated.go"],
                 "CgoFiles": ["cgo.go"],
                 "HFiles": ["dep.h"],
                 "IgnoredGoFiles": ["dep_windows.go"],
@@ -92,21 +88,23 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 "Dir": "/tmp/app",
                 "ImportPath": "example.com/app",
                 "Name": "main",
-                "Module": {
-                    "Path": "example.com/app",
-                    "Main": True,
-                },
+                "Module": {"Path": "example.com/app", "Main": True},
                 "GoFiles": ["main.go"],
+                "CompiledGoFiles": ["main.go"],
                 "Imports": ["example.com/dep/pkg"],
             }),
         ])
 
         packages = parse_go_symbol_package_inputs(stream)
-        self.assertEqual([package.import_path for package in packages], ["example.com/app", "example.com/dep/pkg"])
+        self.assertEqual(
+            [package.import_path for package in packages],
+            ["example.com/app", "example.com/dep/pkg"],
+        )
         app, dep = packages
         self.assertFalse(app.dep_only)
         self.assertTrue(app.module.main)
         self.assertEqual(app.selected_files, ("main.go",))
+        self.assertEqual(app.syntax_go_files, ("main.go",))
         self.assertTrue(dep.dep_only)
         self.assertEqual(dep.module.path, "example.com/dep")
         self.assertEqual(dep.module.version, "v1.2.3")
@@ -115,9 +113,27 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
             dep.selected_files,
             ("asset.txt", "cgo.go", "dep.go", "dep.h", "dep_linux.go"),
         )
+        self.assertEqual(
+            dep.syntax_go_files,
+            ("/tmp/go-build/cgo_generated.go", "dep.go", "dep_linux.go"),
+        )
         data = dep.to_dict()
+        self.assertEqual(data["compiled_go_files"], list(dep.syntax_go_files))
+        self.assertEqual(data["syntax_go_files"], list(dep.syntax_go_files))
         self.assertEqual(data["ignored_files"]["IgnoredGoFiles"], ["dep_windows.go"])
         self.assertEqual(data["imports"], ["fmt", "unsafe"])
+
+    def test_compiled_go_files_may_be_absent_for_pseudo_packages(self) -> None:
+        package = parse_go_symbol_package_inputs(json.dumps({
+            "Dir": "/usr/local/go/src/unsafe",
+            "ImportPath": "unsafe",
+            "Name": "unsafe",
+            "Standard": True,
+            "GoFiles": ["unsafe.go"],
+        }))[0]
+        self.assertEqual(package.compiled_go_files, ())
+        self.assertEqual(package.syntax_go_files, ())
+        self.assertEqual(package.selected_files, ("unsafe.go",))
 
     def test_package_parser_retains_replacement_identity_and_rejects_incomplete_records(self) -> None:
         replacement = json.dumps({
@@ -126,12 +142,10 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
             "Module": {
                 "Path": "example.com/original",
                 "Version": "v1.2.3",
-                "Replace": {
-                    "Path": "example.com/fork",
-                    "Version": "v1.2.3-fixed",
-                },
+                "Replace": {"Path": "example.com/fork", "Version": "v1.2.3-fixed"},
             },
             "GoFiles": ["dep.go"],
+            "CompiledGoFiles": ["dep.go"],
         })
         package = parse_go_symbol_package_inputs(replacement)[0]
         self.assertTrue(package.module.replaced)
@@ -166,6 +180,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 "Name": "main",
                 "Module": {"Path": "example.com/app", "Main": True},
                 "GoFiles": ["main.go"],
+                "CompiledGoFiles": ["main.go"],
             })
 
             def run(argv, **kwargs):
@@ -198,7 +213,9 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 self.assertEqual(kwargs["env"]["GOSUMDB"], "off")
                 self.assertEqual(kwargs["env"]["GOTOOLCHAIN"], "local")
                 self.assertEqual(kwargs["env"]["UPM_SOURCE_OBSERVATION_SENTINEL"], "present")
+            self.assertIn("-compiled", calls[1][0])
             self.assertEqual(result.observation.root_packages, ("example.com/app",))
+            self.assertEqual(result.observation.packages[0].syntax_go_files, ("main.go",))
             self.assertFalse(result.to_dict()["persisted"])
 
     def test_execution_failure_and_parse_failure_are_explicit(self) -> None:
@@ -226,7 +243,8 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 calls += 1
                 if calls == 1:
                     return subprocess.CompletedProcess(
-                        argv, 0,
+                        argv,
+                        0,
                         json.dumps({"GOOS": "linux", "GOARCH": "amd64", "GOVERSION": "go1.24.0"}),
                         "",
                     )
