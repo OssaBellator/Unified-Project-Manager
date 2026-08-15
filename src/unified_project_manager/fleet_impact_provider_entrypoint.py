@@ -18,6 +18,7 @@ from .provider_ownership import provider_owned_component_keys
 from .python_lock_graph import plan_python_lock_graphs
 from .python_lock_provider import python_lock_provider_name
 from .python_lock_queries import query_python_lock_result
+from .python_lock_render import render_python_lock_query
 from .python_lock_validation import execute_validated_python_lock_graph
 from .registry import RegistryError, registered_paths
 from .uv_graph import execute_uv_graph, plan_uv_graphs
@@ -230,18 +231,8 @@ def fleet_impact_command(argv: list[str]) -> int:
                     print("  workspace path: " + " -> ".join(path))
             elif impact["provider"] in {"poetry-lock", "pdm-lock"}:
                 print(f"{impact['project']} [{impact['component']}] [{impact['provider']}]")
-                for package in impact.get("packages", []):
-                    certainty = "unconditional" if package.get("unconditional") else "conditional"
-                    print(f"  {package['name']}@{package['version']} [{certainty}]")
-                    for path in package.get("paths", []):
-                        print("    project path: " + " -> ".join(path.get("nodes", [])))
-                        if path.get("markers"):
-                            print("    markers: " + " && ".join(path["markers"]))
-                        if path.get("optional_edges"):
-                            print(f"    optional edges: {path['optional_edges']}")
-                for ambiguity in impact.get("ambiguities", []):
-                    candidates = ", ".join(ambiguity.get("candidate_ids", []))
-                    print(f"  ? {ambiguity['source']} -> {ambiguity['dependency_name']} [ambiguous: {candidates}]")
+                for line in render_python_lock_query(impact):
+                    print(line)
             else:
                 print(f"{impact['project']} [{impact['component']}] [uv]: {impact['name']}@{impact['version']}")
                 for path in impact.get("project_paths", []):
