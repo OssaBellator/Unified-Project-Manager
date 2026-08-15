@@ -13,8 +13,16 @@ from .discovery import discover
 from .go_offline_provider import execute_native_graph_offline
 from .native_graph import plan_native_graph
 from .npm_graph import execute_npm_graph, plan_npm_graphs
+from .pnpm_graph import execute_pnpm_graph, plan_pnpm_graphs
+from .provider_ownership import provider_owned_component_keys
+from .python_lock_graph import plan_python_lock_graphs
+from .python_lock_provider import python_lock_provider_name
+from .python_lock_sbom import python_lock_inventory_states
+from .python_lock_validation import execute_validated_python_lock_graph
 from .registry import RegistryError, registered_paths
 from .uv_graph import execute_uv_graph, plan_uv_graphs
+from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
+from .yarn_scope import yarn_scope_locators
 
 
 def _parser(command: str) -> argparse.ArgumentParser:
@@ -44,9 +52,20 @@ def _inventory_project(root: Path) -> tuple[list[dict[str, Any]], list[dict[str,
 
     go_plans, go_skips = plan_native_graph(graph)
     npm_plans = plan_npm_graphs(graph)
+    pnpm_plans = plan_pnpm_graphs(graph)
+    yarn_plans = plan_yarn_graphs(graph)
     cargo_plans = plan_cargo_graphs(graph)
     uv_plans = plan_uv_graphs(graph)
-    handled = {plan.component for plan in [*npm_plans, *cargo_plans, *uv_plans]}
+    python_lock_plans = plan_python_lock_graphs(graph)
+    handled = provider_owned_component_keys(
+        graph,
+        npm_plans=npm_plans,
+        pnpm_plans=pnpm_plans,
+        yarn_plans=yarn_plans,
+        cargo_plans=cargo_plans,
+        uv_plans=uv_plans,
+        python_lock_plans=python_lock_plans,
+    )
     for skip in go_skips:
         if skip.component not in handled:
             skips.append({"project": str(root), **skip.to_dict()})
@@ -101,6 +120,71 @@ def _inventory_project(root: Path) -> tuple[list[dict[str, Any]], list[dict[str,
                 "concrete": package.version is not None,
             })
 
+    for plan in pnpm_plans:
+        result = execute_pnpm_graph(plan)
+        if not result.succeeded:
+            failures.append({
+                "project": str(root), "provider": "pnpm-lock-tree", "component": plan.component,
+                "returncode": result.returncode, "error": result.stderr,
+            })
+            continue
+        for package in result.packages:
+            rows.append({
+                "project": str(root),
+                "provider": "pnpm-lock-tree",
+                "scope": "logical-occurrence",
+                "ecosystem": "node",
+                "manager": "pnpm",
+                "component": package.component,
+                "name": package.name,
+                "version": package.version,
+                "occurrence": package.ref,
+                "workspace_project": package.project_ref,
+                "alias": package.alias,
+                "dependency_scope": package.scope,
+                "direct": package.direct,
+                "depth": package.depth,
+                "deduped": package.deduped,
+                "concrete": package.version is not None,
+            })
+
+    for plan in yarn_plans:
+        result = execute_yarn_graph(plan)
+        component = plan.selected_component or plan.component
+        if not result.succeeded:
+            failures.append({
+                "project": str(root), "provider": "yarn-berry-resolution-graph", "component": component,
+                "returncode": result.returncode, "error": result.stderr,
+            })
+            continue
+        try:
+            allowed = yarn_scope_locators(result)
+        except YarnGraphError as exc:
+            failures.append({
+                "project": str(root), "provider": "yarn-berry-resolution-graph", "component": component,
+                "returncode": result.returncode, "error": str(exc),
+            })
+            continue
+        for package in result.packages:
+            if package.locator not in allowed or package.project_member:
+                continue
+            rows.append({
+                "project": str(root),
+                "provider": "yarn-berry-resolution-graph",
+                "scope": "reachable-locator",
+                "ecosystem": "node",
+                "manager": "yarn",
+                "component": component,
+                "name": package.name,
+                "version": package.version,
+                "occurrence": package.locator,
+                "reference": package.reference,
+                "protocol": package.protocol,
+                "virtual": package.virtual,
+                "base_locator": package.base_locator,
+                "concrete": package.version is not None,
+            })
+
     for plan in cargo_plans:
         result = execute_cargo_graph(plan)
         if not result.succeeded:
@@ -149,6 +233,36 @@ def _inventory_project(root: Path) -> tuple[list[dict[str, Any]], list[dict[str,
                 "occurrence": package.package_id,
                 "source": package.source,
                 "source_kind": package.source_kind,
+                "concrete": True,
+            })
+
+    for plan in python_lock_plans:
+        result = execute_validated_python_lock_graph(graph, plan)
+        provider = python_lock_provider_name(plan)
+        if not result.succeeded:
+            failures.append({
+                "project": str(root), "provider": provider, "component": plan.component,
+                "returncode": None, "error": result.error,
+            })
+            continue
+        certainty = python_lock_inventory_states(result)
+        for package in result.packages:
+            state = certainty.get(package.package_id)
+            if state is None:
+                continue
+            rows.append({
+                "project": str(root),
+                "provider": provider,
+                "scope": "structured-lock-package",
+                "ecosystem": "python",
+                "manager": plan.manager,
+                "component": plan.component,
+                "name": package.name,
+                "version": package.version,
+                "occurrence": package.package_id,
+                "source_kind": package.source_kind,
+                "groups": list(package.groups),
+                "certainty": state,
                 "concrete": True,
             })
 
@@ -209,9 +323,12 @@ def inventory_command(argv: list[str]) -> int:
             print("No authoritative native dependency inventory is available across registered projects.")
         for item in inventory:
             version = item.get("version") or "(local/unversioned)"
+            detail = ""
+            if item.get("certainty"):
+                detail = f" [{item['certainty']}]"
             print(
                 f"{item['ecosystem']}:{item['name']} {version}  "
-                f"{item['project']} [{item['component']}] ({item['provider']})"
+                f"{item['project']} [{item['component']}] ({item['provider']}){detail}"
             )
         for failure in failures:
             print(f"x {failure['project']} [{failure.get('component') or 'project'}]: {failure['error']}")
@@ -235,6 +352,11 @@ def _duplicate_groups(inventory: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         versions = {item["version"] for item in occurrences}
         names = sorted({item["name"] for item in occurrences})
+        certainties = sorted({
+            str(item["certainty"])
+            for item in occurrences
+            if item.get("certainty")
+        })
         duplicates.append({
             "ecosystem": ecosystem,
             "name": names[0] if names else normalized,
@@ -243,6 +365,7 @@ def _duplicate_groups(inventory: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "occurrences": occurrences,
             "versions": sorted(versions),
             "version_divergence": len(versions) > 1,
+            "certainty_states": certainties,
             "classification": "cross-project-repeat",
             "reclaimable": False,
         })
@@ -276,9 +399,10 @@ def duplicates_command(argv: list[str]) -> int:
             divergence = " version-divergence" if group["version_divergence"] else ""
             print(f"{group['ecosystem']}:{group['name']} ({group['projects']} projects{divergence})")
             for item in group["occurrences"]:
+                certainty = f" [{item['certainty']}]" if item.get("certainty") else ""
                 print(
                     f"  {item['version']:<16} {item['project']} "
-                    f"[{item['component']}] ({item['provider']})"
+                    f"[{item['component']}] ({item['provider']}){certainty}"
                 )
         print("Duplicate observations are not automatic cleanup targets.")
     return 1 if failures else 0
