@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,35 @@ def _go_native_ref(name: str, version: str) -> str | None:
         return None
 
 
+def _go_provenance_properties(module: object) -> list[dict[str, str]]:
+    properties = [{"name": "upm:go:identity-kind", "value": "selected-module"}]
+    if getattr(module, "indirect", False):
+        properties.append({"name": "upm:go:indirect", "value": "true"})
+    go_version = getattr(module, "effective_go_version", None)
+    if isinstance(go_version, str) and go_version:
+        properties.append({"name": "upm:go:go-version", "value": go_version})
+    checksum = getattr(module, "effective_checksum", None)
+    if isinstance(checksum, str) and checksum:
+        properties.append({"name": "upm:go:sum", "value": checksum})
+    go_mod_checksum = getattr(module, "effective_go_mod_checksum", None)
+    if isinstance(go_mod_checksum, str) and go_mod_checksum:
+        properties.append({"name": "upm:go:go-mod-sum", "value": go_mod_checksum})
+    origin = getattr(module, "effective_origin", None)
+    if isinstance(origin, dict) and origin:
+        properties.append({
+            "name": "upm:go:origin",
+            "value": json.dumps(origin, sort_keys=True, separators=(",", ":")),
+        })
+    return properties
+
+
+def _extend_unique_properties(entry: dict[str, Any], values: list[dict[str, str]]) -> None:
+    properties = entry.setdefault("properties", [])
+    for value in values:
+        if value not in properties:
+            properties.append(value)
+
+
 def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object]) -> dict[str, Any]:
     """Enrich the normal BOM with authoritative live native inventory.
 
@@ -183,17 +213,14 @@ def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object])
                         "name": effective_name,
                         "version": effective_version,
                         "bom-ref": ref,
-                        "properties": [{"name": "upm:go:identity-kind", "value": "selected-module"}],
                     }
                     if purl is not None:
                         entry["purl"] = purl
                     component_entries[ref] = entry
                     occurrence_sets[ref] = set()
+                _extend_unique_properties(entry, _go_provenance_properties(module))
                 if logical_name != effective_name:
-                    properties = entry.setdefault("properties", [])
-                    property_value = {"name": "upm:go:logical-module", "value": logical_name}
-                    if property_value not in properties:
-                        properties.append(property_value)
+                    _extend_unique_properties(entry, [{"name": "upm:go:logical-module", "value": logical_name}])
             else:
                 replacement_name = getattr(module, "replacement_name", None)
                 replacement_dir = getattr(module, "replacement_dir", None)
@@ -210,13 +237,13 @@ def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object])
                         "name": logical_name,
                         "bom-ref": ref,
                         "properties": [
-                            {"name": "upm:go:identity-kind", "value": "selected-module"},
                             {"name": "upm:go:replacement-kind", "value": "local"},
                             {"name": "upm:go:replacement", "value": str(replacement_name or replacement_dir or "local")},
                         ],
                     }
                     component_entries[ref] = entry
                     occurrence_sets[ref] = set()
+                _extend_unique_properties(entry, _go_provenance_properties(module))
             logical_refs[(component_key, logical_name)] = ref
             occurrence_sets.setdefault(ref, set()).add(component_key)
 
