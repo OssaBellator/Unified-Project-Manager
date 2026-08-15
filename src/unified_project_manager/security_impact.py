@@ -71,6 +71,15 @@ def _osv_packages(report: dict[str, Any]) -> list[tuple[str, str, str | None, st
     return found
 
 
+def _unique_path_nodes(paths: list[object]) -> tuple[tuple[str, ...], ...]:
+    values = {
+        tuple(getattr(path, "nodes", ()))
+        for path in paths
+        if tuple(getattr(path, "nodes", ()))
+    }
+    return tuple(sorted(values))
+
+
 def correlate_advisory_impact(
     report: dict[str, Any],
     *,
@@ -182,38 +191,55 @@ def correlate_advisory_impact(
                 if not result.succeeded:
                     continue
                 query = query_python_lock_result(result, name)
-                for package in query.packages:
-                    if version and package.version != version:
+                resolved_by_id = {
+                    package.package_id: package
+                    for package in query.packages
+                    if not version or package.version == version
+                }
+                possible_by_id = {
+                    package.package_id: package
+                    for package in query.possible_packages
+                    if not version or package.version == version
+                }
+                for package_id in sorted(set(resolved_by_id) | set(possible_by_id)):
+                    resolved = resolved_by_id.get(package_id)
+                    possible = possible_by_id.get(package_id)
+                    package = resolved or possible
+                    if package is None:
                         continue
-                    impacts.append(AdvisoryDependencyImpact(
-                        advisory_id, ecosystem, name, version,
-                        query.provider, query.scope, query.component,
-                        tuple(path.nodes for path in package.paths),
-                        {
-                            "package_id": package.package_id,
-                            "unconditional": package.unconditional,
-                            "paths_truncated": package.paths_truncated,
+                    resolved_paths = list(resolved.paths) if resolved is not None else []
+                    possible_paths = list(possible.paths) if possible is not None else []
+                    all_paths = [*resolved_paths, *possible_paths]
+                    if resolved is not None:
+                        reachability = "resolved"
+                        evidence: dict[str, Any] = {
+                            "package_id": package_id,
+                            "unconditional": resolved.unconditional,
+                            "paths_truncated": bool(
+                                resolved.paths_truncated
+                                or (possible.paths_truncated if possible is not None else False)
+                            ),
                             "search_truncated": query.search_truncated,
-                            "path_conditions": [path.to_dict() for path in package.paths],
-                            "reachability": "resolved",
-                        },
-                    ))
-                for package in query.possible_packages:
-                    if version and package.version != version:
-                        continue
-                    impacts.append(AdvisoryDependencyImpact(
-                        advisory_id, ecosystem, name, version,
-                        query.provider, query.scope, query.component,
-                        tuple(path.nodes for path in package.paths),
-                        {
-                            "package_id": package.package_id,
+                            "path_conditions": [path.to_dict() for path in resolved_paths],
+                            "possible_path_conditions": [path.to_dict() for path in possible_paths],
+                            "reachability": reachability,
+                        }
+                    else:
+                        reachability = "possible-via-ambiguous-lock-reference"
+                        evidence = {
+                            "package_id": package_id,
                             "candidate_version": package.version,
-                            "paths_truncated": package.paths_truncated,
+                            "paths_truncated": possible.paths_truncated if possible is not None else False,
                             "search_truncated": query.search_truncated,
-                            "path_conditions": [path.to_dict() for path in package.paths],
-                            "reachability": "possible-via-ambiguous-lock-reference",
+                            "path_conditions": [path.to_dict() for path in possible_paths],
+                            "reachability": reachability,
                             "ambiguities": [ambiguity.to_dict() for ambiguity in query.ambiguities],
-                        },
+                        }
+                    impacts.append(AdvisoryDependencyImpact(
+                        advisory_id, ecosystem, name, version,
+                        query.provider, query.scope, query.component,
+                        _unique_path_nodes(all_paths),
+                        evidence,
                     ))
 
     return sorted(impacts, key=lambda item: (
