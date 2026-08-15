@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from unified_project_manager.discovery import discover
 from unified_project_manager.doctor import diagnose
@@ -15,8 +16,10 @@ from unified_project_manager.go_workspace import (
     execute_workspace_inspection,
     plan_workspace_inspection,
 )
+from unified_project_manager.native_graph import NativeGraphResult, NativeModule, NativeRequirementEdge
 from unified_project_manager.state import build_state
 from unified_project_manager.status import project_status
+from unified_project_manager.workspace_graph import execute_workspace_graph, plan_workspace_graph
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -113,6 +116,34 @@ class WorkspaceTests(unittest.TestCase):
                 plan_workspace_inspection(graph)
             self.assertEqual(plan_workspace_inspection(graph, "nested").workspace, "nested:go-workspace")
 
+    def test_workspace_graph_pins_workspace_and_readonly_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.work").write_text("go 1.24\n", encoding="utf-8")
+            plan = plan_workspace_graph(discover(root))
+            calls: list[tuple[list[str], dict]] = []
+            selected = "\n".join((
+                '{"Path":"example.com/a","Main":true}',
+                '{"Path":"example.com/b","Main":true}',
+                '{"Path":"example.com/c","Version":"v1.2.0"}',
+            ))
+            edges = "example.com/a example.com/c@v1.1.0\nexample.com/b example.com/c@v1.2.0\n"
+
+            def run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                return subprocess.CompletedProcess(argv, 0, selected if "list" in argv else edges, "")
+
+            result = execute_workspace_graph(plan, run=run, which=lambda _name: "/toolchains/go")
+
+            self.assertTrue(result.succeeded)
+            self.assertEqual({module.name for module in result.modules if module.main}, {"example.com/a", "example.com/b"})
+            self.assertEqual(calls[0][0][0], "/toolchains/go")
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], str(root / "go.work"))
+            self.assertIn("-mod=readonly", calls[1][1]["env"]["GOFLAGS"])
+            edge = next(item for item in result.edges if item.source_name == "example.com/a")
+            self.assertEqual(edge.required_version, "v1.1.0")
+            self.assertEqual(edge.selected_version, "v1.2.0")
+
     def test_status_and_workspace_commands_expose_workspace_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -135,6 +166,42 @@ class WorkspaceTests(unittest.TestCase):
             preview = json.loads(output.getvalue())
             self.assertEqual(code, 0)
             self.assertEqual(preview["plan"]["argv"][:4], ["go", "work", "edit", "-json"])
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["workspace", "graph", str(root), "--preview", "--json"])
+            graph_preview = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(graph_preview["environment"]["GOWORK"], str(root / "go.work"))
+            self.assertEqual(graph_preview["environment"]["GOFLAGS_add"], "-mod=readonly")
+
+    def test_workspace_impact_uses_workspace_requirement_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.work").write_text("go 1.24\n", encoding="utf-8")
+            plan = plan_workspace_graph(discover(root))
+            result = NativeGraphResult(
+                plan,
+                [
+                    NativeModule(plan.component, "example.com/a", None, main=True),
+                    NativeModule(plan.component, "example.com/b", None, main=True),
+                    NativeModule(plan.component, "example.com/c", "v1.2.0"),
+                ],
+                [
+                    NativeRequirementEdge(plan.component, "example.com/a", None, "example.com/c", "v1.1.0", "v1.2.0", True),
+                    NativeRequirementEdge(plan.component, "example.com/b", None, "example.com/c", "v1.2.0", "v1.2.0", True),
+                ],
+                0,
+            )
+            output = io.StringIO()
+            with patch("unified_project_manager.workspace_entrypoint.execute_workspace_graph", return_value=result), redirect_stdout(output):
+                code = main(["workspace", "impact", "example.com/c", str(root), "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(data["scope"], "workspace-module-requirement")
+            paths = data["impacts"][0]["root_paths"]
+            self.assertIn(["example.com/a", "example.com/c"], paths)
+            self.assertIn(["example.com/b", "example.com/c"], paths)
 
 
 if __name__ == "__main__":
