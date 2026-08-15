@@ -82,6 +82,7 @@ class GoSymbolReachabilityTests(unittest.TestCase):
         self.assertEqual(report.config.protocol_version, GOVULNCHECK_PROTOCOL_VERSION)
         self.assertEqual(report.config.scan_mode, "source")
         self.assertEqual(report.config.scan_level, "symbol")
+        self.assertTrue(report.config.database.startswith("file://"))
         self.assertEqual([finding.level for finding in report.findings], ["module", "package", "symbol"])
         self.assertEqual(len(report.symbol_findings), 1)
         finding = report.symbol_findings[0]
@@ -99,10 +100,11 @@ class GoSymbolReachabilityTests(unittest.TestCase):
             ("CVE-2026-1234", "GHSA-test-0001", "GO-2026-0001"),
         )
 
-    def test_parser_rejects_wrong_protocol_or_scan_semantics(self) -> None:
+    def test_parser_rejects_wrong_or_missing_scan_semantics(self) -> None:
         wrong_protocol = json.dumps({
             "config": {
                 "protocol_version": "v9.0.0",
+                "db": "file:///tmp/vulndb",
                 "scan_level": "symbol",
                 "scan_mode": "source",
             }
@@ -113,6 +115,7 @@ class GoSymbolReachabilityTests(unittest.TestCase):
         package_scan = json.dumps({
             "config": {
                 "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                "db": "file:///tmp/vulndb",
                 "scan_level": "package",
                 "scan_mode": "source",
             }
@@ -120,11 +123,43 @@ class GoSymbolReachabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(GoSymbolReachabilityError, "symbol-level"):
             parse_govulncheck_symbol_stream(package_scan)
 
-    def test_parser_rejects_ambiguous_message_shapes(self) -> None:
+        missing_level = json.dumps({
+            "config": {
+                "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                "db": "file:///tmp/vulndb",
+                "scan_mode": "source",
+            }
+        })
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "symbol-level"):
+            parse_govulncheck_symbol_stream(missing_level)
+
+        missing_mode = json.dumps({
+            "config": {
+                "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                "db": "file:///tmp/vulndb",
+                "scan_level": "symbol",
+            }
+        })
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "source-mode"):
+            parse_govulncheck_symbol_stream(missing_mode)
+
+    def test_parser_rejects_nonlocal_database_and_ambiguous_message_shapes(self) -> None:
+        remote = json.dumps({
+            "config": {
+                "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                "db": "https://vuln.go.dev",
+                "scan_level": "symbol",
+                "scan_mode": "source",
+            }
+        })
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "local file database"):
+            parse_govulncheck_symbol_stream(remote)
+
         stream = "\n".join([
             json.dumps({
                 "config": {
                     "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                    "db": "file:///tmp/vulndb",
                     "scan_level": "symbol",
                     "scan_mode": "source",
                 }
@@ -156,7 +191,7 @@ class GoSymbolReachabilityTests(unittest.TestCase):
             self.assertEqual(plan.environment["GOSUMDB"], "off")
             self.assertEqual(plan.environment["GOTOOLCHAIN"], "local")
             self.assertEqual(plan.telemetry_mode_required, "off")
-            self.assertFalse(plan.to_dict()["project_mutation"] != "not-planned")
+            self.assertEqual(plan.to_dict()["project_mutation"], "not-planned")
 
     def test_plan_and_telemetry_preflight_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
