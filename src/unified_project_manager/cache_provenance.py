@@ -50,29 +50,49 @@ def _manager_total(entries: Iterable[GlobalStorageEntry], manager: str) -> int:
     )
 
 
-def _group_identity(manager: str, group: object) -> str:
+def _group_identities(manager: str, group: object) -> set[str]:
     if manager == "cargo":
-        value = getattr(group, "identity", None)
-        if isinstance(value, str) and value:
-            return value
+        values = getattr(group, "identities", None)
+        if isinstance(values, tuple):
+            return {value for value in values if isinstance(value, str) and value}
     value = getattr(group, "purl", None)
     if isinstance(value, str) and value:
-        return value
-    return "(unknown)"
+        return {value}
+    return {"(unknown)"}
 
 
 def _identity_conflicts(manager: str, groups: list[object]) -> list[dict[str, Any]]:
-    by_path: dict[str, set[str]] = {}
+    by_path: dict[str, list[tuple[str, set[str]]]] = {}
     for group in groups:
         path = getattr(group, "path", None)
         if not isinstance(path, str) or not path:
             continue
-        by_path.setdefault(path, set()).add(_group_identity(manager, group))
-    return [
-        {"path": path, "identities": sorted(identities)}
-        for path, identities in sorted(by_path.items())
-        if len(identities) > 1
-    ]
+        cache_kind = getattr(group, "cache_kind", "unknown")
+        by_path.setdefault(path, []).append((
+            cache_kind if isinstance(cache_kind, str) else "unknown",
+            _group_identities(manager, group),
+        ))
+
+    conflicts: list[dict[str, Any]] = []
+    for path, records in sorted(by_path.items()):
+        identities = set().union(*(values for _kind, values in records))
+        if manager == "cargo":
+            registry_records = [values for kind, values in records if kind == "registry-source"]
+            if any(len(values) > 1 for values in registry_records):
+                conflicts.append({
+                    "path": path,
+                    "identities": sorted(identities),
+                    "reason": "one Cargo registry source object mapped to multiple package identities",
+                })
+                continue
+        signatures = {(kind, tuple(sorted(values))) for kind, values in records}
+        if len(signatures) > 1:
+            conflicts.append({
+                "path": path,
+                "identities": sorted(identities),
+                "reason": "one physical path was emitted as multiple incompatible cache groups",
+            })
+    return conflicts
 
 
 def _manager_report(
@@ -119,7 +139,8 @@ def collect_cache_provenance(
     Only providers with native physical source identity are supported. Go uses
     native-reported selected module directories (plus matching selected-version
     download artifacts derived from those physical paths). Cargo uses
-    ``manifest_path`` under exact ``registry/src`` or ``git/checkouts`` roots.
+    ``manifest_path`` to identify canonical registry source objects or git
+    checkout worktrees below CARGO_HOME.
 
     The report deliberately makes no unused/reclaimable inference.
     """
