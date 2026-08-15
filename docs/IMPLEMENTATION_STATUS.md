@@ -27,19 +27,18 @@ Current public behavior includes:
 - preview-first OSV-Scanner advisory scanning with persisted SBOM-bound evidence;
 - relationship-provider coverage surfaced in local status without hidden provider execution.
 
-No GitHub Actions workflows are used. Validation remains local and script-driven. The current aggregate entrypoint is:
+No GitHub Actions workflows are used. Validation remains local and script-driven. The aggregate entrypoint is:
 
 ```sh
 sh ./scripts/check-all-local-latest.sh
 ```
 
-Focused slices remain independently runnable, including:
+Focused slices include:
 
 ```sh
 sh ./scripts/check.sh
 sh ./scripts/test-integration.sh
 sh ./scripts/test-native-security.sh
-sh ./scripts/test-yarn-execution-compat.sh
 sh ./scripts/test-yarn-native.sh
 sh ./scripts/test-python-lock-public-provider.sh
 sh ./scripts/test-python-lock-native-validated.sh
@@ -47,7 +46,7 @@ sh ./scripts/test-python-lock-native-validated.sh
 
 ## Native relationship providers
 
-`--native` relationship analysis now has eight public provider families:
+`--native` relationship analysis has eight public provider families:
 
 - **Go** — selected modules, module requirement graph, package-import `why`, replacements, module provenance; cache-only/offline by default through `GOPROXY=off`;
 - **npm** — workspace-aware lock-only logical dependency tree through npm plus native lockfile-only CycloneDX/SPDX provenance;
@@ -60,7 +59,11 @@ sh ./scripts/test-python-lock-native-validated.sh
 
 Public `graph`, `why`, project/fleet `impact`, native SBOM, advisory inventory/path correlation, and provider-status coverage retain provider/scope labels rather than pretending these evidence classes are identical.
 
-Poetry/PDM share `structured-lock-dependency-graph`. `why`, project impact, and fleet impact serialize one command-neutral certainty-aware query result so marker/optional/ambiguity evidence cannot drift between commands. Unsupported structured-lock semantics fail closed rather than falling back to an environment-dependent manager command.
+Poetry/PDM share `structured-lock-dependency-graph`. Their shared query model distinguishes resolved packages from ambiguity-derived `possible_packages`; each unresolved hop is rendered as `?dependency` before conservatively traversing all candidate branches. Possible state propagates through candidate descendants so public explanations cover every package that the conservative native SBOM can intentionally admit to OSV scanning.
+
+Path traversal is explicit and bounded rather than silently collapsed: distinct same-condition parent paths are retained, `max_paths_per_package` defaults to 64, `max_search_states` defaults to 10000, and truncation is surfaced through `paths_truncated` / `search_truncated` in JSON and shared text rendering.
+
+Unsupported structured-lock semantics fail closed rather than falling back to an environment-dependent manager command.
 
 ## Workspace ownership
 
@@ -131,7 +134,8 @@ Implemented layers include:
 - Yarn advisory paths retain exact locator/virtual/workspace relationship identity and are scoped to reachable stored resolutions;
 - uv workspace advisory paths come from the shared lock but retain the member project path that reaches the affected package;
 - Poetry/PDM resolved findings retain marker/optional path conditions from the same graph that produced the scanned BOM;
-- Poetry/PDM ambiguity-only findings are reported as `possible-via-ambiguous-lock-reference` with the exact path to a `?dependency` hop rather than a fabricated selected package path;
+- Poetry/PDM direct and transitive ambiguity-derived findings are reported as `possible-via-ambiguous-lock-reference` with full candidate paths containing `?dependency` hops;
+- when one locked Poetry/PDM package occurrence has both a resolved path and a possible alternative path, advisory correlation emits one consolidated impact containing both path classes rather than duplicate findings;
 - versioned persisted advisory evidence at `.upm/audits/osv.json`;
 - evidence fingerprints bound to the exact scanned SBOM;
 - local evidence states: absent, current-clean, current-vulnerable, stale, native-inventory-unverified, invalid;
@@ -152,7 +156,7 @@ CycloneDX 1.7 and SPDX 2.3 are public formats.
 - Yarn Berry contributes only locators reachable from active project/workspace roots; npm-protocol resolutions may become npm PURLs, while workspace/file/git/patch and other non-registry sources remain non-registry;
 - Cargo relationships are admitted only where static lock identity supports trustworthy registry endpoints;
 - uv may establish PyPI identities directly from registry sources in authoritative `uv.lock`; selected workspace SBOMs are member-reachability scoped, while ambiguous/conditional relationships remain omitted rather than flattened;
-- Poetry/PDM admit reachable registry packages in unconditional, conditional, or ambiguity-possible inventory states, while conditional/ambiguous/unresolved/non-registry edges never become unconditional dependency relationships;
+- Poetry/PDM admit reachable registry packages in unconditional, conditional, or ambiguity-possible inventory states; possible state propagates through candidate descendants while conditional/ambiguous/unresolved/non-registry edges never become unconditional dependency relationships;
 - native npm/pnpm document-local refs are remapped into stable aggregate identities;
 - native CycloneDX input does not downgrade UPM's aggregate CycloneDX 1.7 schema;
 - SPDX namespaces are recomputed after native document merge so the namespace remains content-derived.
@@ -183,16 +187,17 @@ Focused reconstructed/local validation completed for:
 - pnpm native SBOM split/filter planning plus CycloneDX/SPDX merge behavior;
 - real local npm lock-only graph and native SBOM workspace behavior using npm 10.9.2;
 - Cargo workspace ownership across explicit members, excludes, automatic path-dependency fallback, `package.workspace` non-membership behavior, and unrelated nested projects (**7 focused filesystem tests passed**);
-- Yarn Berry execution compatibility against a simulated Yarn 2.4.3 runtime, confirming the provider no longer injects hardened-mode configuration while retaining network refusal, telemetry suppression, immutable cache, temporary install state, and resolved-binary execution (**1 focused test passed**);
-- current Poetry/PDM public-promotion core: resolved conditional reachability, condition-preserving ambiguity paths, and OSV correlation for resolved plus ambiguity-only findings (**3/3 reconstructed tests passed**).
+- Yarn Berry execution compatibility against a simulated Yarn 2.4.3 runtime, retaining network refusal, telemetry suppression, immutable cache, temporary install state, and resolved-binary execution (**1 focused test passed**);
+- current Poetry/PDM reachability hardening: **5/5 reconstructed tests passed** for conditional paths, direct ambiguity, transitive possible branches, same-condition path multiplicity/path caps, and search-state truncation;
+- separate reconstructed checks passed for transitive possible query/advisory correlation, resolved+possible advisory consolidation, and shared possible-path text rendering.
 
-The Poetry/PDM reconstructed run found a serializer mismatch before completion: `PythonLockPath.to_dict()` returned tuple-valued nodes/markers even though the command-neutral query contract treated its dictionaries as JSON-ready. That was fixed so the serializer now emits explicit lists.
+An earlier Poetry/PDM reconstructed run exposed a serializer mismatch: `PythonLockPath.to_dict()` returned tuple-valued nodes/markers although the command-neutral query contract treated the dictionaries as JSON-ready. That was fixed so the serializer emits explicit lists.
 
-The repository regression suite additionally covers uv shared-lock ownership, Yarn Berry graph/impact/why/SBOM/advisory/fleet behavior, exact-SBOM audit evidence, and the public Poetry/PDM graph/why/impact/SBOM/provider-status/advisory promotion. These are included in local aggregate scripts, but the latest full branch has not been materialized and executed end-to-end in this runtime.
+The repository regression suite additionally covers uv shared-lock ownership, Yarn Berry graph/impact/why/SBOM/advisory/fleet behavior, exact-SBOM audit evidence, public Poetry/PDM graph/why/impact/SBOM/provider-status/advisory routing, structured-lock path budgets, text rendering, and advisory consolidation. These are included in local aggregate scripts, but the latest full branch has not been materialized and executed end-to-end in this runtime.
 
 ## Important remaining gaps
 
-The next highest-value work is now:
+The next highest-value work is:
 
 1. make mixed-ecosystem project/root component representation in aggregate SBOMs more explicit and uniform across providers;
 2. deepen package/cache provenance before any reclaim recommendation is automated;
