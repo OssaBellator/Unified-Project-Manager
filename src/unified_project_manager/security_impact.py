@@ -14,6 +14,8 @@ from .pnpm_graph import PnpmGraphResult
 from .pnpm_impact import analyze_pnpm_impact
 from .uv_graph import UvGraphResult
 from .uv_impact import analyze_uv_impact
+from .yarn_graph import YarnGraphResult
+from .yarn_impact import analyze_yarn_impact
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,7 @@ def correlate_advisory_impact(
     go_results: list[NativeGraphResult] | None = None,
     npm_results: list[NpmGraphResult] | None = None,
     pnpm_results: list[PnpmGraphResult] | None = None,
+    yarn_results: list[YarnGraphResult] | None = None,
     cargo_results: list[CargoGraphResult] | None = None,
     uv_results: list[UvGraphResult] | None = None,
 ) -> list[AdvisoryDependencyImpact]:
@@ -112,6 +115,21 @@ def correlate_advisory_impact(
                             "scope": impact.scope,
                             "workspace_project": impact.workspace_project,
                             "deduped": impact.deduped,
+                        },
+                    ))
+            for result in yarn_results or []:
+                for impact in analyze_yarn_impact(result, name):
+                    if version and impact.version != version:
+                        continue
+                    impacts.append(AdvisoryDependencyImpact(
+                        advisory_id, ecosystem, name, version,
+                        "yarn-berry-resolution-graph", "berry-resolution-graph", impact.component,
+                        impact.root_paths,
+                        {
+                            "locator": impact.locator,
+                            "protocol": impact.protocol,
+                            "virtual": impact.virtual,
+                            "direct_dependents": list(impact.direct_dependents),
                         },
                     ))
         elif eco in {"crates.io", "cargo", "rust"}:
