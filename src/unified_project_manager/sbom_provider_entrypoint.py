@@ -11,7 +11,8 @@ from .discovery import discover
 from .go_offline_provider import execute_native_graph_offline
 from .models import ProjectGraph
 from .native_graph import plan_native_graph
-from .npm_graph import execute_npm_graph, plan_npm_graphs
+from .npm_sbom import NpmSbomError, execute_npm_sbom, plan_npm_sboms
+from .npm_sbom_merge import merge_npm_cyclonedx, merge_npm_spdx
 from .operations import OperationError, select_component
 from .pnpm_sbom import PnpmSbomError, execute_pnpm_sbom, plan_pnpm_sboms
 from .pnpm_sbom_merge import merge_pnpm_cyclonedx, merge_pnpm_spdx
@@ -76,19 +77,19 @@ def sbom_command(argv: list[str]) -> int:
         full_graph = discover(root)
         if args.native:
             go_plans, _go_skips = plan_native_graph(full_graph, selector=args.component)
-            npm_plans = plan_npm_graphs(full_graph, selector=args.component)
+            npm_plans = plan_npm_sboms(full_graph, args.format, selector=args.component)
             pnpm_plans = plan_pnpm_sboms(full_graph, args.format, selector=args.component)
             cargo_plans = plan_cargo_graphs(full_graph, selector=args.component)
             uv_plans = plan_uv_graphs(full_graph, selector=args.component)
         else:
             go_plans, npm_plans, pnpm_plans, cargo_plans, uv_plans = [], [], [], [], []
         graph = _selected_static_graph(full_graph, args.component, cargo_plans)
-    except (OSError, PnpmSbomError, ValueError) as exc:
+    except (OSError, NpmSbomError, PnpmSbomError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
     go_results = [execute_native_graph_offline(plan) for plan in go_plans]
-    npm_results = [execute_npm_graph(plan) for plan in npm_plans]
+    npm_results = [execute_npm_sbom(plan) for plan in npm_plans]
     pnpm_results = [execute_pnpm_sbom(plan) for plan in pnpm_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
@@ -96,7 +97,7 @@ def sbom_command(argv: list[str]) -> int:
         ("go-modules", result.plan.component, result.stderr)
         for result in go_results if not result.succeeded
     ] + [
-        ("npm-lock-tree", result.plan.component, result.stderr)
+        ("npm-native-sbom", result.plan.component, result.stderr)
         for result in npm_results if not result.succeeded
     ] + [
         ("pnpm-native-sbom", result.plan.component, result.stderr)
@@ -118,21 +119,23 @@ def sbom_command(argv: list[str]) -> int:
             document = cyclonedx_bom_with_providers(
                 graph,
                 go_results=go_results,
-                npm_results=npm_results,
+                npm_results=[],
                 cargo_results=cargo_results,
                 uv_results=uv_results,
             )
+            document = merge_npm_cyclonedx(document, npm_results)
             document = merge_pnpm_cyclonedx(document, pnpm_results)
         else:
             document = spdx_document(
                 graph,
                 go_results=go_results,
-                npm_results=npm_results,
+                npm_results=[],
                 cargo_results=cargo_results,
                 uv_results=_safe_spdx_uv_results(uv_results),
             )
+            document = merge_npm_spdx(document, npm_results)
             document = merge_pnpm_spdx(document, pnpm_results)
-    except PnpmSbomError as exc:
+    except (NpmSbomError, PnpmSbomError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 1
 
