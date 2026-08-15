@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -142,6 +142,42 @@ def plan_cargo_graphs(graph: ProjectGraph, selector: str | None = None) -> list[
         else:
             candidates = []
     return [CargoGraphPlan(component.key(graph.root), component.path) for component in candidates]
+
+
+def cargo_provider_component_keys(
+    graph: ProjectGraph,
+    plans: Iterable[CargoGraphPlan] | None = None,
+) -> set[str]:
+    """Return discovered Rust components served by authoritative Cargo plans.
+
+    Cargo metadata executed at a discovered workspace root returns the workspace
+    graph. Ownership intentionally mirrors the current planner's workspace model
+    so status/skip accounting cannot contradict selector promotion.
+    """
+    selected = tuple(plans) if plans is not None else tuple(plan_cargo_graphs(graph))
+    roots = {plan.cwd.resolve(): plan for plan in selected}
+    result: set[str] = set()
+    for component in graph.components:
+        if component.ecosystem != "rust":
+            continue
+        path = component.path.resolve()
+        if path in roots:
+            result.add(component.key(graph.root))
+            continue
+        for root_path in roots:
+            root_component = next(
+                (
+                    candidate for candidate in graph.components
+                    if candidate.ecosystem == "rust" and candidate.path.resolve() == root_path
+                ),
+                None,
+            )
+            if root_component is None or not root_component.metadata.get("workspace"):
+                continue
+            if _is_relative_to(path, root_path):
+                result.add(component.key(graph.root))
+                break
+    return result
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
