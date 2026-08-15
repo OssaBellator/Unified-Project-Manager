@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from .cargo_cache_provenance import CargoCacheUse, aggregate_cargo_cache_uses, cargo_cache_uses
-from .cargo_graph import CargoGraphError, CargoGraphResult, execute_cargo_graph, plan_cargo_graphs
+from .cargo_graph import (
+    CargoGraphError,
+    CargoGraphResult,
+    cargo_provider_component_keys,
+    execute_cargo_graph,
+    plan_cargo_graphs,
+)
 from .discovery import discover
 from .global_storage import GlobalStorageEntry, GlobalStorageSkip, global_cache_storage
 from .go_cache_provenance import GoCacheUse, aggregate_go_cache_uses, go_cache_uses
@@ -115,7 +121,8 @@ def collect_cache_provenance(
         except (OSError, ValueError) as exc:
             discovery_failures.append({"project": str(root), "error": str(exc)})
 
-    storage_entries, storage_skips = storage_probe(managers=selected_managers)
+    storage_entries, raw_storage_skips = storage_probe(managers=selected_managers)
+    storage_skip_objects = list(raw_storage_skips)
     provider_failures: list[dict[str, Any]] = []
     provider_skips: list[dict[str, Any]] = []
     attribution_skips: list[dict[str, Any]] = []
@@ -128,6 +135,12 @@ def collect_cache_provenance(
     cargo_home = None
     if cargo_registry is not None and cargo_git is not None and cargo_registry.parent == cargo_git.parent:
         cargo_home = cargo_registry.parent
+
+    existing_storage_skip_managers = {skip.manager for skip in storage_skip_objects}
+    if "go" in selected_managers and go_modcache is None and "go" not in existing_storage_skip_managers:
+        storage_skip_objects.append(GlobalStorageSkip("go", "measured GOMODCACHE root is unavailable or ambiguous"))
+    if "cargo" in selected_managers and cargo_home is None and "cargo" not in existing_storage_skip_managers:
+        storage_skip_objects.append(GlobalStorageSkip("cargo", "measured Cargo registry/git roots do not identify one CARGO_HOME"))
 
     for root, graph in graphs:
         if "go" in selected_managers and go_modcache is not None:
@@ -151,8 +164,14 @@ def collect_cache_provenance(
                 attribution_skips.extend({"manager": "go", "project": str(root), **item} for item in skips)
 
         if "cargo" in selected_managers and cargo_home is not None:
+            cargo_component_keys = {
+                component.key(graph.root)
+                for component in graph.components
+                if component.ecosystem == "rust" and component.manager == "cargo"
+            }
             try:
                 plans = plan_cargo_graphs(graph)
+                covered = cargo_provider_component_keys(graph, plans)
             except (CargoGraphError, OSError, ValueError) as exc:
                 provider_failures.append({
                     "manager": "cargo",
@@ -162,6 +181,15 @@ def collect_cache_provenance(
                     "error": str(exc),
                 })
                 plans = []
+                covered = set()
+            for component_key in sorted(cargo_component_keys - covered):
+                provider_skips.append({
+                    "manager": "cargo",
+                    "project": str(root),
+                    "component": component_key,
+                    "ecosystem": "rust",
+                    "reason": "authoritative Cargo cache provenance requires a locked Cargo provider plan",
+                })
             for plan in plans:
                 result = execute_cargo(plan)
                 if not result.succeeded:
@@ -189,7 +217,7 @@ def collect_cache_provenance(
     observation_complete = (
         not missing
         and not discovery_failures
-        and not storage_skips
+        and not storage_skip_objects
         and not provider_failures
         and not provider_skips
         and all(report["measurement_consistent"] for report in reports)
@@ -214,7 +242,7 @@ def collect_cache_provenance(
         "provider_failures": provider_failures,
         "provider_skips": provider_skips,
         "attribution_skips": attribution_skips,
-        "storage_skips": [skip.to_dict() for skip in storage_skips],
+        "storage_skips": [skip.to_dict() for skip in storage_skip_objects],
         "unattributed_means_unused": False,
         "reclaimable_bytes": None,
         "reclaimable": False,
