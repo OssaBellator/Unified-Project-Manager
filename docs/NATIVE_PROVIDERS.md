@@ -12,6 +12,8 @@ UPM intentionally does not pretend every ecosystem exposes the same dependency g
 | Yarn Berry 2+ | `yarn-berry-resolution-graph` | exact descriptor/locator graph from native `yarn info` plus reachable-only SBOM identity | **offline by provider configuration** (`YARN_ENABLE_NETWORK=0`) | install state is redirected; cache is immutable |
 | Cargo | `cargo-metadata` | resolved package graph from Cargo metadata | **offline by default** (`--offline`) | lockfile is fixed by `--locked` |
 | uv | `uv-lock` | static universal project/workspace graph from authoritative shared `uv.lock` | none | none |
+| Poetry | `poetry-lock` | validated structured `poetry.lock` relationships with conditional/ambiguity evidence | none | none |
+| PDM | `pdm-lock` | validated structured `pdm.lock` relationships with PEP-508/ambiguity evidence | none | none |
 
 ## Go
 
@@ -144,6 +146,33 @@ For native CycloneDX/SPDX export, `uv.lock` itself may establish PyPI identity f
 
 Workspace-wide install/sync planning is also root-owned. `install --all` collapses a proven uv workspace to one root `uv sync --all-packages`; reproducible `sync --all` adds `--locked` instead of independently syncing each member against a lock they do not own.
 
+## Poetry and PDM
+
+Poetry/PDM relationship providers read structured TOML lock state statically. They do not invoke Poetry, PDM, Python environments, installers, or the network.
+
+Both use the public scope:
+
+```text
+structured-lock-dependency-graph
+```
+
+Their certainty model is intentionally conservative:
+
+- a dependency resolves only when exactly one normalized locked candidate exists;
+- duplicate-name candidates remain an explicit ambiguous reference;
+- missing candidates remain unresolved rather than being conflated with ambiguity;
+- optional and marker-bearing edges remain conditional;
+- direct PEP 621 optional groups and Poetry optional/marker/multi-constraint declarations retain those conditions at the synthetic project root;
+- unsupported lock relationship shapes or record-level conditions fail the provider rather than being silently ignored.
+
+`why`, project `impact`, and fleet impact share one query object, so they expose identical resolved paths, markers, optional-edge counts, candidate ambiguity, and interpretation text.
+
+Reachable ambiguous candidates can remain **possible** scan inventory without receiving a fabricated dependency edge. Native CycloneDX/SPDX first suppress the Python adapter's broad structured-lock observations, then add only the certainty-aware reachable registry package subset. Conditional, ambiguous, unresolved, and non-registry edges are omitted from unconditional relationships with explicit CycloneDX evidence where representable.
+
+Native advisory inventory retains the same validated Poetry/PDM graph results alongside the exact CycloneDX document scanned by OSV-Scanner. Resolved findings retain all path conditions. Findings on an ambiguity-only candidate are reported as possible via an ambiguous lock reference and retain the exact path to the `?dependency` hop.
+
+See `PYTHON_LOCK_PROVIDERS.md` for the detailed contract.
+
 ## Provider ownership and skips
 
 Workspace-aware providers may serve more discovered components than the provider plan's root `component` field. UPM therefore derives provider coverage and skip suppression from provider plans:
@@ -153,9 +182,10 @@ Workspace-aware providers may serve more discovered components than the provider
 - recursive pnpm plans own the pnpm workspace members they serve;
 - unscoped Yarn Berry plans own the declared discovered workspace members they serve, while scoped plans retain root context plus the selected member;
 - Cargo workspace plans own only manifest-proven members;
-- unscoped uv workspace plans own all proven members, while scoped plans own only root context plus the selected member.
+- unscoped uv workspace plans own all proven members, while scoped plans own only root context plus the selected member;
+- Poetry/PDM plans own the exact Python component whose authoritative `poetry.lock` / `pdm.lock` they parse.
 
-This prevents contradictory output where a workspace member is both successfully served by a root provider and reported as unsupported.
+This prevents contradictory output where a component is both successfully served by a provider and reported as unsupported.
 
 ## `why` and `impact`
 
@@ -167,7 +197,8 @@ Provider scopes remain deliberately distinct:
 - pnpm: `logical-dependency-tree` with workspace-project occurrence identity;
 - Yarn Berry: exact descriptor/locator resolution reachability with workspace/virtual identity;
 - Cargo: `locked-offline-dependency-graph`;
-- uv: `universal-lock-dependency-graph`, scoped to a selected workspace project when requested.
+- uv: `universal-lock-dependency-graph`, scoped to a selected workspace project when requested;
+- Poetry/PDM: `structured-lock-dependency-graph`, retaining conditional paths and ambiguity evidence.
 
 None implies source/API/runtime reachability or exploitability.
 
@@ -181,10 +212,11 @@ Package identity and relationship evidence remain provenance-aware.
 - Yarn Berry contributes only reachable stored resolutions; npm-protocol locators may become npm PURLs while workspace/file/git/patch/etc. remain non-registry.
 - Cargo provider edges are admitted only where static lock provenance supports registry endpoint identity.
 - uv may add registry package identities directly from authoritative `uv.lock`, but relationships are admitted only when the universal-lock reference is unambiguous and unconditional for the target representation.
+- Poetry/PDM add only certainty-aware reachable registry identities; conditional/ambiguous/unresolved/non-registry edges never become unconditional relationships.
 - local/path/workspace packages are never relabeled as registry packages just to make a graph look complete.
 
 ## Failure policy
 
-Native provider failure is explicit. UPM does not silently switch from offline to online, locked to unlocked, workspace to component scope, native evidence to heuristic parsing, an ambiguous lock fork to an arbitrary candidate, or native SBOM provenance to guessed download-origin identity.
+Native provider failure is explicit. UPM does not silently switch from offline to online, locked to unlocked, workspace to component scope, native evidence to heuristic parsing, an ambiguous lock fork to an arbitrary candidate, unsupported Poetry/PDM lock semantics to an environment-dependent manager command, or native SBOM provenance to guessed download-origin identity.
 
 A leaky but honest abstraction is preferred over false cross-ecosystem symmetry.
