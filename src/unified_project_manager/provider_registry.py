@@ -82,6 +82,21 @@ NPM_PROVIDER = NativeProviderCapability(
     mutation='project-read-only',
 )
 
+PNPM_PROVIDER = NativeProviderCapability(
+    provider='pnpm-lock-tree',
+    ecosystem='node',
+    manager='pnpm',
+    evidence='pnpm logical dependency tree reconstructed from pnpm-lock state',
+    graph_scope='logical-dependency-tree',
+    why_scope='logical-dependency-tree',
+    impact_scope='logical-dependency-tree',
+    source='pnpm list --depth Infinity --json --lockfile-only',
+    execution=True,
+    network='none',
+    mutation='project-read-only',
+    supports_sbom_relationships=False,
+)
+
 CARGO_PROVIDER = NativeProviderCapability(
     provider='cargo-metadata',
     ecosystem='rust',
@@ -110,7 +125,7 @@ UV_PROVIDER = NativeProviderCapability(
     mutation='none',
 )
 
-PROVIDERS = (GO_PROVIDER, NPM_PROVIDER, CARGO_PROVIDER, UV_PROVIDER)
+PROVIDERS = (GO_PROVIDER, NPM_PROVIDER, PNPM_PROVIDER, CARGO_PROVIDER, UV_PROVIDER)
 
 
 def provider_for_component(component: Component) -> tuple[NativeProviderCapability | None, str | None]:
@@ -120,6 +135,10 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
         if not any(name in component.lockfiles for name in ('package-lock.json', 'npm-shrinkwrap.json')):
             return None, 'npm native graph requires package-lock.json or npm-shrinkwrap.json'
         return NPM_PROVIDER, None
+    if component.ecosystem == 'node' and component.manager == 'pnpm':
+        if 'pnpm-lock.yaml' not in component.lockfiles:
+            return None, 'pnpm native graph requires pnpm-lock.yaml at the authoritative workspace/project root'
+        return PNPM_PROVIDER, None
     if component.ecosystem == 'rust' and component.manager == 'cargo':
         if 'Cargo.lock' not in component.lockfiles:
             return None, 'Cargo native graph requires Cargo.lock for locked/offline resolution'
