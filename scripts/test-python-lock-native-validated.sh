@@ -13,7 +13,8 @@ for test_file in \
   tests/test_python_lock_queries.py \
   tests/test_python_lock_path_multiplicity.py \
   tests/test_python_lock_sbom.py \
-  tests/test_python_lock_sbom_uncertainty.py
+  tests/test_python_lock_sbom_uncertainty.py \
+  tests/test_python_lock_native_inventory.py
  do
   python3 "$ROOT/$test_file"
  done
