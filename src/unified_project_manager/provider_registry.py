@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from .cargo_graph import cargo_provider_component_keys, plan_cargo_graphs
 from .models import Component, ProjectGraph
+from .npm_graph import npm_provider_component_keys, plan_npm_graphs
 from .pnpm_graph import plan_pnpm_graphs, pnpm_provider_component_keys
 
 NetworkMode = Literal['none', 'offline', 'may-use-network']
@@ -134,7 +136,7 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
         return GO_PROVIDER, None
     if component.ecosystem == 'node' and component.manager == 'npm':
         if not any(name in component.lockfiles for name in ('package-lock.json', 'npm-shrinkwrap.json')):
-            return None, 'npm native graph requires package-lock.json or npm-shrinkwrap.json'
+            return None, 'npm native graph requires package-lock.json or npm-shrinkwrap.json at the authoritative workspace/project root'
         return NPM_PROVIDER, None
     if component.ecosystem == 'node' and component.manager == 'pnpm':
         if 'pnpm-lock.yaml' not in component.lockfiles:
@@ -142,7 +144,7 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
         return PNPM_PROVIDER, None
     if component.ecosystem == 'rust' and component.manager == 'cargo':
         if 'Cargo.lock' not in component.lockfiles:
-            return None, 'Cargo native graph requires Cargo.lock for locked/offline resolution'
+            return None, 'Cargo native graph requires Cargo.lock at the authoritative workspace/project root'
         return CARGO_PROVIDER, None
     if component.ecosystem == 'python' and component.manager == 'uv':
         if 'uv.lock' not in component.lockfiles:
@@ -151,16 +153,37 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
     return None, 'no authoritative native relationship provider is configured for this component'
 
 
+def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str]]:
+    try:
+        npm_plans = plan_npm_graphs(graph)
+        npm_owned = npm_provider_component_keys(graph, npm_plans)
+    except ValueError:
+        npm_owned = set()
+    try:
+        pnpm_plans = plan_pnpm_graphs(graph)
+        pnpm_owned = pnpm_provider_component_keys(graph, pnpm_plans)
+    except ValueError:
+        pnpm_owned = set()
+    try:
+        cargo_plans = plan_cargo_graphs(graph)
+        cargo_owned = cargo_provider_component_keys(graph, cargo_plans)
+    except ValueError:
+        cargo_owned = set()
+    return npm_owned, pnpm_owned, cargo_owned
+
+
 def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
-    pnpm_plans = plan_pnpm_graphs(graph)
-    pnpm_owned = pnpm_provider_component_keys(graph, pnpm_plans)
+    npm_owned, pnpm_owned, cargo_owned = _owned_components(graph)
     result: list[ProviderCoverage] = []
     for component in graph.components:
         key = component.key(graph.root)
         provider, reason = provider_for_component(component)
-        if provider is None and key in pnpm_owned:
-            provider = PNPM_PROVIDER
-            reason = None
+        if key in npm_owned:
+            provider, reason = NPM_PROVIDER, None
+        elif key in pnpm_owned:
+            provider, reason = PNPM_PROVIDER, None
+        elif key in cargo_owned:
+            provider, reason = CARGO_PROVIDER, None
         result.append(ProviderCoverage(
             component=key,
             ecosystem=component.ecosystem,
