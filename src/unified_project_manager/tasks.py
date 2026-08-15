@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .models import Component, ProjectGraph
+
 
 class TaskError(ValueError):
     """Raised when UPM task configuration or task planning is invalid."""
@@ -146,3 +148,79 @@ def execute_task(
     except OSError as exc:
         return TaskResult(task, 127, stderr=str(exc))
     return TaskResult(task, completed.returncode, completed.stdout or "", completed.stderr or "")
+
+
+_NATIVE_CARGO_TASKS = frozenset({"build", "check", "run", "test"})
+
+
+def _select_component(graph: ProjectGraph, selector: str | None, task_name: str) -> Component:
+    candidates: list[Component] = []
+    for component in graph.components:
+        supports = False
+        if component.ecosystem == "node":
+            scripts = component.metadata.get("scripts")
+            supports = isinstance(scripts, dict) and task_name in scripts and component.manager in {"npm", "pnpm", "yarn", "bun"}
+        elif component.ecosystem == "rust":
+            supports = task_name in _NATIVE_CARGO_TASKS and component.manager == "cargo"
+        if not supports:
+            continue
+        if selector is None:
+            candidates.append(component)
+            continue
+        if selector in {component.key(graph.root), component.relative_path(graph.root), component.ecosystem, component.metadata.get("name")}:
+            candidates.append(component)
+
+    if not candidates:
+        qualifier = f" for component '{selector}'" if selector else ""
+        raise TaskError(f"No native task '{task_name}' is available{qualifier}.")
+    if len(candidates) > 1:
+        choices = ", ".join(component.key(graph.root) for component in candidates)
+        raise TaskError(f"Native task '{task_name}' is ambiguous; select a component with --component. Choices: {choices}")
+    return candidates[0]
+
+
+def plan_native_task(graph: ProjectGraph, name: str, selector: str | None = None) -> TaskSpec:
+    component = _select_component(graph, selector, name)
+    if component.ecosystem == "node":
+        manager = component.manager
+        assert manager is not None
+        argv = (manager, "run", name)
+    elif component.ecosystem == "rust":
+        argv = ("cargo", name)
+    else:
+        raise TaskError(f"Native tasks are not configured for ecosystem '{component.ecosystem}'.")
+    return TaskSpec(
+        name=name,
+        argv=argv,
+        cwd=component.path,
+        description=f"native task from {component.key(graph.root)}",
+    )
+
+
+def list_native_tasks(graph: ProjectGraph) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for component in graph.components:
+        if component.ecosystem == "node" and component.manager in {"npm", "pnpm", "yarn", "bun"}:
+            scripts = component.metadata.get("scripts")
+            if isinstance(scripts, dict):
+                for name, command in sorted(scripts.items()):
+                    if isinstance(name, str) and isinstance(command, str):
+                        result.append({
+                            "name": name,
+                            "component": component.key(graph.root),
+                            "ecosystem": "node",
+                            "manager": component.manager,
+                            "native": command,
+                            "argv": [component.manager, "run", name],
+                        })
+        elif component.ecosystem == "rust" and component.manager == "cargo":
+            for name in sorted(_NATIVE_CARGO_TASKS):
+                result.append({
+                    "name": name,
+                    "component": component.key(graph.root),
+                    "ecosystem": "rust",
+                    "manager": "cargo",
+                    "native": f"cargo {name}",
+                    "argv": ["cargo", name],
+                })
+    return result
