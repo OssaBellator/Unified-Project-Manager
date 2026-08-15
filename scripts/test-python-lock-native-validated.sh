@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 for test_file in \
+  tests/test_python_lock_provider.py \
   tests/test_python_lock_validation.py \
   tests/test_python_lock_graph.py \
   tests/test_python_lock_reachability.py \
