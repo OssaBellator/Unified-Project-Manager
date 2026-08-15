@@ -1,103 +1,145 @@
 # Current review notes
 
-These notes capture the current review boundary for `feature/initial-control-plane`. Follow-up/pre-public work must not be inferred as public capability.
+These notes capture the review boundary for `feature/initial-control-plane`. Pre-public work must not be inferred as public capability.
 
 ## Public boundary
 
-The public native-provider surface remains exactly Go, npm, pnpm, Yarn Berry 2+, Cargo, uv, Poetry, and PDM. Govulncheck is **not** public and has no CLI/provider route.
+The public relationship-provider surface remains exactly Go, npm, pnpm, Yarn Berry 2+, Cargo, uv, Poetry, and PDM. Govulncheck is **not** public and has no CLI/provider route.
 
 Public Go package-import reachability remains report-only, `GOPROXY=off` + `GOWORK=off`, replacement-aware, and weaker than symbol/runtime/exploitability evidence.
 
-## Pre-public Go symbol stack
+A regression locks the provider registry at exactly eight entries and explicitly rejects govulncheck/go-symbol provider names.
 
-The branch contains six lower layers:
+## Pre-public Go symbol trust chain
 
-1. strict parser/planner;
-2. exact advisory/module/version correlation;
-3. read-only preflight;
-4. fail-closed executor;
-5. shared project/fleet reporting;
-6. public-boundary regression.
+The branch now contains:
 
-### Executor review boundary
+1. strict source/symbol/local-file-DB parser/planner;
+2. mandatory scanner-native SBOM retention;
+3. scanner-build-list + advisory/module/version strict correlation;
+4. read-only preflight;
+5. fail-closed executor;
+6. shared project/fleet reporting;
+7. deterministic local DB and versioned dependency fixtures;
+8. scanner-declaration provenance identity;
+9. planned scanner/observation build-selection alignment;
+10. candidate Go-native source/build observation;
+11. optional real scanner execution/alignment tests;
+12. public-boundary regression.
 
-The executor launches only after a ready preflight for the exact same project and DB, uses the preflight-resolved executable directly, preserves the offline environment, and never retries online or mutates telemetry settings.
+### Scanner-SBOM and correlation boundary
 
-Govulncheck JSON exit code 0 means the command completed whether or not vulnerabilities exist; findings are read from validated JSON. Nonzero exit is failure and stdout is not accepted as valid symbol evidence.
+Accepted symbol evidence requires one valid govulncheck scan SBOM. The vulnerable frame's module/version must exist in that scanner-declared build list before UPM considers advisory correlation.
 
-Malformed protocol evidence, local-DB mismatch, preflight mismatch, missing resolved executable, or launch errors all fail explicitly.
+Correlation then additionally requires exact component/provider, GO OSV ID or alias from the exact OSV record, effective module, and exact non-missing version. Replacement correlation uses effective module identity.
 
-### Correlation review boundary
+### Executor boundary
 
-Symbol attachment requires exact component/provider, GO OSV ID or alias from the exact govulncheck OSV record, effective module, and exact non-missing version. Alias overlap alone is insufficient. Replacement correlation uses effective replacement module identity while package-import querying retains the logical/original module namespace.
+The executor launches only after a ready preflight for the exact project/DB, invokes the resolved executable directly, preserves offline guards, never retries online, and never mutates telemetry settings.
 
-### Shared project/fleet reporting boundary
+JSON exit 0 means command completion even when vulnerabilities exist. Nonzero exit is execution failure; stdout from a failed process is not accepted as symbol evidence.
 
-Project reports consume already-completed execution plus dependency impacts. Failed/blocked/invalid execution leaves `correlation=null`; UPM does not manufacture a negative symbol result.
+### Scanner-declaration identity boundary
 
-Fleet aggregation does not rerun execution/correlation. It keeps independent counts for:
+The deterministic scanner-declaration SHA includes protocol/scanner identity, `scan_mode`, `scan_level`, local DB declaration/modification time, config/SBOM Go versions, module build list, and roots.
+
+It remains provenance only:
 
 ```text
-execution_succeeded
-execution_failed_or_blocked
-symbol_findings
-correlated_matches
-unmatched_symbol_findings
+freshness = not-established
+source_state_fingerprint = false
+build_configuration_fingerprint = false
 ```
 
-This shared data model is pre-public groundwork, not a CLI route.
+### Planned build-selection boundary
 
-### Persistence/freshness boundary
+Scanner and candidate-observation plans must agree on package patterns, build tags, and test inclusion before optional real scanner tests launch.
 
-Symbol evidence remains `persisted=false`. No source/build freshness fingerprint exists yet.
-
-Do not reuse only `go.mod`/`go.sum`, the dependency graph, or the OSV-scanned SBOM as a call-graph freshness proxy: govulncheck source results depend on actual source/build configuration and can be affected by local replacements and source inputs outside such a narrow fingerprint.
-
-### Side-effect/live-runtime boundary
+Current accepted candidate:
 
 ```text
-project mutation = none planned; real-runtime verification still required
+patterns = ["./..."]
+tags = []
+tests = false
+```
+
+Test-enabled selection fails closed even when both plans request tests because runtime equivalence between govulncheck `go/packages` test loading and `go list -test` variants is not proven.
+
+### Candidate source/build observation boundary
+
+The candidate observation requires Go 1.21+ and runs a normalized Go-list profile with compiled/dependency loading, tests/export/find disabled, VCS stamping disabled, and PGO disabled:
+
+```text
+go list -e -mod=readonly -deps=true -compiled=true -test=false \
+  -export=false -find=false -buildvcs=false -pgo=off -json -- ./...
+```
+
+It records resolved build environment, broader selected build inputs, ignored files, module/replacement identity, imports, and `CompiledGoFiles` separately as syntax/type-check inputs.
+
+A real local Go 1.23.2 check confirms this exact command succeeds, respects a build-tagged-out Windows file, and leaves the project snapshot unchanged.
+
+This is still explicitly:
+
+```text
+freshness = not-established
+govulncheck_equivalence = not-established
+source_state_fingerprint = false
+```
+
+Current govulncheck v1.6.0 declares Go 1.25.0 and x/tools v0.48.0. Local Go 1.23.2 observation therefore cannot substitute for real scanner alignment.
+
+### Shared reporting boundary
+
+Failed/blocked/invalid execution leaves `correlation=null`; UPM never turns provider failure into a negative reachability result. Fleet aggregation never reruns analysis and keeps execution failures, raw symbols, correlated matches, and unmatched findings separate.
+
+### Persistence/side-effect boundary
+
+Symbol evidence remains `persisted=false`. No source/build freshness fingerprint exists.
+
+Do not reuse `go.mod`/`go.sum`, dependency graph, scanned SBOM, scanner-declaration SHA, or candidate source observation alone as call-graph freshness proof.
+
+```text
+project mutation = none planned; real scanner verification still required
 non-project cache/tool mutation = possible
 runtime reachability = not evaluated
 exploitability = not established
 ```
 
-The no-network plan includes `GOSUMDB=off`, so symbol analysis is not fresh integrity verification.
-
-No real govulncheck scan is claimed in this environment: govulncheck is absent, telemetry is `local`, and no usable local DB was found. No install/download/settings mutation was performed.
+The deterministic DB and versioned dependency source are no longer blockers. In this environment real scanner execution remains blocked because govulncheck is absent and `GOTELEMETRY=local`; neither condition was changed automatically.
 
 ## Remaining promotion gate
 
 Do not add public symbol routing until:
 
-- real local-DB execution passes preflight;
-- project-state and cache/tool side effects are characterized;
+- real local-fixture govulncheck execution passes preflight;
+- real scanner declaration/source-selection alignment is characterized;
+- project and non-project cache/tool side effects are characterized;
 - strict correlation is proven against real output;
-- a conservative source/build-state fingerprint and symbol persistence/freshness model exist;
+- a conservative source/build freshness and persistence model exists;
 - ordinary status remains free of hidden symbol execution.
 
 ## Validation boundary
 
-No GitHub Actions workflow is used. Focused reconstructed/local results include:
+No GitHub Actions workflow is used. Current focused evidence includes the earlier public-provider/cache/SBOM slices plus:
 
-- Poetry/PDM reachability: **5/5**;
-- all-provider fleet core: **4/4**;
-- mixed-project SBOM anchors: **5/5**;
-- cache physical mapping: **5/5** plus precision checks;
-- cache report semantics: **7/7** plus identity checks;
-- Go package-import reachability: **7/7**;
-- Go relationship environment isolation: **3/3**;
-- real local Go import-query immutability: **1/1**;
-- govulncheck parser/planner: **8/8**;
-- strict symbol correlation: **9/9**;
-- govulncheck preflight: **6/6**;
-- fail-closed govulncheck executor: **9/9**;
-- shared project/fleet symbol reporting: **6/6**.
+- Go import reachability: **7/7**;
+- real Go import-query immutability: **1/1**;
+- govulncheck parser/planner baseline: **8/8**;
+- strict correlation baseline: **9/9**;
+- preflight: **6/6**;
+- executor baseline: **9/9**;
+- shared symbol reporting: **6/6**;
+- deterministic vulnerability DB: **7/7**;
+- fully local runtime fixture: **5/5**;
+- scanner-SBOM focused invariants: **12/12**;
+- scan declaration identity: **5/5**;
+- planned build-selection alignment: **6/6**;
+- normalized Go source-observation command: real Go 1.23.2 success, project snapshot unchanged.
 
 The full private branch still cannot be materialized/run end-to-end here.
 
 ## Merge hygiene
 
-The branch contains many small contents-API commits. If/when merge is authorized, squash merge remains the appropriate default.
+The branch contains many small contents-API commits. If/when merge is explicitly authorized, squash merge remains the appropriate default.
 
 Do not merge this PR without explicit user authorization.
