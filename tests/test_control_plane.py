@@ -111,5 +111,30 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(data["native_verification"]["coverage"]["planned_components"], 1)
 
 
+class PolicyCliTests(unittest.TestCase):
+    def test_policy_cli_json_reports_violation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "upm.toml").write_text("[policy]\nrequire_lockfiles=true\n", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["policy", str(root), "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertFalse(data["passed"])
+            self.assertEqual(data["violations"][0]["code"], "policy.lockfile-required")
+
+    def test_policy_cli_passes_without_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example.com/app\ngo 1.24\n", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["policy", str(root)])
+            self.assertEqual(code, 0)
+            self.assertIn("Policy: passed", output.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
