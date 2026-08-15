@@ -27,6 +27,8 @@ def purl_for(ecosystem: str, name: str, version: str) -> str:
         return f"pkg:pypi/{_encode(normalized)}@{_encode(version)}"
     if ecosystem == "rust":
         return f"pkg:cargo/{_encode(name)}@{_encode(version)}"
+    if ecosystem == "go":
+        return f"pkg:golang/{_encode(name)}@{_encode(version)}"
     raise ValueError(f"No Package URL mapping is defined for ecosystem '{ecosystem}'.")
 
 
@@ -44,6 +46,8 @@ def _registry_purl(component: Component, package: ResolvedPackage) -> str | None
         if not source.startswith("registry+"):
             return None
         return purl_for("rust", package.name, package.version)
+    if component.ecosystem == "go":
+        return purl_for("go", package.name, package.version)
     return None
 
 
