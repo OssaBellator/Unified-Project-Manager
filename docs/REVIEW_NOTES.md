@@ -125,16 +125,45 @@ Source-query failure does not invalidate an otherwise valid OSV scan/evidence re
 
 See `REACHABILITY_EVIDENCE.md`.
 
+## Pre-public Go vulnerable-symbol groundwork
+
+UPM still has **no public symbol-reachability command or provider route**. However, the branch now contains lower-level groundwork in `go_symbol_reachability.py` and `GO_SYMBOL_REACHABILITY.md`.
+
+That groundwork models the official govulncheck streaming JSON protocol without flattening evidence classes:
+
+- protocol must be exactly `v1.0.0`;
+- scan mode must be explicitly `source`;
+- scan level must be explicitly `symbol`;
+- vulnerability database must be explicitly local (`file://...`);
+- module-, package-, and symbol-level findings remain distinct;
+- only a finding whose first trace frame names a function/method is treated as called-symbol evidence;
+- Go OSV aliases are retained for future correlation, but alias overlap alone is not enough to claim a match to an existing OSV-Scanner occurrence.
+
+The pre-public plan requires a caller-supplied local vulnerability DB and sets:
+
+```text
+GOPROXY = off
+GOWORK = off
+GOSUMDB = off
+GOTOOLCHAIN = local
+```
+
+It also requires Go telemetry mode already `off`. UPM will not alter the user's telemetry configuration to enable the provider.
+
+There is intentionally **no subprocess executor yet**. Public promotion is blocked on a real local-DB govulncheck execution test, project-state mutation checks, honest representation of non-project cache/tool side effects, exact package/version/advisory correlation with existing UPM scan occurrences, shared project/fleet semantics, and a separate freshness/persistence model.
+
+Because `GOSUMDB=off` is part of the no-network plan, this future provider must not claim that it freshly verifies dependency checksums. Symbol call-graph evidence and dependency-integrity evidence remain separate.
+
 ## Stronger reachability not claimed
 
 UPM still has no public provider for:
 
-- current-build-configuration reachability;
-- vulnerable API/symbol reachability;
+- current-build-configuration reachability outside a future govulncheck-specific contract;
+- vulnerable API/symbol reachability as a routed UPM command;
 - runtime/data-flow reachability;
 - exploitability determination.
 
-Dependency paths and Go package-import paths must not be promoted into those stronger claims.
+Dependency paths and Go package-import paths must not be promoted into those stronger claims. The existence of pre-public govulncheck parsing/planning code does not change that public boundary.
 
 ## Exact advisory evidence contract
 
@@ -160,6 +189,7 @@ sh ./scripts/test-fleet-providers.sh
 sh ./scripts/test-sbom-project-components.sh
 sh ./scripts/test-cache-provenance.sh
 sh ./scripts/test-go-import-reachability.sh
+sh ./scripts/test-go-symbol-reachability.sh
 ```
 
 Focused reconstructed/local validation in this execution environment includes:
@@ -173,7 +203,8 @@ Focused reconstructed/local validation in this execution environment includes:
 - separate cache identity-precision checks passed;
 - Go package-import reachability core: **7/7**, including any-build-tag and replacement-aware logical/effective identity semantics;
 - Go relationship execution environment: **3/3** reconstructed checks passed for `GOPROXY=off`, `GOWORK=off`, and unrelated-environment preservation;
-- real local Go 1.23.2 source-query immutability: **1/1** isolated check passed with `go.mod` and `go.sum` unchanged.
+- real local Go 1.23.2 source-query immutability: **1/1** isolated check passed with `go.mod` and `go.sum` unchanged;
+- pre-public govulncheck parser/planner contract: **8/8** reconstructed checks passed for evidence-level separation, aliases/order, protocol/mode/level/local-DB refusal boundaries, message-shape validation, offline plan guards, and telemetry fail-closed behavior.
 
 The project/fleet Go import-reachability CLI regressions are committed and included in local scripts, but they are not represented as having run end-to-end in this constrained runtime. The full private checkout still cannot be materialized here.
 
