@@ -40,7 +40,7 @@ class SecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "go.mod").write_text("module example.com/app\ngo 1.24\n", encoding="utf-8")
-            with patch("unified_project_manager.security.execute_native_graph") as execute:
+            with patch("unified_project_manager.security.execute_native_graph_offline") as execute:
                 plan = plan_security_scan(discover(root), native_go=True)
             execute.assert_not_called()
             self.assertFalse(plan.package_count_exact)
@@ -67,6 +67,7 @@ class SecurityTests(unittest.TestCase):
             result = execute_security_scan(graph, plan, run=run, which=lambda _name: "/tools/osv-scanner")
             self.assertTrue(result.scanner_succeeded)
             self.assertFalse(result.vulnerable)
+            self.assertIsNotNone(result.bom)
             assert observed_sbom is not None
             self.assertFalse(observed_sbom.exists())
 
@@ -99,6 +100,7 @@ class SecurityTests(unittest.TestCase):
             self.assertTrue(result.scanner_succeeded)
             self.assertTrue(result.vulnerable)
             self.assertEqual(result.summary, {"affected_packages": 1, "vulnerabilities": 2})
+            self.assertIsNotNone(result.bom)
 
     def test_cli_is_preview_first(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -138,6 +140,7 @@ class SecurityTests(unittest.TestCase):
                 execute_go=lambda _plan: native_result,
             )
             self.assertTrue(result.scanner_succeeded)
+            self.assertIsNotNone(result.bom)
 
 
 if __name__ == "__main__":
