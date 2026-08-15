@@ -15,19 +15,35 @@ from unified_project_manager.go_symbol_reachability import (
 
 
 class GoSymbolReachabilityTests(unittest.TestCase):
+    def _config(self) -> dict:
+        return {
+            "config": {
+                "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
+                "scanner_name": "govulncheck",
+                "scanner_version": "v1.6.0",
+                "db": "file:///tmp/vulndb",
+                "go_version": "go1.24.0",
+                "scan_level": "symbol",
+                "scan_mode": "source",
+            }
+        }
+
+    def _sbom(self) -> dict:
+        return {
+            "SBOM": {
+                "go_version": "go1.24.0",
+                "modules": [
+                    {"path": "example.com/dep", "version": "v1.2.3"},
+                    {"path": "example.com/app"},
+                ],
+                "roots": ["example.com/app", "example.com/app/cmd"],
+            }
+        }
+
     def _stream(self) -> str:
         messages = [
-            {
-                "config": {
-                    "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
-                    "scanner_name": "govulncheck",
-                    "scanner_version": "v1.6.0",
-                    "db": "file:///tmp/vulndb",
-                    "go_version": "go1.24.0",
-                    "scan_level": "symbol",
-                    "scan_mode": "source",
-                }
-            },
+            self._config(),
+            self._sbom(),
             {
                 "finding": {
                     "osv": "GO-2026-0001",
@@ -73,16 +89,24 @@ class GoSymbolReachabilityTests(unittest.TestCase):
                 }
             },
         ]
-        # Streaming JSON is a sequence of objects, not necessarily one JSON array.
         return "\n".join(json.dumps(message) for message in messages)
 
-    def test_parser_preserves_module_package_and_symbol_levels(self) -> None:
+    def test_parser_preserves_scan_sbom_and_finding_levels(self) -> None:
         report = parse_govulncheck_symbol_stream(self._stream())
 
         self.assertEqual(report.config.protocol_version, GOVULNCHECK_PROTOCOL_VERSION)
         self.assertEqual(report.config.scan_mode, "source")
         self.assertEqual(report.config.scan_level, "symbol")
         self.assertTrue(report.config.database.startswith("file://"))
+        self.assertIsNotNone(report.sbom)
+        self.assertEqual(report.sbom.go_version, "go1.24.0")
+        self.assertEqual(report.sbom.roots, ("example.com/app", "example.com/app/cmd"))
+        self.assertTrue(report.sbom.has_module("example.com/dep", "v1.2.3"))
+        self.assertFalse(report.sbom.has_module("example.com/dep", "v9.9.9"))
+        self.assertEqual(
+            [(module.path, module.version) for module in report.sbom.modules],
+            [("example.com/app", None), ("example.com/dep", "v1.2.3")],
+        )
         self.assertEqual([finding.level for finding in report.findings], ["module", "package", "symbol"])
         self.assertEqual(len(report.symbol_findings), 1)
         finding = report.symbol_findings[0]
@@ -92,6 +116,7 @@ class GoSymbolReachabilityTests(unittest.TestCase):
         self.assertTrue(report.matches_advisory("GO-2026-0001", "CVE-2026-1234"))
         self.assertTrue(report.matches_advisory("GO-2026-0001", "GO-2026-0001"))
         self.assertFalse(report.matches_advisory("GO-2026-0001", "CVE-2026-9999"))
+        self.assertEqual(report.to_dict()["sbom"]["roots"], ["example.com/app", "example.com/app/cmd"])
 
     def test_osv_message_may_follow_finding(self) -> None:
         report = parse_govulncheck_symbol_stream(self._stream())
@@ -99,6 +124,38 @@ class GoSymbolReachabilityTests(unittest.TestCase):
             report.advisory_ids("GO-2026-0001"),
             ("CVE-2026-1234", "GHSA-test-0001", "GO-2026-0001"),
         )
+
+    def test_parser_requires_exactly_one_valid_source_scan_sbom(self) -> None:
+        missing = json.dumps(self._config())
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "missing its scan SBOM"):
+            parse_govulncheck_symbol_stream(missing)
+
+        duplicate = "\n".join(json.dumps(message) for message in [
+            self._config(), self._sbom(), self._sbom(),
+        ])
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "more than one SBOM"):
+            parse_govulncheck_symbol_stream(duplicate)
+
+        no_roots = self._sbom()
+        no_roots["SBOM"]["roots"] = []
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "no root packages"):
+            parse_govulncheck_symbol_stream("\n".join(
+                json.dumps(message) for message in [self._config(), no_roots]
+            ))
+
+        invalid_module = self._sbom()
+        invalid_module["SBOM"]["modules"] = [{"version": "v1.2.3"}]
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "missing path identity"):
+            parse_govulncheck_symbol_stream("\n".join(
+                json.dumps(message) for message in [self._config(), invalid_module]
+            ))
+
+        invalid_roots = self._sbom()
+        invalid_roots["SBOM"]["roots"] = ["example.com/app", 7]
+        with self.assertRaisesRegex(GoSymbolReachabilityError, "roots"):
+            parse_govulncheck_symbol_stream("\n".join(
+                json.dumps(message) for message in [self._config(), invalid_roots]
+            ))
 
     def test_parser_rejects_wrong_or_missing_scan_semantics(self) -> None:
         wrong_protocol = json.dumps({
@@ -156,14 +213,7 @@ class GoSymbolReachabilityTests(unittest.TestCase):
             parse_govulncheck_symbol_stream(remote)
 
         stream = "\n".join([
-            json.dumps({
-                "config": {
-                    "protocol_version": GOVULNCHECK_PROTOCOL_VERSION,
-                    "db": "file:///tmp/vulndb",
-                    "scan_level": "symbol",
-                    "scan_mode": "source",
-                }
-            }),
+            json.dumps(self._config()),
             json.dumps({"progress": {"message": "x"}, "finding": {"osv": "GO-1", "trace": []}}),
         ])
         with self.assertRaisesRegex(GoSymbolReachabilityError, "exactly one"):
