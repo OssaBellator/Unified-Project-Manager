@@ -9,6 +9,7 @@ from pathlib import Path
 from .cache_entrypoint import dispatch_cache_command
 from .control_entrypoint import dispatch_control_command
 from .discovery import discover
+from .fleet_provider_entrypoint import dispatch_fleet_provider_command
 from .graph_entrypoint import dispatch_graph_command
 from .impact_entrypoint import dispatch_impact_command
 from .impact_provider_entrypoint import dispatch_impact_provider_command
@@ -277,6 +278,9 @@ def main(argv: list[str] | None = None) -> int:
     sbom_provider_result = dispatch_sbom_provider_command(arguments)
     if sbom_provider_result is not None:
         return sbom_provider_result
+    fleet_provider_result = dispatch_fleet_provider_command(arguments)
+    if fleet_provider_result is not None:
+        return fleet_provider_result
     native_result = dispatch_native_command(arguments)
     if native_result is not None:
         return native_result
