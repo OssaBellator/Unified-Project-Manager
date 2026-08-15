@@ -6,6 +6,7 @@ export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 for test_file in \
   tests/test_yarn_graph.py \
+  tests/test_yarn_execution_compat.py \
   tests/test_yarn_impact.py \
   tests/test_yarn_provider_entrypoint.py \
   tests/test_yarn_why_impact_entrypoint.py \
