@@ -7,6 +7,8 @@ from .cargo_graph import CargoGraphPlan, cargo_provider_component_keys
 from .models import ProjectGraph
 from .npm_graph import NpmGraphPlan, npm_provider_component_keys
 from .pnpm_graph import PnpmGraphPlan, pnpm_provider_component_keys
+from .python_lock_graph import PythonLockGraphPlan
+from .python_lock_provider import python_lock_owned_component_keys
 from .uv_graph import UvGraphPlan, uv_provider_component_keys
 from .yarn_graph import YarnGraphPlan, yarn_provider_component_keys
 
@@ -38,21 +40,26 @@ def provider_owned_component_keys(
     yarn_plans: Iterable[YarnGraphPlan] = (),
     cargo_plans: Iterable[CargoGraphPlan] = (),
     uv_plans: Iterable[UvGraphPlan] = (),
+    python_lock_plans: Iterable[PythonLockGraphPlan] = (),
 ) -> set[str]:
     """Return discovered component keys served by non-Go relationship providers.
 
     Workspace-aware providers may serve more components than the provider plan's
     root component. This helper is deliberately plan-based so CLI skip accounting,
-    status coverage, and selector promotion share one ownership truth.
+    status coverage, and selector promotion share one ownership truth. Structured
+    Poetry/PDM providers are component-owned but use the same plan-derived path so
+    public routing and status cannot disagree about coverage.
     """
     npm = tuple(npm_plans)
     pnpm = tuple(pnpm_plans)
     yarn = tuple(yarn_plans)
     cargo = tuple(cargo_plans)
     uv = tuple(uv_plans)
+    python_lock = tuple(python_lock_plans)
     result = _npm_owned_component_keys(graph, npm)
     result.update(pnpm_provider_component_keys(graph, pnpm))
     result.update(yarn_provider_component_keys(graph, yarn))
     result.update(cargo_provider_component_keys(graph, cargo))
     result.update(uv_provider_component_keys(graph, uv))
+    result.update(python_lock_owned_component_keys(python_lock))
     return result
