@@ -13,6 +13,7 @@ from .models import Operation, ProjectGraph
 from .operations import OperationError, plan_operation, select_component
 
 PACKAGE_PLAN_SCHEMA_VERSION = 1
+PACKAGE_OPERATIONS = frozenset({"install", "sync", "add", "remove"})
 SUPPORTED_PACKAGE_MANAGERS = frozenset({"npm", "pnpm", "yarn", "bun", "uv", "poetry", "pdm", "pip", "cargo", "go"})
 
 _NODE_PACKAGE = re.compile(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*(?:@[a-z0-9*~^<>=][a-z0-9.*+~^<>=_-]*)?$", re.IGNORECASE)
@@ -34,6 +35,8 @@ def validate_executor_package_spec(manager: str, package: str, *, operation: Ope
     In particular, URL/VCS/local-path sources, whitespace, option-like package tokens, and
     manager-specific escape hatches are not representable in schemaVersion 1.
     """
+    if operation not in PACKAGE_OPERATIONS:
+        raise OperationError(f"Operation '{operation}' is not a package operation in schemaVersion {PACKAGE_PLAN_SCHEMA_VERSION}.")
     if manager not in SUPPORTED_PACKAGE_MANAGERS:
         raise OperationError(f"Package manager '{manager}' is not supported by the executor contract.")
     if not isinstance(package, str) or not package or len(package) > 512:
@@ -74,6 +77,8 @@ def package_execution_plan(
     dev: bool = False,
 ) -> dict[str, Any]:
     """Return the stable, authority-free package plan consumed by constrained executors."""
+    if operation not in PACKAGE_OPERATIONS:
+        raise OperationError(f"Operation '{operation}' is not a package operation in schemaVersion {PACKAGE_PLAN_SCHEMA_VERSION}.")
     component = select_component(graph, selector)
     if not component.manager:
         raise OperationError(f"Cannot {operation}: package manager is unknown for this component.")
@@ -103,7 +108,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="upm package-plan",
         description="Emit the strict schemaVersion=1 package-operation plan for a constrained executor.",
     )
-    parser.add_argument("operation", choices=("install", "sync", "add", "remove"))
+    parser.add_argument("operation", choices=tuple(sorted(PACKAGE_OPERATIONS)))
     parser.add_argument("packages", nargs="*")
     parser.add_argument("--path", default=".")
     parser.add_argument("--component")
