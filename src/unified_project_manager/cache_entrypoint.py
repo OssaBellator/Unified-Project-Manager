@@ -213,4 +213,8 @@ def dispatch_cache_command(arguments: list[str]) -> int | None:
         return cache_check_command(arguments[2:])
     if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] == "verify":
         return cache_maintenance_command(arguments[2:])
+    if len(arguments) >= 2 and arguments[0] == "cache" and arguments[1] in {"prune", "clean"}:
+        from .cache_maintenance_entrypoint import dispatch_cache_maintenance_command
+
+        return dispatch_cache_maintenance_command(arguments)
     return None
