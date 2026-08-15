@@ -77,15 +77,17 @@ class NativeGraphTests(unittest.TestCase):
             calls = []
 
             def run(argv, **kwargs):
-                calls.append(argv)
+                calls.append((argv, kwargs))
                 if "list" in argv:
                     return subprocess.CompletedProcess(argv, 0, _SELECTED, "")
                 return subprocess.CompletedProcess(argv, 0, _GRAPH, "")
 
             result = execute_native_graph(plan, run=run, which=lambda _name: "/toolchains/go")
             self.assertTrue(result.succeeded)
-            self.assertEqual(calls[0][0], "/toolchains/go")
-            self.assertEqual(calls[1][0], "/toolchains/go")
+            self.assertEqual(calls[0][0][0], "/toolchains/go")
+            self.assertEqual(calls[1][0][0], "/toolchains/go")
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], "off")
+            self.assertEqual(calls[1][1]["env"]["GOWORK"], "off")
             self.assertEqual(len(selected_inventory([result])), 4)
             self.assertGreater(len(result.edges), 0)
 
@@ -96,7 +98,7 @@ class NativeGraphTests(unittest.TestCase):
             calls = []
 
             def run(argv, **kwargs):
-                calls.append(argv)
+                calls.append((argv, kwargs))
                 return subprocess.CompletedProcess(
                     argv,
                     0,
@@ -108,7 +110,8 @@ class NativeGraphTests(unittest.TestCase):
             self.assertEqual(skips, [])
             self.assertTrue(results[0].needed)
             self.assertEqual(results[0].path, ("example.com/app/pkg", "example.com/a/pkg"))
-            self.assertEqual(calls[0], ["/toolchains/go", "mod", "why", "-m", "example.com/a"])
+            self.assertEqual(calls[0][0], ["/toolchains/go", "mod", "why", "-m", "example.com/a"])
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], "off")
 
 
 class NativeSbomTests(unittest.TestCase):
