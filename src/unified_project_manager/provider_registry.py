@@ -8,6 +8,8 @@ from .cargo_graph import cargo_provider_component_keys, plan_cargo_graphs
 from .models import Component, ProjectGraph
 from .npm_graph import npm_provider_component_keys, plan_npm_graphs
 from .pnpm_graph import plan_pnpm_graphs, pnpm_provider_component_keys
+from .python_lock_graph import plan_python_lock_graphs
+from .python_lock_provider import PYTHON_LOCK_SCOPE, python_lock_owned_component_keys
 from .uv_graph import plan_uv_graphs, uv_provider_component_keys
 from .yarn_graph import plan_yarn_graphs, yarn_provider_component_keys
 
@@ -146,7 +148,44 @@ UV_PROVIDER = NativeProviderCapability(
     mutation='none',
 )
 
-PROVIDERS = (GO_PROVIDER, NPM_PROVIDER, PNPM_PROVIDER, YARN_PROVIDER, CARGO_PROVIDER, UV_PROVIDER)
+POETRY_PROVIDER = NativeProviderCapability(
+    provider='poetry-lock',
+    ecosystem='python',
+    manager='poetry',
+    evidence='validated structured poetry.lock package/relationship graph with marker, optional, and ambiguity evidence preserved',
+    graph_scope=PYTHON_LOCK_SCOPE,
+    why_scope=PYTHON_LOCK_SCOPE,
+    impact_scope=PYTHON_LOCK_SCOPE,
+    source='authoritative poetry.lock parsed statically; unsupported relationship semantics fail closed',
+    execution=False,
+    network='none',
+    mutation='none',
+)
+
+PDM_PROVIDER = NativeProviderCapability(
+    provider='pdm-lock',
+    ecosystem='python',
+    manager='pdm',
+    evidence='validated structured pdm.lock package/relationship graph with PEP-508 markers and ambiguity evidence preserved',
+    graph_scope=PYTHON_LOCK_SCOPE,
+    why_scope=PYTHON_LOCK_SCOPE,
+    impact_scope=PYTHON_LOCK_SCOPE,
+    source='authoritative pdm.lock parsed statically; unsupported relationship semantics fail closed',
+    execution=False,
+    network='none',
+    mutation='none',
+)
+
+PROVIDERS = (
+    GO_PROVIDER,
+    NPM_PROVIDER,
+    PNPM_PROVIDER,
+    YARN_PROVIDER,
+    CARGO_PROVIDER,
+    UV_PROVIDER,
+    POETRY_PROVIDER,
+    PDM_PROVIDER,
+)
 
 
 def _declared_yarn_berry(component: Component) -> bool:
@@ -182,10 +221,18 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
         if 'uv.lock' not in component.lockfiles:
             return None, 'uv relationship graph requires uv.lock at the authoritative project/workspace root'
         return UV_PROVIDER, None
+    if component.ecosystem == 'python' and component.manager == 'poetry':
+        if 'poetry.lock' not in component.lockfiles:
+            return None, 'Poetry structured relationship graph requires poetry.lock at the authoritative project root'
+        return POETRY_PROVIDER, None
+    if component.ecosystem == 'python' and component.manager == 'pdm':
+        if 'pdm.lock' not in component.lockfiles:
+            return None, 'PDM structured relationship graph requires pdm.lock at the authoritative project root'
+        return PDM_PROVIDER, None
     return None, 'no authoritative native relationship provider is configured for this component'
 
 
-def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str], set[str], set[str]]:
+def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str], set[str], set[str], set[str]]:
     try:
         npm_plans = plan_npm_graphs(graph)
         npm_owned = npm_provider_component_keys(graph, npm_plans)
@@ -211,11 +258,16 @@ def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str]
         uv_owned = uv_provider_component_keys(graph, uv_plans)
     except ValueError:
         uv_owned = set()
-    return npm_owned, pnpm_owned, yarn_owned, cargo_owned, uv_owned
+    try:
+        python_lock_plans = plan_python_lock_graphs(graph)
+        python_lock_owned = python_lock_owned_component_keys(python_lock_plans)
+    except ValueError:
+        python_lock_owned = set()
+    return npm_owned, pnpm_owned, yarn_owned, cargo_owned, uv_owned, python_lock_owned
 
 
 def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
-    npm_owned, pnpm_owned, yarn_owned, cargo_owned, uv_owned = _owned_components(graph)
+    npm_owned, pnpm_owned, yarn_owned, cargo_owned, uv_owned, python_lock_owned = _owned_components(graph)
     result: list[ProviderCoverage] = []
     for component in graph.components:
         key = component.key(graph.root)
@@ -230,6 +282,11 @@ def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
             provider, reason = CARGO_PROVIDER, None
         elif key in uv_owned:
             provider, reason = UV_PROVIDER, None
+        elif key in python_lock_owned:
+            if component.manager == 'poetry':
+                provider, reason = POETRY_PROVIDER, None
+            elif component.manager == 'pdm':
+                provider, reason = PDM_PROVIDER, None
         result.append(ProviderCoverage(
             component=key,
             ecosystem=component.ecosystem,
