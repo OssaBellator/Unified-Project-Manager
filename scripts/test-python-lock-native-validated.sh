@@ -16,6 +16,7 @@ for test_file in \
   tests/test_python_lock_sbom.py \
   tests/test_python_lock_sbom_uncertainty.py \
   tests/test_python_lock_native_inventory.py \
+  tests/test_python_lock_security_impact.py \
   tests/test_python_lock_public_provider.py
  do
   python3 "$ROOT/$test_file"
