@@ -203,6 +203,10 @@ def cache_provenance_command(argv: list[str]) -> int:
             )
             if not manager["measurement_consistent"]:
                 print("  x Attributed bytes exceed the measured cache total; observation is inconsistent.")
+            if not manager.get("identity_consistent", True):
+                for conflict in manager.get("identity_conflicts", []):
+                    identities = ", ".join(conflict.get("identities", []))
+                    print(f"  x Physical identity conflict at {conflict.get('path')}: {identities}")
         for failure in report["provider_failures"]:
             print(
                 f"x {failure['manager']} {failure['project']} "
