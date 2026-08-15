@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .discovery import discover
 from .native_exec import NativeExecError, execute_native_exec, plan_native_exec
+from .policy import PolicyError, evaluate_policy
 from .status import project_status
 
 
@@ -29,6 +30,14 @@ def _exec_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-verify", action="store_true", help="Skip post-command UPM doctor verification")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("arguments", nargs=argparse.REMAINDER, help="Arguments passed to the authoritative native manager")
+    return parser
+
+
+def _policy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="upm policy", description="Evaluate cross-ecosystem project policy from upm.toml")
+    parser.add_argument("path", nargs="?", default=".")
+    parser.add_argument("--deep", action="store_true", help="Use deep installed-state doctor findings for warning budgets")
+    parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -88,6 +97,30 @@ def exec_command(argv: list[str]) -> int:
     return 1 if result.verification and result.verification.errors else 0
 
 
+def policy_command(argv: list[str]) -> int:
+    args = _policy_parser().parse_args(argv)
+    try:
+        root = _existing_root(args.path)
+        report = evaluate_policy(discover(root), deep=args.deep)
+    except (FileNotFoundError, NotADirectoryError, OSError, PolicyError, ValueError) as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+
+    if args.as_json:
+        print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    elif report.passed:
+        print("Policy: passed")
+    else:
+        print(f"Policy: {len(report.violations)} violation(s)")
+        for violation in report.violations:
+            location = f" [{violation.component}]" if violation.component else ""
+            print(f"x {violation.code}{location}: {violation.message}")
+    return 0 if report.passed else 1
+
+
 def status_command(argv: list[str]) -> int:
     args = _status_parser().parse_args(argv)
     try:
@@ -137,4 +170,6 @@ def dispatch_control_command(arguments: list[str]) -> int | None:
         return exec_command(arguments[1:])
     if arguments[0] == "status":
         return status_command(arguments[1:])
+    if arguments[0] == "policy":
+        return policy_command(arguments[1:])
     return None
