@@ -12,6 +12,7 @@ for test_file in \
   tests/test_init_receipt_entrypoint.py \
   tests/test_workspace_sync_receipts.py \
   tests/test_receipt_post_verification.py \
+  tests/test_receipt_entrypoint.py \
   tests/test_public_provider_integration.py \
   tests/test_fleet_provider_entrypoint.py \
   tests/test_fleet_status_entrypoint.py \
