@@ -199,6 +199,10 @@ def _component_for_plan(graph: ProjectGraph, plan: PythonLockGraphPlan) -> Compo
     )
 
 
+def _scope_is_optional(scope: str) -> bool:
+    return scope == "optional" or scope.startswith("optional:")
+
+
 def plan_python_lock_graphs(graph: ProjectGraph, selector: str | None = None) -> list[PythonLockGraphPlan]:
     candidates: list[tuple[Component, Path]] = []
     for component in graph.components:
@@ -290,7 +294,13 @@ def execute_python_lock_graph(graph: ProjectGraph, plan: PythonLockGraphPlan) ->
 
     project_root = f"project:{plan.component}"
     for dependency in component.dependencies:
-        add_reference(project_root, dependency.name, dependency.requirement, None, dependency.scope == "optional")
+        add_reference(
+            project_root,
+            dependency.name,
+            dependency.requirement,
+            None,
+            _scope_is_optional(dependency.scope),
+        )
 
     packages.sort(key=lambda item: (normalize_python_name(item.name), item.version, item.package_id))
     edges.sort(key=lambda item: (
