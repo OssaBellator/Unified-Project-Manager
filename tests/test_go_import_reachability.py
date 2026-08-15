@@ -13,17 +13,26 @@ class GoImportReachabilityTests(unittest.TestCase):
     def _graph(self, root: Path) -> ProjectGraph:
         return ProjectGraph(root=root, components=[])
 
-    def _impact(self, advisory: str, *, component: str = ".:go", module: str = "example.com/dep") -> dict:
+    def _impact(
+        self,
+        advisory: str,
+        *,
+        component: str = ".:go",
+        module: str = "example.com/dep",
+        effective_module: str | None = None,
+        package: str | None = None,
+    ) -> dict:
+        effective = effective_module or module
         return {
             "advisory_id": advisory,
             "ecosystem": "Go",
-            "package": module,
+            "package": package or effective,
             "version": "v1.2.3",
             "provider": "go-modules",
             "scope": "module-requirement",
             "component": component,
             "paths": [["example.com/app", module]],
-            "evidence": {"module": module, "effective_name": module},
+            "evidence": {"module": module, "effective_name": effective},
         }
 
     def test_reachable_import_path_is_separate_from_build_runtime_and_exploitability(self) -> None:
@@ -45,6 +54,10 @@ class GoImportReachabilityTests(unittest.TestCase):
             data = rows[0].to_dict()
             self.assertEqual(data["state"], "package-import-reachable")
             self.assertEqual(data["scope"], "package-import-graph")
+            self.assertEqual(data["module"], "example.com/dep")
+            self.assertEqual(data["queried_module"], "example.com/dep")
+            self.assertEqual(data["effective_module"], "example.com/dep")
+            self.assertFalse(data["replacement_active"])
             self.assertEqual(data["import_path"], ["example.com/app/pkg", "example.com/dep/subpkg"])
             self.assertEqual(data["dependency_paths"], [["example.com/app", "example.com/dep"]])
             self.assertEqual(data["build_constraints"], "any-tags")
@@ -55,6 +68,39 @@ class GoImportReachabilityTests(unittest.TestCase):
             self.assertTrue(data["test_imports_may_contribute"])
             self.assertFalse(data["persisted"])
             self.assertIn("any-build-tag", data["interpretation"])
+
+    def test_replacement_queries_logical_required_module_and_retains_effective_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = self._graph(Path(temporary))
+            queried: list[str] = []
+
+            def query(_graph, module, selector=None):
+                queried.append(module)
+                return [NativeWhyResult(
+                    ".:go", "go", module, True,
+                    ("example.com/app/pkg", "example.com/original/subpkg"),
+                    0,
+                )], []
+
+            row = collect_go_import_reachability(
+                graph,
+                [self._impact(
+                    "GO-REPLACE",
+                    module="example.com/original",
+                    effective_module="example.com/fork",
+                    package="example.com/fork",
+                )],
+                query=query,
+            )[0]
+            data = row.to_dict()
+
+            self.assertEqual(queried, ["example.com/original"])
+            self.assertEqual(data["package"], "example.com/fork")
+            self.assertEqual(data["module"], "example.com/original")
+            self.assertEqual(data["queried_module"], "example.com/original")
+            self.assertEqual(data["effective_module"], "example.com/fork")
+            self.assertTrue(data["replacement_active"])
+            self.assertEqual(data["state"], "package-import-reachable")
 
     def test_not_import_reachable_is_an_explicit_successful_negative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
