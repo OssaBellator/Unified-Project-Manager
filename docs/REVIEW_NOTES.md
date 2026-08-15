@@ -23,18 +23,19 @@ The Berry provider uses exact descriptor/locator resolution identity and preserv
 
 SBOM/advisory identity is additionally scoped to locators reachable from active workspace/project roots. A stored Yarn package record that is not reachable from a workspace root is not promoted into CycloneDX/SPDX or advisory scan inventory merely because `yarn info --all --recursive` returned it.
 
-### Narrow compatibility cleanup still open
+### Compatibility cleanup resolved
 
-`yarn_graph.py` currently also sets a hardened-mode environment override. That setting is not required for the provider's safety contract and may be a compatibility liability for older Berry runtimes if the setting name is not recognized there.
+The provider no longer forces `YARN_ENABLE_HARDENED_MODE`. Hardened mode was not part of the provider safety contract and forcing that configuration name could make otherwise-supported older Berry runtimes fail before graph reconstruction.
 
-Preferred cleanup:
+The required fail-closed controls remain unchanged: Berry network access is disabled, install state is redirected outside the project, telemetry is suppressed, and the cache is immutable. A runtime that cannot reconstruct the graph under those constraints still fails explicitly.
 
-1. remove the hardened-mode override;
-2. retain Berry network refusal, temporary install state, telemetry suppression, and immutable cache;
-3. let a runtime that cannot reconstruct the graph under those offline constraints fail explicitly;
-4. update the focused Yarn execution test and `NATIVE_PROVIDERS.md` wording at the same time.
+A focused regression is available through:
 
-This is a compatibility cleanup, not a reason to relax the offline fail-closed policy.
+```sh
+sh ./scripts/test-yarn-execution-compat.sh
+```
+
+and the same test is included in `scripts/test-yarn-native.sh`.
 
 ## Structured Poetry/PDM provider: implemented below the public line
 
@@ -82,12 +83,13 @@ sh ./scripts/check-all-local-latest.sh
 Focused provider drivers include:
 
 ```sh
+sh ./scripts/test-yarn-execution-compat.sh
 sh ./scripts/test-yarn-native.sh
 sh ./scripts/test-native-security.sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
-The current execution environment cannot materialize the entire private feature branch as a local checkout, so the latest full branch has not been executed end-to-end here. Keep review/test claims conservative until the branch is run from a normal local clone.
+This execution environment still cannot materialize the entire private feature branch as one local checkout, so the latest full branch has not been executed end-to-end here. Focused local/reconstructed validation has covered the Yarn compatibility execution boundary in addition to the previously documented provider slices. Keep full-suite claims conservative until the branch is run from a normal local clone.
 
 ## Merge hygiene
 
