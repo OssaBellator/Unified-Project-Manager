@@ -58,14 +58,41 @@ class Component:
 
 
 @dataclass
+class Workspace:
+    ecosystem: str
+    path: Path
+    manager: str | None
+    manifests: list[str] = field(default_factory=list)
+    lockfiles: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def key(self, root: Path) -> str:
+        relative = self.path.relative_to(root)
+        location = "." if str(relative) == "." else relative.as_posix()
+        return f"{location}:{self.ecosystem}-workspace"
+
+    def relative_path(self, root: Path) -> str:
+        relative = self.path.relative_to(root)
+        return "." if str(relative) == "." else relative.as_posix()
+
+    def to_dict(self, root: Path) -> dict[str, Any]:
+        data = asdict(self)
+        data["path"] = self.relative_path(root)
+        data["key"] = self.key(root)
+        return data
+
+
+@dataclass
 class ProjectGraph:
     root: Path
     components: list[Component] = field(default_factory=list)
+    workspaces: list[Workspace] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "root": str(self.root),
             "components": [component.to_dict(self.root) for component in self.components],
+            "workspaces": [workspace.to_dict(self.root) for workspace in self.workspaces],
         }
 
 
