@@ -107,6 +107,8 @@ class CacheProvenanceTests(unittest.TestCase):
             self.assertEqual(managers["go"]["total_bytes"], 20)
             self.assertEqual(managers["go"]["attributed_bytes"], 15)
             self.assertEqual(managers["go"]["unattributed_bytes"], 5)
+            self.assertTrue(managers["go"]["identity_consistent"])
+            self.assertEqual(managers["go"]["identity_conflicts"], [])
             self.assertEqual(
                 {group["cache_kind"] for group in managers["go"]["groups"]},
                 {"module-source", "download-zip"},
@@ -118,6 +120,7 @@ class CacheProvenanceTests(unittest.TestCase):
             self.assertEqual(cargo["total_bytes"], cargo_attributed + 4)
             self.assertEqual(cargo["attributed_bytes"], cargo_attributed)
             self.assertEqual(cargo["unattributed_bytes"], 4)
+            self.assertTrue(cargo["identity_consistent"])
             self.assertEqual({group["cache_kind"] for group in cargo["groups"]}, {"registry-source"})
             self.assertTrue(all(not group["reclaimable"] for group in cargo["groups"]))
 
@@ -180,25 +183,73 @@ class CacheProvenanceTests(unittest.TestCase):
             (cargo_home / "registry").mkdir(parents=True)
             (cargo_home / "git").mkdir(parents=True)
 
-            with patch("unified_project_manager.cache_provenance.execute_cargo_graph") as execute:
-                report = collect_cache_provenance(
-                    roots=[project],
-                    managers=("cargo",),
-                    closed_universe=True,
-                    storage_probe=lambda *, managers: (
-                        [
-                            GlobalStorageEntry("cargo", "registry-cache", str(cargo_home / "registry"), 0, 0),
-                            GlobalStorageEntry("cargo", "git-cache", str(cargo_home / "git"), 0, 0),
-                        ],
-                        [],
-                    ),
-                )
+            report = collect_cache_provenance(
+                roots=[project],
+                managers=("cargo",),
+                closed_universe=True,
+                storage_probe=lambda *, managers: (
+                    [
+                        GlobalStorageEntry("cargo", "registry-cache", str(cargo_home / "registry"), 0, 0),
+                        GlobalStorageEntry("cargo", "git-cache", str(cargo_home / "git"), 0, 0),
+                    ],
+                    [],
+                ),
+            )
 
-            execute.assert_not_called()
             self.assertTrue(report["project_universe"]["closed"])
             self.assertFalse(report["observation_complete"])
             self.assertEqual(len(report["provider_skips"]), 1)
             self.assertIn("locked Cargo provider plan", report["provider_skips"][0]["reason"])
+            self.assertFalse(report["reclaimable"])
+
+    def test_same_physical_path_with_conflicting_go_identities_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            one = root / "one"
+            two = root / "two"
+            for project in (one, two):
+                project.mkdir()
+                (project / "go.mod").write_text(
+                    f"module example.com/{project.name}\ngo 1.24\n", encoding="utf-8"
+                )
+            gomodcache = root / "gomodcache"
+            shared = gomodcache / "example.com" / "shared@v1.0.0"
+            shared.mkdir(parents=True)
+            (shared / "source.go").write_bytes(b"x" * 10)
+
+            def execute_go(plan):
+                logical_name = "example.com/foo" if plan.cwd == one else "example.com/bar"
+                return NativeGraphResult(
+                    plan,
+                    [NativeModule(
+                        component=plan.component,
+                        name=logical_name,
+                        version="v1.0.0",
+                        directory=str(shared),
+                    )],
+                    [],
+                    0,
+                )
+
+            report = collect_cache_provenance(
+                roots=[one, two],
+                managers=("go",),
+                closed_universe=True,
+                storage_probe=lambda *, managers: (
+                    [GlobalStorageEntry("go", "module-cache", str(gomodcache), 10, 1)], []
+                ),
+                execute_go=execute_go,
+            )
+
+            go = report["managers"][0]
+            self.assertTrue(go["measurement_consistent"])
+            self.assertFalse(go["identity_consistent"])
+            self.assertEqual(len(go["identity_conflicts"]), 1)
+            self.assertEqual(
+                set(go["identity_conflicts"][0]["identities"]),
+                {"pkg:golang/example.com/foo@v1.0.0", "pkg:golang/example.com/bar@v1.0.0"},
+            )
+            self.assertFalse(report["observation_complete"])
             self.assertFalse(report["reclaimable"])
 
     def test_public_cli_routes_json_without_reclaim_claim(self) -> None:
