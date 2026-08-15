@@ -8,7 +8,7 @@ from .base import Adapter
 
 _DIRECTIVE = re.compile(r"^\s*(module|go|toolchain)\s+(.+?)\s*$")
 _REQUIRE = re.compile(r"^\s*([^\s]+)\s+(v[^\s]+)(?:\s+//\s*indirect)?\s*$")
-_SUM = re.compile(r"^([^\s]+)\s+(v[^\s]+)(?:/go\.mod)?\s+h1:[A-Za-z0-9+/=]+\s*$")
+_SUM = re.compile(r"^([^\s]+)\s+(v[^\s/]+)(?:/go\.mod)?\s+h1:[A-Za-z0-9+/=]+\s*$")
 
 
 class GoAdapter(Adapter):
