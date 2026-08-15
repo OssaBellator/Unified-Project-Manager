@@ -115,6 +115,45 @@ child = "^2"
             self.assertTrue(root_edge.optional)
             self.assertFalse(report.packages[0].unconditional)
 
+    def test_poetry_multi_constraint_direct_dependency_retains_each_conditional_route(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text('''
+[tool.poetry]
+name = "app"
+version = "0.1.0"
+[tool.poetry.dependencies]
+python = ">=3.11"
+child = [
+  { version = "^1", markers = "python_version < '3.12'" },
+  { version = "^2", markers = "python_version >= '3.12'" },
+]
+''', encoding="utf-8")
+            self._write_lock(root)
+
+            graph, result, report = self._report(root, "child")
+
+            dependencies = [item for item in graph.components[0].dependencies if item.name == "child"]
+            self.assertEqual(len(dependencies), 2)
+            self.assertEqual(
+                {dependency.requirement for dependency in dependencies},
+                {
+                    "^1; python_version < '3.12'",
+                    "^2; python_version >= '3.12'",
+                },
+            )
+            root_edges = [edge for edge in result.edges if edge.source_id.startswith("project:")]
+            self.assertEqual(len(root_edges), 2)
+            self.assertEqual(len(report.packages[0].paths), 2)
+            self.assertFalse(report.packages[0].unconditional)
+            self.assertEqual(
+                {path.markers for path in report.packages[0].paths},
+                {
+                    ("python_version < '3.12'",),
+                    ("python_version >= '3.12'",),
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
