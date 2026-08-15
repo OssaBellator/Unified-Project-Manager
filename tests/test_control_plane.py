@@ -136,5 +136,27 @@ class PolicyCliTests(unittest.TestCase):
             self.assertIn("Policy: passed", output.getvalue())
 
 
+class FleetPolicyCliTests(unittest.TestCase):
+    def test_projects_policy_cli_json(self) -> None:
+        from unified_project_manager.registry import register_project
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            registry = root / "projects.json"
+            project = root / "app"
+            project.mkdir()
+            (project / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (project / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+            (project / "upm.toml").write_text('[policy]\ndenied_managers=["npm"]\n', encoding="utf-8")
+            register_project(project, registry)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["projects", "policy", "--registry", str(registry), "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertEqual(data["summary"]["failed"], 1)
+            self.assertFalse(data["projects"][0]["passed"])
+
+
 if __name__ == "__main__":
     unittest.main()
