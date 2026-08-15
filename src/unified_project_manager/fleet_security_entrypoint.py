@@ -10,6 +10,7 @@ from .audit_evidence import AuditEvidenceError, build_audit_evidence, write_audi
 from .discovery import discover
 from .registry import RegistryError, registered_paths
 from .security import SecurityScanError, SecurityScanResult, execute_security_scan, plan_security_scan
+from .security_impact import correlate_advisory_impact
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -18,7 +19,16 @@ def _parser() -> argparse.ArgumentParser:
         description="Preview or execute advisory scans across explicitly registered projects",
     )
     parser.add_argument("--registry", help="Override the user-level project registry")
-    parser.add_argument("--native-go", action="store_true", help="Use authoritative offline selected Go modules during applied scans")
+    parser.add_argument(
+        "--native",
+        action="store_true",
+        help="Use authoritative provider-backed local/offline inventory during applied scans",
+    )
+    parser.add_argument(
+        "--native-go",
+        action="store_true",
+        help="Compatibility mode: use authoritative offline selected Go modules during applied scans",
+    )
     parser.add_argument("--apply", action="store_true", help="Execute OSV-Scanner; preview is the default because scanning may use the network")
     parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
@@ -50,6 +60,25 @@ def _vulnerability_ids(result: SecurityScanResult) -> set[str]:
     return ids
 
 
+def _dependency_impacts(result: SecurityScanResult) -> tuple[list[dict[str, Any]], str | None]:
+    if not isinstance(result.report, dict) or result.native_inventory is None:
+        return [], None
+    inventory = result.native_inventory
+    try:
+        impacts = correlate_advisory_impact(
+            result.report,
+            go_results=inventory.go_results,
+            npm_results=inventory.npm_graph_results,
+            pnpm_results=inventory.pnpm_graph_results,
+            yarn_results=inventory.yarn_results,
+            cargo_results=inventory.cargo_results,
+            uv_results=inventory.uv_results,
+        )
+    except ValueError as exc:
+        return [], str(exc)
+    return [impact.to_dict() for impact in impacts], None
+
+
 def fleet_audit_command(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -70,7 +99,11 @@ def fleet_audit_command(argv: list[str]) -> int:
             continue
         try:
             graph = discover(root)
-            plan = plan_security_scan(graph, native_go=args.native_go)
+            plan = plan_security_scan(
+                graph,
+                native_go=args.native_go,
+                native_providers=args.native,
+            )
         except (OSError, ValueError, SecurityScanError) as exc:
             planning_failures.append({"project": str(root), "error": str(exc)})
             continue
@@ -87,7 +120,8 @@ def fleet_audit_command(argv: list[str]) -> int:
         payload = {
             "executed": False,
             "network_may_be_used": True,
-            "native_go_inventory_network": "offline" if args.native_go else "not-used",
+            "provider_inventory_network": False if args.native else None,
+            "native_go_inventory_network": "offline" if args.native_go and not args.native else "not-used",
             "projects": projects,
             "missing": missing,
             "planning_failures": planning_failures,
@@ -96,11 +130,14 @@ def fleet_audit_command(argv: list[str]) -> int:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             for item in projects:
-                print(f"{item['project']}: {item['plan']['package_count']} package observation(s)")
+                mode = item["plan"]["inventory_mode"]
+                print(f"{item['project']}: {item['plan']['package_count']} package observation(s) [{mode}]")
             for item in planning_failures:
                 print(f"- {item['project']}: skipped ({item['error']})")
             if missing:
                 print(f"Skipped {len(missing)} missing registered project(s).")
+            if args.native:
+                print("Native provider inventory is local/offline and is not executed during preview.")
             print("Preview only. OSV-Scanner may use the network; re-run with --apply to execute and persist valid scan evidence.")
         return 0
 
@@ -111,7 +148,23 @@ def fleet_audit_command(argv: list[str]) -> int:
     clean_projects = 0
 
     for root, graph, plan in planned:
-        result = execute_security_scan(graph, plan)
+        try:
+            result = execute_security_scan(graph, plan)
+        except SecurityScanError as exc:
+            scanner_failures += 1
+            project_results.append({
+                "project": str(root),
+                "result": None,
+                "inventory_error": str(exc),
+                "dependency_impacts": [],
+                "dependency_impact_warning": None,
+                "evidence": None,
+                "evidence_path": None,
+                "evidence_error": None,
+            })
+            continue
+
+        dependency_impacts, correlation_warning = _dependency_impacts(result)
         evidence = None
         evidence_path = None
         evidence_error = None
@@ -121,15 +174,12 @@ def fleet_audit_command(argv: list[str]) -> int:
                 vulnerable_projects += 1
             else:
                 clean_projects += 1
-            # Real scanner execution retains the exact BOM. Older test doubles or
-            # third-party integrations may not; do not turn a valid scan into a
-            # scanner failure solely because optional persistence evidence is absent.
             if result.bom is not None:
                 try:
                     evidence = build_audit_evidence(
                         result.bom,
                         result,
-                        inventory_mode="native-go" if args.native_go else "static-resolved",
+                        inventory_mode=plan.inventory_mode,
                     )
                     evidence_path = write_audit_evidence(root, evidence)
                 except (AuditEvidenceError, OSError, ValueError) as exc:
@@ -140,6 +190,9 @@ def fleet_audit_command(argv: list[str]) -> int:
         project_results.append({
             "project": str(root),
             "result": result.to_dict(),
+            "inventory_error": None,
+            "dependency_impacts": dependency_impacts,
+            "dependency_impact_warning": correlation_warning,
             "evidence": evidence.to_dict() if evidence else None,
             "evidence_path": str(evidence_path) if evidence_path else None,
             "evidence_error": evidence_error,
@@ -167,12 +220,24 @@ def fleet_audit_command(argv: list[str]) -> int:
     else:
         for item in project_results:
             result = item["result"]
+            if result is None:
+                print(f"x {item['project']}: native inventory failed ({item['inventory_error']})")
+                continue
             if not result["scanner_succeeded"]:
                 print(f"x {item['project']}: scanner failed ({result['stderr'] or result['returncode']})")
             elif result["vulnerable"]:
                 print(f"x {item['project']}: {result['summary']['vulnerabilities']} vulnerability ID(s)")
+                for impact in item["dependency_impacts"]:
+                    label = f"{impact['advisory_id']} {impact['package']}"
+                    if impact.get("version"):
+                        label += f"@{impact['version']}"
+                    print(f"    {label} [{impact['provider']}] {impact['component']}")
+                    for path in impact.get("paths", []):
+                        print("      dependency path: " + " -> ".join(path))
             else:
                 print(f"✓ {item['project']}: clean for scanned inventory")
+            if item["dependency_impact_warning"]:
+                print(f"    dependency-path correlation warning: {item['dependency_impact_warning']}")
             if item["evidence_path"]:
                 print(f"    evidence: {item['evidence_path']}")
             if item["evidence_error"]:
