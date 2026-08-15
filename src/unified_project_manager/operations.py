@@ -69,7 +69,7 @@ def _validate_component(component: Component, operation: Operation) -> None:
 
 
 def _require_lockfile(component: Component, operation: Operation) -> None:
-    if operation == "sync" and not component.lockfiles:
+    if operation == "sync" and component.manager != "go" and not component.lockfiles:
         raise OperationError(
             f"Cannot sync {component.ecosystem} component without a native lockfile; run install/lock with the native manager first."
         )
@@ -148,6 +148,15 @@ def _plan_argv(component: Component, operation: Operation, packages: tuple[str, 
         if operation == "sync": return ("cargo", "fetch", "--locked")
         if operation == "add": return ("cargo", "add", *(("--dev",) if dev else ()), *packages)
         return ("cargo", "remove", *packages)
+
+    if manager == "go":
+        if dev:
+            raise OperationError("Go modules do not have a native development-dependency scope for 'go get'.")
+        if operation in {"install", "sync"}:
+            return ("go", "mod", "download")
+        if operation == "add":
+            return ("go", "get", *packages)
+        return ("go", "get", *(f"{package}@none" for package in packages))
 
     raise OperationError(f"Package manager '{manager}' is not supported for delegated operations yet.")
 
