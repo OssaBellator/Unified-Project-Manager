@@ -10,6 +10,8 @@ Govulncheck source-symbol JSON includes a native SBOM message describing the sca
 
 - govulncheck protocol version;
 - scanner name/version where reported;
+- scan mode;
+- scan level;
 - local vulnerability DB URI and reported DB modification time;
 - Go version from config;
 - Go version from the native scan SBOM;
@@ -18,7 +20,9 @@ Govulncheck source-symbol JSON includes a native SBOM message describing the sca
 
 The result exposes a deterministic SHA-256 plus the normalized declaration.
 
-Module and root ordering do not affect the identity. Changing scanner version, database declaration, module build list, or roots does.
+Module and root ordering do not affect the identity. Changing scanner version, scan mode/level, database declaration, module build list, or roots does.
+
+Encoding `scan_mode=source` and `scan_level=symbol` directly in the declaration means the hash is self-describing; it does not rely only on the parser having enforced those semantics earlier in the pipeline.
 
 ## What the SHA does not mean
 
@@ -43,7 +47,7 @@ source_state_fingerprint = false
 build_configuration_fingerprint = false
 ```
 
-This identity can later associate a symbol report with the exact scanner-declared module/root inventory. It must not be reused as the future symbol-evidence freshness check.
+This identity can later associate a symbol report with the exact scanner-declared module/root inventory and scan semantics. It must not be reused as the future symbol-evidence freshness check.
 
 ## Scan SBOM trust boundary
 
@@ -71,6 +75,8 @@ Focused driver:
 sh ./scripts/test-go-symbol-scan-declaration.sh
 ```
 
-The dedicated identity tests cover deterministic ordering, sensitivity to scanner/DB/build-list changes, retained Go/DB metadata, explicit non-freshness semantics, and refusal when scan SBOM evidence is absent.
+The dedicated identity tests cover deterministic ordering, sensitivity to scanner/DB/scan-mode/scan-level/build-list changes, retained Go/DB metadata, explicit non-freshness semantics, and refusal when scan SBOM evidence is absent.
+
+Focused reconstructed validation remains **5/5** after adding scan mode/level to the identity.
 
 This primitive remains pre-public and does not add a CLI route, persisted evidence, or status freshness state.
