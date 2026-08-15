@@ -106,7 +106,7 @@ def impact_command(argv: list[str]) -> int:
             impacts.append({"provider": "uv-lock", "scope": "universal-lock-graph", **impact.to_dict()})
 
     impacts.sort(key=lambda item: (
-        str(item["provider"]), str(item["component"]), str(item.get("project", "")),
+        str(item["provider"]), str(item["component"]), str(item.get("workspace_project", "")),
         str(item.get("ref", "")), str(item.get("module", "")), str(item.get("package_id", "")),
     ))
     if args.as_json:
@@ -134,7 +134,7 @@ def impact_command(argv: list[str]) -> int:
                 print("  logical path: " + " -> ".join(impact["root_path"]))
             elif impact["provider"] == "pnpm-lock-tree":
                 version = f"@{impact['version']}" if impact.get("version") else ""
-                print(f"{impact['component']} [pnpm:{impact['project']}]: {impact['name']}{version}")
+                print(f"{impact['component']} [pnpm:{impact['workspace_project']}]: {impact['name']}{version}")
                 print("  logical path: " + " -> ".join(impact["root_path"]))
                 if impact.get("deduped"):
                     print("  pnpm marked this logical occurrence as deduped")
