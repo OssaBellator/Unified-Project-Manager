@@ -49,13 +49,16 @@ Implemented lower-level semantics include:
 - explicit duplicate-name ambiguity;
 - project-root dependency paths;
 - marker/optional-aware conditional reachability;
+- direct PEP 621 optional-group, Poetry optional-table, Poetry marker-table, and optional Poetry-group conditions preserved before graph construction;
 - reachable ambiguity reporting without fake paths;
+- a shared command-neutral query contract for future `why`, `impact`, and fleet impact routing;
 - registry-only PyPI PURL identity;
-- reachable-only SBOM inventory;
-- omission of conditional/ambiguous edges from unconditional SBOM relationships;
+- reachable-only SBOM inventory with ambiguous candidates retained as possible scan inventory;
+- separate conditional, ambiguous, unresolved, and non-registry omission semantics;
+- conservative CycloneDX and SPDX relationships;
 - contract validation that rejects unsupported dependency shapes or record-level package conditions.
 
-`python_lock_provider.py` now adds the pre-promotion orchestration boundary:
+`python_lock_provider.py` provides the pre-promotion orchestration boundary:
 
 - provider ids `poetry-lock` and `pdm-lock`;
 - shared `structured-lock-dependency-graph` scope;
@@ -63,13 +66,15 @@ Implemented lower-level semantics include:
 - validated execution as the high-level provider path;
 - suppression of broad adapter `resolved_packages` for provider-owned components before a future native SBOM merge, preventing orphan/ambiguous static lock records from leaking back into certainty-aware inventory.
 
-Promotion remains gated on routing graph, why, impact, fleet impact, SBOM, audit, and provider status together. Until then, `provider_registry` should not claim Poetry/PDM native relationship coverage.
+`python_lock_queries.py` is deliberately command-neutral. Future project `why`, project `impact`, and fleet impact integration should serialize the same certainty-aware query result rather than implementing three subtly different marker/optional/ambiguity policies.
+
+Promotion remains gated on routing graph, why, impact, fleet impact, SBOM, audit, and provider status together. Until then, `provider_registry` must not claim Poetry/PDM native relationship coverage.
 
 See `PYTHON_LOCK_PROVIDERS.md`.
 
 ## Exact advisory evidence contract
 
-Project and fleet advisory flows now share the same evidence rule:
+Project and fleet advisory flows share the same evidence rule:
 
 - provider-backed inventory is constructed once for an applied native scan;
 - the exact CycloneDX document given to OSV-Scanner is retained on the result;
@@ -78,6 +83,8 @@ Project and fleet advisory flows now share the same evidence rule:
 - successful scanner output without the exact scanned BOM is an evidence failure rather than a silent success;
 - fleet output distinguishes planning, native-inventory, scanner, and evidence failures;
 - ordinary status never reruns scanner/providers to manufacture freshness.
+
+This is the main remaining integration gate for Poetry/PDM promotion: structured-lock results must be retained alongside the exact scanned BOM so advisory-path correlation can reuse the same evidence rather than reconstructing a second graph after the scan.
 
 ## Local validation boundary
 
@@ -97,6 +104,9 @@ sh ./scripts/test-yarn-execution-compat.sh
 sh ./scripts/test-yarn-native.sh
 sh ./scripts/test-native-security.sh
 sh ./scripts/test-python-lock-provider-boundary.sh
+sh ./scripts/test-python-lock-direct-conditions.sh
+sh ./scripts/test-python-lock-query-contract.sh
+sh ./scripts/test-python-lock-sbom-uncertainty.sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
@@ -104,9 +114,12 @@ Focused reconstructed/local validation in this execution environment currently i
 
 - Yarn execution policy: **3 tests passed**;
 - Yarn refactored Berry 2.x compatibility boundary: **1 test passed**;
-- structured Python lock provider boundary: **3 tests passed**.
+- structured Python lock provider boundary: **3 tests passed**;
+- structured Python lock SBOM uncertainty: **5 focused scenarios passed**;
+- direct Python manifest-condition normalization: **4 focused scenarios passed**;
+- shared structured Python query contract: **3 focused scenarios passed**.
 
-This execution environment still cannot materialize the entire private feature branch as one local checkout, so the latest full branch has not been executed end-to-end here. Keep full-suite claims conservative until the branch is run from a normal local clone.
+The repository regression files contain additional assertions beyond those reconstructed slices. This execution environment still cannot materialize the entire private feature branch as one local checkout, so the latest full branch has not been executed end-to-end here. Keep whole-suite claims conservative until the branch is run from a normal local clone.
 
 ## Merge hygiene
 
