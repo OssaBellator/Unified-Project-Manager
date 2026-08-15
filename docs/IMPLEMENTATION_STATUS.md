@@ -14,7 +14,13 @@ No GitHub Actions workflows are used. Aggregate validation remains local:
 sh ./scripts/check-all-local-latest.sh
 ```
 
-That aggregate now includes the complete pre-public Go symbol validation stack; optional real-govulncheck checks skip unless their prerequisites already exist.
+On Windows PowerShell the full compile/unittest aggregate is available as:
+
+```powershell
+./scripts/check-all-local-latest.ps1
+```
+
+The Unix aggregate includes the complete pre-public Go symbol validation stack; optional real-govulncheck checks skip unless their prerequisites already exist. The PowerShell aggregate provides a GitHub-Actions-free full Python regression path for Windows checkouts.
 
 ## Public Go package-import reachability
 
@@ -123,13 +129,15 @@ GOTELEMETRY = off
 
 They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment.
 
-In this environment the remaining live blockers are:
+The Go-native fixture evidence above was produced with these remaining scanner prerequisites unmet:
 
 ```text
 govulncheck executable = absent
 Go executable = /usr/local/go/bin/go
 GOTELEMETRY = local
 ```
+
+The Windows full-suite runner does not install missing tools or change telemetry; real-Go/govulncheck regressions skip when those prerequisites are unavailable.
 
 ### Persistence/freshness still deferred
 
@@ -143,7 +151,7 @@ Public Go/Cargo provenance remains observation-only. Unattributed bytes do not i
 
 ## Focused validation state
 
-The full private branch cannot be materialized end-to-end in this constrained runtime. Focused evidence includes:
+The private branch is materialized locally and its full Python regression suite runs through the PowerShell aggregate. Ecosystem-native checks still remain prerequisite-gated. Focused evidence includes:
 
 - Poetry/PDM reachability: **5/5**;
 - all-provider fleet core: **4/4**;
@@ -164,7 +172,8 @@ The full private branch cannot be materialized end-to-end in this constrained ru
 - scan-declaration identity: **5/5**;
 - planned build-selection alignment: **6/6**;
 - real Go normalized source-observation command: successful on Go 1.23.2 with project snapshot unchanged;
-- optional real govulncheck execution/alignment: committed but not run here because prerequisites are not satisfied.
+- Windows PowerShell aggregate: **745 tests, 0 failures, 7 environment-dependent skips**;
+- optional real govulncheck execution/alignment: committed and prerequisite-gated.
 
 ## Important remaining gaps
 
@@ -174,7 +183,7 @@ The full private branch cannot be materialized end-to-end in this constrained ru
 4. only then define conservative persisted symbol freshness semantics;
 5. add runtime/data-flow or exploitability evidence only where ecosystem-native evidence supports it;
 6. deepen physical cache provenance only where manager-native identity supports it;
-7. run the full private branch from one materialized checkout when available;
+7. run the Unix aggregate in a local environment that has Python 3.11+ plus the relevant ecosystem-native tools;
 8. eventually implement SPDX 3.x as a dedicated model.
 
 ## Safety boundary

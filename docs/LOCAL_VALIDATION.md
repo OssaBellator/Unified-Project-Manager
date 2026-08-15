@@ -4,6 +4,8 @@ Unified Project Manager deliberately does not use GitHub Actions in this reposit
 
 ## Main entrypoints
 
+Unix-like hosts:
+
 ```sh
 sh ./scripts/check.sh
 sh ./scripts/test-integration.sh
@@ -18,7 +20,15 @@ sh ./scripts/test-go-symbol-prepublic-all.sh
 sh ./scripts/check-all-local-latest.sh
 ```
 
-`check-all-local-latest.sh` now includes the complete pre-public Go symbol stack. No command above invokes GitHub Actions.
+Windows PowerShell:
+
+```powershell
+./scripts/build.ps1
+./scripts/test.ps1
+./scripts/check-all-local-latest.ps1
+```
+
+`test.ps1` accepts optional test file names or paths, so focused regressions can run without a hosted CI service. `check-all-local-latest.sh` includes the complete pre-public Go symbol stack; the PowerShell aggregate compiles `src`/`tests` and runs the full standard-library unittest discovery suite. No command above invokes GitHub Actions.
 
 ## Public Go package-import reachability
 
@@ -96,7 +106,7 @@ Real scanner tests skip unless:
 
 They never install govulncheck or change telemetry. Before launching the scanner they also require planned package-pattern/tag/test alignment.
 
-Current live environment:
+The Go-native fixture evidence above was produced in an environment with:
 
 ```text
 govulncheck executable = absent
@@ -104,6 +114,8 @@ Go executable = /usr/local/go/bin/go
 Go version = 1.23.2
 GOTELEMETRY = local
 ```
+
+The Windows PowerShell aggregate is intentionally tool-tolerant: real-Go and real-govulncheck regressions skip when their prerequisites are absent rather than installing tools or changing telemetry.
 
 Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanner alignment is still necessary; local Go 1.23.2 observation is not treated as scanner-runtime proof.
 
@@ -128,6 +140,6 @@ Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanne
 - scan-declaration identity: **5/5**;
 - planned build-selection alignment: **6/6**;
 - normalized Go source-observation command: real Go 1.23.2 success with unchanged project snapshot;
-- optional real govulncheck execution/alignment: **committed but not run here** because prerequisites are not satisfied.
+- optional real govulncheck execution/alignment: **committed but prerequisite-gated**.
 
-The full private branch still cannot be materialized and executed end-to-end in this constrained runtime. Committed drivers are intended for a normal private checkout.
+Current Windows checkout validation: **745 tests run, 0 failures, 7 skips**. The skips are limited to unavailable Go/govulncheck prerequisites and Windows symlink-creation privilege, so they remain explicit environment gaps rather than hidden passes. The Linux sandbox available here lacks `python3`, so the Unix aggregate could only be checked through shell startup/line-ending handling, not executed end-to-end in that container.
