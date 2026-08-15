@@ -29,11 +29,59 @@ class GlobalStorageTests(unittest.TestCase):
                 calls.append(argv)
                 return subprocess.CompletedProcess(argv, 0, f"{mod}\n{build}\n", "")
 
-            entries, skips = global_cache_storage(run=run, which=lambda _name: "/toolchains/go")
+            entries, skips = global_cache_storage(managers=("go",), run=run, which=lambda _name: "/toolchains/go")
             self.assertEqual(skips, [])
             self.assertEqual(calls[0], ["/toolchains/go", "env", "GOMODCACHE", "GOCACHE"])
             self.assertEqual({entry.category: entry.bytes for entry in entries}, {"module-cache": 11, "build-cache": 13})
             self.assertEqual(global_storage_summary(entries)["bytes"], 24)
+
+    def test_native_store_providers_query_exact_manager_executables(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = {"npm": root / "npm", "pnpm": root / "pnpm", "uv": root / "uv"}
+            for index, path in enumerate(paths.values(), start=1):
+                path.mkdir()
+                (path / "data").write_bytes(b"x" * index)
+            calls = []
+
+            def which(name):
+                return f"/tools/{name}"
+
+            def run(argv, **kwargs):
+                calls.append(argv)
+                manager = Path(argv[0]).name
+                return subprocess.CompletedProcess(argv, 0, str(paths[manager]) + "\n", "")
+
+            entries, skips = global_cache_storage(managers=("npm", "pnpm", "uv"), run=run, which=which)
+            self.assertEqual(skips, [])
+            self.assertIn(["/tools/npm", "get", "cache"], calls)
+            self.assertIn(["/tools/pnpm", "store", "path"], calls)
+            self.assertIn(["/tools/uv", "cache", "dir"], calls)
+            by_manager = {entry.manager: entry for entry in entries}
+            self.assertEqual(by_manager["npm"].category, "package-cache")
+            self.assertEqual(by_manager["pnpm"].category, "content-store")
+            self.assertEqual(by_manager["uv"].category, "package-cache")
+            self.assertEqual(global_storage_summary(entries)["bytes"], 6)
+
+    def test_cargo_cache_uses_documented_cargo_home_registry_and_git_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cargo_home = root / "cargo"
+            registry = cargo_home / "registry"
+            git = cargo_home / "git"
+            registry.mkdir(parents=True); git.mkdir(parents=True)
+            (registry / "crate").write_bytes(b"r" * 5)
+            (git / "checkout").write_bytes(b"g" * 7)
+            with patch.dict(os.environ, {"CARGO_HOME": str(cargo_home)}):
+                entries, skips = global_cache_storage(managers=("cargo",), which=lambda _name: None)
+            self.assertEqual(skips, [])
+            self.assertEqual({entry.category: entry.bytes for entry in entries}, {"registry-cache": 5, "git-cache": 7})
+
+    def test_missing_native_manager_is_explicit_skip(self) -> None:
+        entries, skips = global_cache_storage(managers=("npm",), which=lambda _name: None)
+        self.assertEqual(entries, [])
+        self.assertEqual(skips[0].manager, "npm")
+        self.assertIn("not available", skips[0].reason)
 
     def test_shared_hardlink_across_cache_roots_is_counted_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -51,7 +99,7 @@ class GlobalStorageTests(unittest.TestCase):
             def run(argv, **kwargs):
                 return subprocess.CompletedProcess(argv, 0, f"{mod}\n{build}\n", "")
 
-            entries, _ = global_cache_storage(run=run, which=lambda _name: "/toolchains/go")
+            entries, _ = global_cache_storage(managers=("go",), run=run, which=lambda _name: "/toolchains/go")
             self.assertEqual(global_storage_summary(entries)["bytes"], 17)
 
     def test_cache_storage_cli_labels_measurement_non_reclaimable(self) -> None:
