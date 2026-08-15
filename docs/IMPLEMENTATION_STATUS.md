@@ -43,7 +43,7 @@ sh ./scripts/test-go-import-reachability.sh
 
 `--native` relationship analysis has eight public provider families:
 
-- **Go** — selected modules, module requirement graph, package-import `why`, replacements, module provenance; cache-only/offline by default through `GOPROXY=off`;
+- **Go** — selected modules, module requirement graph, package-import `why`, replacements, module provenance; component-scoped relationship execution is cache-only/offline and workspace-isolated through `GOPROXY=off` and `GOWORK=off`;
 - **npm** — workspace-aware lock-only logical dependency tree through npm plus native lockfile-only CycloneDX/SPDX provenance;
 - **pnpm** — workspace-aware lock-only logical dependency tree preserving alias/project/dedupe occurrence evidence plus native lockfile-only CycloneDX/SPDX provenance;
 - **Yarn Berry 2+** — exact descriptor/locator and virtual/workspace identity from native `yarn info`; network disabled, install state redirected, cache immutable, and reachable-only SBOM/advisory identity;
@@ -70,7 +70,7 @@ CycloneDX 1.7 and SPDX 2.3 are public formats. Registry PURLs are emitted only w
 
 Aggregate SBOMs represent mixed-project topology explicitly:
 
-- CycloneDX has one deterministic aggregate application root plus one application anchor per discovered UPM component;
+- CycloneDX has one deterministic aggregate `metadata.component` application root plus one application anchor per discovered UPM component;
 - SPDX has one aggregate `APPLICATION` package plus one `APPLICATION` package per component and aggregate `CONTAINS` relationships;
 - anchor identity and aggregate naming are clone-location-independent;
 - provider merges preserve the topology;
@@ -86,7 +86,7 @@ Advisory scanning is explicit because OSV scanning may use network access. Imple
 
 ### Go package-import reachability
 
-A stronger source/import layer is now public for Go as an explicit audit enrichment:
+A stronger source/import layer is public for Go as an explicit audit enrichment:
 
 ```sh
 upm audit . --native --go-import-reachability
@@ -97,7 +97,7 @@ upm projects audit --native --go-import-reachability --apply
 
 The flag requires full `--native` inventory so source evidence is queried only for vulnerable Go module impacts already correlated to the retained native scan inventory.
 
-The enrichment uses `go mod why -m` through UPM's `GOPROXY=off` wrapper and emits separate states:
+The enrichment uses component-scoped `go mod why -m` with both `GOPROXY=off` and `GOWORK=off` and emits separate states:
 
 - `package-import-reachable`;
 - `not-package-import-reachable`;
@@ -114,6 +114,8 @@ runtime_reachability = not-evaluated
 exploitability = not-established
 persisted = false
 ```
+
+Go's current `why` implementation sets the module loader's explicit-write guard, which suppresses automatic `go.mod` and `go.sum` updates. A real-tool local regression additionally verifies that an isolated `go mod why -m` query leaves both files byte-for-byte unchanged. UPM therefore treats this enrichment as project-state read-only.
 
 Preview never executes the import query. Applied queries are report-only and are not written into `.upm/audits/osv.json`; ordinary status does not replay them as durable evidence. Query failures do not invalidate independently valid OSV scan evidence.
 
@@ -166,7 +168,9 @@ Focused reconstructed/local validation completed for:
 - initial cache physical mapping (**5/5 reconstructed filesystem checks passed**);
 - additional Cargo physical-object checks for one-object multi-crate git checkout grouping and noncanonical shallow-checkout refusal;
 - cache provenance report semantics (**7/7 reconstructed checks passed**), plus separate identity-precision checks;
-- Go package-import reachability core (**6/6 reconstructed checks passed**) including any-build-tag evidence semantics, positive/negative results, query failure/skip, deduplication, and non-Go filtering.
+- Go package-import reachability core (**7/7 reconstructed checks passed**) including replacement-aware logical/effective identity, any-build-tag evidence semantics, positive/negative results, query failure/skip, deduplication, and non-Go filtering;
+- Go relationship environment isolation (**3/3 reconstructed checks passed**) for graph/why `GOPROXY=off` + `GOWORK=off` behavior and unrelated-environment preservation;
+- real local Go 1.23.2 `go mod why -m` project-state immutability (**1/1 isolated check passed**) with `go.mod` and `go.sum` unchanged.
 
 Project/fleet Go import-reachability CLI regressions are committed and included in the native-security/aggregate local scripts, but the full private checkout has not been executed end-to-end in this runtime.
 
