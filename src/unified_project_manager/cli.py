@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -11,10 +12,12 @@ from .doctor import diagnose
 from .initializer import InitializationError, execute_initialization, plan_initialization
 from .operations import OperationError, execute_plan, plan_operations, render_command
 from .query import duplicates as find_duplicates, resolved_duplicates as find_resolved_duplicates, why as find_why, why_resolved as find_why_resolved
-from .registry import RegistryError, project_statuses, register_project, registered_paths, unregister_project
+from .registry import RegistryError, fleet_inventory, fleet_resolved_duplicates, project_statuses, register_project, registered_paths, unregister_project
 from .repair import RepairError, plan_repairs
 from .sbom import cyclonedx_bom, write_cyclonedx
 from .state import load_state, write_state
+from .tasks import TaskError, execute_task, load_tasks, plan_task
+from .verifier import VerificationError, execute_verification, plan_native_verification
 
 
 def _add_operation_options(parser: argparse.ArgumentParser, *, packages: bool = False, dev: bool = False, allow_all: bool = False) -> None:
@@ -62,6 +65,12 @@ def _parser() -> argparse.ArgumentParser:
     projects_status.add_argument("--registry", help="Override the user-level registry path")
     projects_status.add_argument("--deep", action="store_true", help="Include deep installed-state health checks")
     projects_status.add_argument("--json", action="store_true", dest="as_json")
+    projects_inventory = project_subparsers.add_parser("inventory", help="List resolved packages across registered projects")
+    projects_inventory.add_argument("--registry", help="Override the user-level registry path")
+    projects_inventory.add_argument("--json", action="store_true", dest="as_json")
+    projects_duplicates = project_subparsers.add_parser("duplicates", help="Find resolved packages repeated across registered projects")
+    projects_duplicates.add_argument("--registry", help="Override the user-level registry path")
+    projects_duplicates.add_argument("--json", action="store_true", dest="as_json")
 
     discover_parser = subparsers.add_parser("discover", help="Discover supported project components")
     discover_parser.add_argument("path", nargs="?", default=".")
@@ -72,6 +81,13 @@ def _parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--json", action="store_true", dest="as_json")
     doctor_parser.add_argument("--strict", action="store_true", help="Exit non-zero for warnings as well as errors")
     doctor_parser.add_argument("--deep", action="store_true", help="Inspect installed environments in addition to structural project state")
+
+    verify_parser = subparsers.add_parser("verify", help="Run documented non-mutating native lock verification commands")
+    verify_parser.add_argument("path", nargs="?", default=".")
+    verify_parser.add_argument("--component", help="Limit verification to one component")
+    verify_parser.add_argument("--preview", action="store_true", help="Print verification commands without executing them")
+    verify_parser.add_argument("--strict", action="store_true", help="Exit non-zero when any component cannot be natively verified")
+    verify_parser.add_argument("--json", action="store_true", dest="as_json")
 
     graph_parser = subparsers.add_parser("graph", help="Print normalized direct dependency information")
     graph_parser.add_argument("path", nargs="?", default=".")
@@ -86,6 +102,16 @@ def _parser() -> argparse.ArgumentParser:
     sbom_parser.add_argument("path", nargs="?", default=".")
     sbom_parser.add_argument("--format", choices=("cyclonedx",), default="cyclonedx")
     sbom_parser.add_argument("--output", help="Write the SBOM to a file instead of stdout")
+
+    tasks_parser = subparsers.add_parser("tasks", help="List safe project tasks declared in upm.toml")
+    tasks_parser.add_argument("path", nargs="?", default=".")
+    tasks_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    run_parser = subparsers.add_parser("run", help="Plan or execute a project task from upm.toml")
+    run_parser.add_argument("task")
+    run_parser.add_argument("path", nargs="?", default=".")
+    run_parser.add_argument("--apply", action="store_true", help="Execute task commands; otherwise only preview the task DAG")
+    run_parser.add_argument("--json", action="store_true", dest="as_json")
 
     why_parser = subparsers.add_parser("why", help="Find direct declarations of a dependency across components")
     why_parser.add_argument("package")
@@ -228,61 +254,187 @@ def _operation(args, graph) -> int:
     return 0
 
 
+def _project_registry_command(args) -> int:
+    try:
+        if args.projects_command == "add":
+            root, added = register_project(args.path, args.registry)
+            data = {"path": str(root), "registered": True, "added": added}
+            if args.as_json:
+                print(json.dumps(data, indent=2, sort_keys=True))
+            else:
+                print(("Registered" if added else "Already registered") + f": {root}")
+            return 0
+        if args.projects_command == "remove":
+            root, removed = unregister_project(args.path, args.registry)
+            data = {"path": str(root), "registered": False, "removed": removed}
+            if args.as_json:
+                print(json.dumps(data, indent=2, sort_keys=True))
+            else:
+                print(("Unregistered" if removed else "Not registered") + f": {root}")
+            return 0 if removed else 1
+        if args.projects_command == "list":
+            paths = [str(path) for path in registered_paths(args.registry)]
+            if args.as_json:
+                print(json.dumps({"projects": paths}, indent=2, sort_keys=True))
+            elif not paths:
+                print("No projects registered.")
+            else:
+                for path in paths:
+                    print(path)
+            return 0
+        if args.projects_command == "status":
+            statuses = project_statuses(args.registry, deep=args.deep)
+            if args.as_json:
+                print(json.dumps({"projects": statuses}, indent=2, sort_keys=True))
+            elif not statuses:
+                print("No projects registered.")
+            else:
+                for status in statuses:
+                    if not status.get("exists"):
+                        print(f"x {status['path']} (missing)")
+                        continue
+                    if status.get("error"):
+                        print(f"x {status['path']} ({status['error']})")
+                        continue
+                    health = status["health"]
+                    ecosystems = ",".join(status["ecosystems"]) or "none"
+                    print(f"{health['health_score']:>3}% {status['path']} components={status['components']} ecosystems={ecosystems} errors={health['summary']['errors']} warnings={health['summary']['warnings']}")
+            return 0
+        if args.projects_command == "inventory":
+            inventory = fleet_inventory(args.registry)
+            if args.as_json:
+                print(json.dumps({"packages": inventory}, indent=2, sort_keys=True))
+            elif not inventory:
+                print("No resolved package inventory is available across registered projects.")
+            else:
+                for item in inventory:
+                    location = f" @ {item['location']}" if item.get("location") else ""
+                    print(f"{item['ecosystem']}:{item['name']} {item['version']}  {item['project']} [{item['component']}]{location}")
+            return 0
+        if args.projects_command == "duplicates":
+            groups = fleet_resolved_duplicates(args.registry)
+            if args.as_json:
+                print(json.dumps({"duplicates": groups}, indent=2, sort_keys=True))
+            elif not groups:
+                print("No resolved packages are repeated across registered projects.")
+            else:
+                for group in groups:
+                    divergence = " version-divergence" if group["version_divergence"] else ""
+                    print(f"{group['ecosystem']}:{group['name']} projects={group['projects']}{divergence}")
+                    for occurrence in group["occurrences"]:
+                        location = f" @ {occurrence['location']}" if occurrence.get("location") else ""
+                        print(f"  {occurrence['version']:<16} {occurrence['project']} [{occurrence['component']}]{location}")
+            return 0
+    except RegistryError as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+    return 2
+
+
+def _task_command(args) -> int:
+    root = Path(args.path).expanduser().resolve()
+    if not root.is_dir():
+        print(f"upm: project path is not a directory: {root}", file=sys.stderr)
+        return 2
+    try:
+        if args.command == "tasks":
+            tasks = load_tasks(root)
+            if args.as_json:
+                print(json.dumps({"tasks": [tasks[name].to_dict(root) for name in sorted(tasks)]}, indent=2, sort_keys=True))
+            elif not tasks:
+                print("No UPM tasks configured in upm.toml.")
+            else:
+                for name in sorted(tasks):
+                    task = tasks[name]
+                    description = f" — {task.description}" if task.description else ""
+                    print(f"{name}{description}")
+            return 0
+
+        plans = plan_task(root, args.task)
+        if not args.apply:
+            if args.as_json:
+                print(json.dumps({"executed": False, "tasks": [task.to_dict(root) for task in plans]}, indent=2, sort_keys=True))
+            else:
+                for task in plans:
+                    print(f"{task.name}: ({task.cwd.relative_to(root).as_posix() or '.'}) {shlex.join(task.argv)}")
+                print("Preview only. Re-run with --apply to execute the task DAG.")
+            return 0
+
+        results = []
+        for task in plans:
+            result = execute_task(task)
+            results.append(result)
+            if not result.succeeded:
+                break
+        if args.as_json:
+            print(json.dumps({"results": [result.to_dict(root) for result in results]}, indent=2, sort_keys=True))
+        else:
+            for result in results:
+                print(f"{result.task.name}: {shlex.join(result.task.argv)}")
+                if result.stdout:
+                    print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+        return 0 if len(results) == len(plans) and all(result.succeeded for result in results) else 1
+    except TaskError as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+
+
+def _verify_command(args, graph) -> int:
+    try:
+        plans, skips = plan_native_verification(graph, args.component)
+    except VerificationError as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"upm: {exc}", file=sys.stderr)
+        return 2
+
+    if args.preview:
+        if args.as_json:
+            print(json.dumps({"executed": False, "plans": [plan.to_dict(graph.root) for plan in plans], "skipped": [skip.to_dict() for skip in skips]}, indent=2, sort_keys=True))
+        else:
+            for plan in plans:
+                print(f"{plan.component}: {shlex.join(plan.argv)}")
+            for skip in skips:
+                print(f"skip {skip.component}: {skip.reason}")
+        return 1 if args.strict and skips else 0
+
+    results = [execute_verification(plan) for plan in plans]
+    if args.as_json:
+        print(json.dumps({"results": [result.to_dict(graph.root) for result in results], "skipped": [skip.to_dict() for skip in skips]}, indent=2, sort_keys=True))
+    else:
+        for result in results:
+            marker = "ok" if result.succeeded else "x"
+            print(f"{marker} {result.plan.component}: {shlex.join(result.plan.argv)}")
+            if result.stdout:
+                print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+            if result.stderr:
+                print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+        for skip in skips:
+            print(f"skip {skip.component}: {skip.reason}")
+    if any(not result.succeeded for result in results):
+        return 1
+    if args.strict and skips:
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
     if args.command == "projects":
-        try:
-            if args.projects_command == "add":
-                root, added = register_project(args.path, args.registry)
-                data = {"path": str(root), "registered": True, "added": added}
-                if args.as_json:
-                    print(json.dumps(data, indent=2, sort_keys=True))
-                else:
-                    print(("Registered" if added else "Already registered") + f": {root}")
-                return 0
-            if args.projects_command == "remove":
-                root, removed = unregister_project(args.path, args.registry)
-                data = {"path": str(root), "registered": False, "removed": removed}
-                if args.as_json:
-                    print(json.dumps(data, indent=2, sort_keys=True))
-                else:
-                    print(("Unregistered" if removed else "Not registered") + f": {root}")
-                return 0 if removed else 1
-            if args.projects_command == "list":
-                paths = [str(path) for path in registered_paths(args.registry)]
-                if args.as_json:
-                    print(json.dumps({"projects": paths}, indent=2, sort_keys=True))
-                elif not paths:
-                    print("No projects registered.")
-                else:
-                    for path in paths:
-                        print(path)
-                return 0
-            if args.projects_command == "status":
-                statuses = project_statuses(args.registry, deep=args.deep)
-                if args.as_json:
-                    print(json.dumps({"projects": statuses}, indent=2, sort_keys=True))
-                elif not statuses:
-                    print("No projects registered.")
-                else:
-                    for status in statuses:
-                        if not status.get("exists"):
-                            print(f"x {status['path']} (missing)")
-                            continue
-                        if status.get("error"):
-                            print(f"x {status['path']} ({status['error']})")
-                            continue
-                        health = status["health"]
-                        ecosystems = ",".join(status["ecosystems"]) or "none"
-                        print(f"{health['health_score']:>3}% {status['path']} components={status['components']} ecosystems={ecosystems} errors={health['summary']['errors']} warnings={health['summary']['warnings']}")
-                return 0
-        except RegistryError as exc:
-            if args.as_json:
-                print(json.dumps({"error": str(exc)}, indent=2))
-            else:
-                print(f"upm: {exc}", file=sys.stderr)
-            return 2
+        return _project_registry_command(args)
+
+    if args.command in {"tasks", "run"}:
+        return _task_command(args)
 
     if args.command == "init":
         root = Path.cwd().resolve()
@@ -332,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.as_json: print(json.dumps(graph.to_dict(), indent=2, sort_keys=True))
         else: _print_discovery(graph)
         return 0
+    if args.command == "verify":
+        return _verify_command(args, graph)
     if args.command == "graph":
         if args.as_json:
             print(json.dumps(graph.to_dict(), indent=2, sort_keys=True))
