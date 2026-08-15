@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
 from .discovery import discover
@@ -18,7 +18,7 @@ from .pnpm_sbom import PnpmSbomError, execute_pnpm_sbom, plan_pnpm_sboms
 from .pnpm_sbom_merge import merge_pnpm_cyclonedx, merge_pnpm_spdx
 from .sbom_providers import cyclonedx_bom_with_providers
 from .spdx import spdx_document
-from .uv_graph import execute_uv_graph, plan_uv_graphs
+from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -34,37 +34,43 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _selected_static_graph(graph: ProjectGraph, selector: str | None, cargo_plans: list[object]) -> ProjectGraph:
+def _selected_static_graph(
+    graph: ProjectGraph,
+    selector: str | None,
+    cargo_plans: list[object],
+    uv_plans: list[object],
+) -> ProjectGraph:
     if selector is None:
         return graph
     try:
         selected = select_component(graph, selector)
     except OperationError as exc:
         raise ValueError(str(exc)) from exc
-    keys = {selected.key(graph.root)}
+    selected_key = selected.key(graph.root)
+    keys = {selected_key}
     keys.update(
         getattr(plan, "component", "")
         for plan in cargo_plans
         if isinstance(getattr(plan, "component", None), str)
     )
     components = [component for component in graph.components if component.key(graph.root) in keys]
-    return ProjectGraph(graph.root, components, graph.workspaces)
 
-
-def _safe_spdx_uv_results(results: list[object]) -> list[object]:
-    """Remove uv edges SPDX 2.3 cannot represent without losing marker semantics."""
-    safe: list[object] = []
-    for result in results:
-        edges = [
-            edge for edge in getattr(result, "edges", [])
-            if not getattr(edge, "ambiguous", False) and not getattr(edge, "marker", None)
+    # A selected uv component may be backed by a shared workspace lock at a
+    # different directory. In native mode the authoritative uv provider owns
+    # registry package identity/scope, so do not seed the selected component's
+    # SBOM with an unscoped static parse of the whole shared uv.lock.
+    selected_uv = any(
+        getattr(plan, "selected_component", None) == selected_key
+        for plan in uv_plans
+    )
+    if selected_uv:
+        components = [
+            replace(component, resolved_packages=[])
+            if component.key(graph.root) == selected_key and component.ecosystem == "python"
+            else component
+            for component in components
         ]
-        safe.append(SimpleNamespace(
-            succeeded=getattr(result, "succeeded", False),
-            packages=getattr(result, "packages", []),
-            edges=edges,
-        ))
-    return safe
+    return ProjectGraph(graph.root, components, graph.workspaces)
 
 
 def sbom_command(argv: list[str]) -> int:
@@ -83,8 +89,8 @@ def sbom_command(argv: list[str]) -> int:
             uv_plans = plan_uv_graphs(full_graph, selector=args.component)
         else:
             go_plans, npm_plans, pnpm_plans, cargo_plans, uv_plans = [], [], [], [], []
-        graph = _selected_static_graph(full_graph, args.component, cargo_plans)
-    except (OSError, NpmSbomError, PnpmSbomError, ValueError) as exc:
+        graph = _selected_static_graph(full_graph, args.component, cargo_plans, uv_plans)
+    except (OSError, NpmSbomError, PnpmSbomError, UvGraphError, ValueError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 2
 
@@ -131,11 +137,11 @@ def sbom_command(argv: list[str]) -> int:
                 go_results=go_results,
                 npm_results=[],
                 cargo_results=cargo_results,
-                uv_results=_safe_spdx_uv_results(uv_results),
+                uv_results=uv_results,
             )
             document = merge_npm_spdx(document, npm_results)
             document = merge_pnpm_spdx(document, pnpm_results)
-    except (NpmSbomError, PnpmSbomError) as exc:
+    except (NpmSbomError, PnpmSbomError, UvGraphError) as exc:
         print(f"upm: {exc}", file=sys.stderr)
         return 1
 
