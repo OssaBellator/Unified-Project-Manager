@@ -58,15 +58,34 @@ class InitializerTests(unittest.TestCase):
             calls = []
 
             def fake_run(argv, **kwargs):
-                calls.append((argv, kwargs["cwd"]))
+                calls.append((argv, kwargs))
                 (kwargs["cwd"] / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
                 return subprocess.CompletedProcess(argv, 0, "created\n", "")
 
-            result = execute_initialization(plan, root, run=fake_run, which=lambda _name: "/bin/tool")
-            self.assertEqual(calls[0][0], ["npm", "init", "--yes"])
+            result = execute_initialization(plan, root, run=fake_run, which=lambda _name: "/bin/npm-exact")
+            self.assertEqual(calls[0][0], ["/bin/npm-exact", "init", "--yes"])
+            self.assertNotIn("env", calls[0][1])
             self.assertTrue(plan.cwd.is_dir())
             self.assertEqual(result.returncode, 0)
             self.assertIsNotNone(result.verification)
+
+    def test_go_initialization_disables_ambient_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.work").write_text("go 1.24\n", encoding="utf-8")
+            plan = plan_initialization(root, "service", "go", module="example.com/service")
+            calls = []
+
+            def fake_run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                (kwargs["cwd"] / "go.mod").write_text("module example.com/service\ngo 1.24\n", encoding="utf-8")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            result = execute_initialization(plan, root, run=fake_run, which=lambda _name: "/toolchains/go", verify=False)
+
+            self.assertTrue(result.succeeded)
+            self.assertEqual(calls[0][0], ["/toolchains/go", "mod", "init", "example.com/service"])
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], "off")
 
 
 if __name__ == "__main__":
