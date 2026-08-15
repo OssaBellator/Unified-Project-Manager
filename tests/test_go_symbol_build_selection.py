@@ -72,7 +72,7 @@ class GoSymbolBuildSelectionTests(unittest.TestCase):
             self.assertFalse(result.matches)
             self.assertIn("build tags differ", result.differences)
 
-    def test_test_inclusion_must_match(self) -> None:
+    def test_test_inclusion_must_match_and_enabled_mode_stays_unproven(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             scanner, observation = self._plans(Path(temporary))
             scanner = replace(scanner, argv=(*scanner.argv[:-1], "-test", scanner.argv[-1]))
@@ -84,7 +84,12 @@ class GoSymbolBuildSelectionTests(unittest.TestCase):
                 observation,
                 packages_argv=(*observation.packages_argv[:-1], "-test", observation.packages_argv[-1]),
             )
-            self.assertTrue(compare_go_symbol_build_selection(scanner, observation).matches)
+            unproven = compare_go_symbol_build_selection(scanner, observation)
+            self.assertFalse(unproven.matches)
+            self.assertEqual(
+                unproven.differences,
+                ("test-enabled selection equivalence is not established",),
+            )
 
     def test_package_patterns_must_match_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
