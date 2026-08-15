@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tomllib
@@ -22,6 +23,7 @@ class TaskSpec:
     cwd: Path
     description: str | None = None
     depends: tuple[str, ...] = ()
+    environment: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self, root: Path) -> dict[str, Any]:
         return {
@@ -30,6 +32,7 @@ class TaskSpec:
             "cwd": self.cwd.relative_to(root).as_posix() or ".",
             "description": self.description,
             "depends": list(self.depends),
+            "environment": dict(self.environment),
         }
 
 
@@ -141,10 +144,21 @@ def execute_task(
     which: Callable[[str], str | None] = shutil.which,
 ) -> TaskResult:
     executable = task.argv[0]
-    if which(executable) is None:
+    resolved = which(executable)
+    if resolved is None:
         return TaskResult(task, 127, stderr=f"Executable '{executable}' is not available on PATH.")
+    kwargs = {
+        "cwd": task.cwd,
+        "text": True,
+        "capture_output": True,
+        "check": False,
+    }
+    if task.environment:
+        environment = dict(os.environ)
+        environment.update(dict(task.environment))
+        kwargs["env"] = environment
     try:
-        completed = run(list(task.argv), cwd=task.cwd, text=True, capture_output=True, check=False)
+        completed = run([resolved, *task.argv[1:]], **kwargs)
     except OSError as exc:
         return TaskResult(task, 127, stderr=str(exc))
     return TaskResult(task, completed.returncode, completed.stdout or "", completed.stderr or "")
@@ -189,6 +203,7 @@ def _select_component(graph: ProjectGraph, selector: str | None, task_name: str)
 
 def plan_native_task(graph: ProjectGraph, name: str, selector: str | None = None) -> TaskSpec:
     component = _select_component(graph, selector, name)
+    environment: tuple[tuple[str, str], ...] = ()
     if component.ecosystem == "node":
         manager = component.manager
         assert manager is not None
@@ -197,6 +212,7 @@ def plan_native_task(graph: ProjectGraph, name: str, selector: str | None = None
         argv = ("cargo", name)
     elif component.ecosystem == "go":
         argv = _NATIVE_GO_TASKS[name]
+        environment = (("GOWORK", "off"),)
     else:
         raise TaskError(f"Native tasks are not configured for ecosystem '{component.ecosystem}'.")
     return TaskSpec(
@@ -204,6 +220,7 @@ def plan_native_task(graph: ProjectGraph, name: str, selector: str | None = None
         argv=argv,
         cwd=component.path,
         description=f"native task from {component.key(graph.root)}",
+        environment=environment,
     )
 
 
@@ -242,6 +259,7 @@ def list_native_tasks(graph: ProjectGraph) -> list[dict[str, Any]]:
                     "manager": "go",
                     "native": shlex_join(argv),
                     "argv": list(argv),
+                    "environment": {"GOWORK": "off"},
                 })
     return result
 
