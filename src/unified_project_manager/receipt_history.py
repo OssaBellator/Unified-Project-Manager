@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 from .models import ProjectGraph
-from .receipts import RECEIPT_DIRECTORY, RECEIPT_VERSION, StateObservation, capture_project_state, diff_project_state
+from .receipts import (
+    RECEIPT_DIRECTORY,
+    SUPPORTED_RECEIPT_VERSIONS,
+    StateObservation,
+    capture_project_state,
+    diff_project_state,
+    receipt_identity_digest,
+    receipt_identity_payload,
+)
 
 
 class ReceiptHistoryError(ValueError):
@@ -23,6 +30,7 @@ class ReceiptValidation:
     operation: str | None
     succeeded: bool | None
     reason: str | None = None
+    version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -51,20 +59,17 @@ class ReceiptDriftStatus:
         }
 
 
-def _stable_receipt_payload(data: dict[str, Any]) -> dict[str, Any]:
-    return {
-        'operation': data.get('operation'),
-        'commands': data.get('commands'),
-        'before': data.get('before'),
-        'after': data.get('after'),
-        'created_at': data.get('created_at'),
-    }
-
-
-def _expected_receipt_id(data: dict[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(_stable_receipt_payload(data), sort_keys=True, separators=(',', ':')).encode('utf-8')
-    ).hexdigest()
+def _expected_receipt_id(data: dict[str, Any], version: int) -> str:
+    payload = receipt_identity_payload(
+        version=version,
+        operation=data.get('operation'),
+        commands=data.get('commands'),
+        before=data.get('before'),
+        after=data.get('after'),
+        created_at=data.get('created_at'),
+        verification=data.get('verification'),
+    )
+    return receipt_identity_digest(payload)
 
 
 def _observations(values: object) -> tuple[StateObservation, ...]:
@@ -86,49 +91,74 @@ def _observations(values: object) -> tuple[StateObservation, ...]:
     return tuple(result)
 
 
+def _validation(
+    target: Path,
+    valid: bool,
+    receipt_id: str | None,
+    created_at: str | None,
+    operation: str | None,
+    succeeded: bool | None,
+    reason: str | None,
+    version: int | None,
+) -> ReceiptValidation:
+    return ReceiptValidation(
+        str(target),
+        valid,
+        receipt_id,
+        created_at,
+        operation,
+        succeeded,
+        reason,
+        version,
+    )
+
+
 def validate_receipt_file(path: str | Path) -> ReceiptValidation:
     target = Path(path)
     try:
         data = json.loads(target.read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return ReceiptValidation(str(target), False, None, None, None, None, f'Could not read receipt: {exc}')
+        return _validation(target, False, None, None, None, None, f'Could not read receipt: {exc}', None)
     if not isinstance(data, dict):
-        return ReceiptValidation(str(target), False, None, None, None, None, 'Receipt JSON root is not an object.')
+        return _validation(target, False, None, None, None, None, 'Receipt JSON root is not an object.', None)
 
     receipt_id = data.get('receipt_id') if isinstance(data.get('receipt_id'), str) else None
     created_at = data.get('created_at') if isinstance(data.get('created_at'), str) else None
     operation = data.get('operation') if isinstance(data.get('operation'), str) else None
     succeeded = data.get('succeeded') if isinstance(data.get('succeeded'), bool) else None
-    version = data.get('version')
-    if version != RECEIPT_VERSION:
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, f'Unsupported receipt version {version!r}.')
+    version_value = data.get('version')
+    version = version_value if isinstance(version_value, int) and not isinstance(version_value, bool) else None
+    if version not in SUPPORTED_RECEIPT_VERSIONS:
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, f'Unsupported receipt version {version_value!r}.', version)
     if not receipt_id or not created_at or not operation or succeeded is None:
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, 'Receipt identity fields are invalid.')
-    if receipt_id != _expected_receipt_id(data):
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, 'Receipt ID does not match its canonical core content.')
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt identity fields are invalid.', version)
+    if version >= 2 and data.get('verification') is not None and not isinstance(data.get('verification'), dict):
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt verification payload is invalid.', version)
+    if receipt_id != _expected_receipt_id(data, version):
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt ID does not match its canonical identity content.', version)
 
     try:
         before = _observations(data.get('before'))
         after = _observations(data.get('after'))
     except ReceiptHistoryError as exc:
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, str(exc))
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, str(exc), version)
     expected_changes = [item.to_dict() for item in diff_project_state(before, after)]
     if data.get('changes') != expected_changes:
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, 'Receipt change list is inconsistent with before/after observations.')
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt change list is inconsistent with before/after observations.', version)
 
     commands = data.get('commands')
     if not isinstance(commands, list):
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, 'Receipt command list is invalid.')
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt command list is invalid.', version)
     computed_success = True
     for command in commands:
         if not isinstance(command, dict):
-            return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, 'Receipt command record is invalid.')
+            return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt command record is invalid.', version)
         returncode = command.get('returncode')
         if returncode not in (None, 0):
             computed_success = False
     if computed_success != succeeded:
-        return ReceiptValidation(str(target), False, receipt_id, created_at, operation, succeeded, 'Receipt succeeded flag disagrees with command return codes.')
-    return ReceiptValidation(str(target), True, receipt_id, created_at, operation, succeeded)
+        return _validation(target, False, receipt_id, created_at, operation, succeeded, 'Receipt succeeded flag disagrees with command return codes.', version)
+    return _validation(target, True, receipt_id, created_at, operation, succeeded, None, version)
 
 
 def list_receipt_history(root: str | Path) -> list[ReceiptValidation]:
