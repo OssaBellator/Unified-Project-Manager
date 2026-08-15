@@ -44,7 +44,7 @@ class ProviderRegistryTests(unittest.TestCase):
                 item for item in summary['coverage']
                 if item['component'] == 'yarn:node'
             )
-            self.assertFalse(yarn_coverage['provider']['supports_sbom_relationships'])
+            self.assertTrue(yarn_coverage['provider']['supports_sbom_relationships'])
             self.assertEqual(yarn_coverage['provider']['network'], 'none')
             self.assertEqual(yarn_coverage['provider']['mutation'], 'none')
 
@@ -96,7 +96,7 @@ class ProviderRegistryTests(unittest.TestCase):
             self.assertEqual(coverage['.:node'].provider.provider, 'yarn-berry-resolution-graph')
             self.assertEqual(coverage['packages/app:node'].provider.provider, 'yarn-berry-resolution-graph')
             self.assertEqual(coverage['packages/app:node'].provider.network, 'none')
-            self.assertFalse(coverage['packages/app:node'].provider.supports_sbom_relationships)
+            self.assertTrue(coverage['packages/app:node'].provider.supports_sbom_relationships)
 
     def test_cargo_workspace_member_inherits_root_relationship_provider(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
