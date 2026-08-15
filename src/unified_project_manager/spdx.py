@@ -188,7 +188,7 @@ def spdx_document(
             if target:
                 refs[package_id] = target
         for edge in getattr(result, "edges", []):
-            if getattr(edge, "ambiguous", False):
+            if getattr(edge, "ambiguous", False) or getattr(edge, "marker", None):
                 continue
             source = refs.get(getattr(edge, "source_id", ""))
             target = refs.get(getattr(edge, "target_id", ""))
