@@ -113,7 +113,6 @@ class CacheProvenanceTests(unittest.TestCase):
                 {group["cache_kind"] for group in managers["go"]["groups"]},
                 {"module-source", "download-zip"},
             )
-            # Go build cache is intentionally outside selected-module attribution.
             self.assertNotEqual(managers["go"]["total_bytes"], 120)
 
             cargo = managers["cargo"]
@@ -248,6 +247,80 @@ class CacheProvenanceTests(unittest.TestCase):
             self.assertEqual(
                 set(go["identity_conflicts"][0]["identities"]),
                 {"pkg:golang/example.com/foo@v1.0.0", "pkg:golang/example.com/bar@v1.0.0"},
+            )
+            self.assertFalse(report["observation_complete"])
+            self.assertFalse(report["reclaimable"])
+
+    def test_multi_identity_cargo_registry_source_object_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            (project / "Cargo.toml").write_text(
+                '[package]\nname="app"\nversion="0.1.0"\n', encoding="utf-8"
+            )
+            (project / "Cargo.lock").write_text("version = 4\n", encoding="utf-8")
+
+            cargo_home = root / "cargo-home"
+            source_object = cargo_home / "registry" / "src" / "index" / "object-1.0.0"
+            nested = source_object / "nested"
+            nested.mkdir(parents=True)
+            (source_object / "a.rs").write_bytes(b"aaa")
+            (nested / "b.rs").write_bytes(b"bbbbb")
+            (cargo_home / "git").mkdir(parents=True)
+            measured = 8
+
+            def execute_cargo(plan):
+                return CargoGraphResult(
+                    plan,
+                    [
+                        CargoPackage(
+                            component=plan.component,
+                            package_id="registry+index#a@1.0.0",
+                            name="a",
+                            version="1.0.0",
+                            source="registry+https://github.com/rust-lang/crates.io-index",
+                            manifest_path=str(source_object / "Cargo.toml"),
+                            workspace_member=False,
+                            workspace_default_member=False,
+                        ),
+                        CargoPackage(
+                            component=plan.component,
+                            package_id="registry+index#b@1.0.0",
+                            name="b",
+                            version="1.0.0",
+                            source="registry+https://github.com/rust-lang/crates.io-index",
+                            manifest_path=str(nested / "Cargo.toml"),
+                            workspace_member=False,
+                            workspace_default_member=False,
+                        ),
+                    ],
+                    [],
+                    0,
+                )
+
+            report = collect_cache_provenance(
+                roots=[project],
+                managers=("cargo",),
+                closed_universe=True,
+                storage_probe=lambda *, managers: (
+                    [
+                        GlobalStorageEntry("cargo", "registry-cache", str(cargo_home / "registry"), measured, 2),
+                        GlobalStorageEntry("cargo", "git-cache", str(cargo_home / "git"), 0, 0),
+                    ],
+                    [],
+                ),
+                execute_cargo=execute_cargo,
+            )
+
+            cargo = report["managers"][0]
+            self.assertTrue(cargo["measurement_consistent"])
+            self.assertFalse(cargo["identity_consistent"])
+            self.assertEqual(len(cargo["identity_conflicts"]), 1)
+            self.assertIn("registry source object", cargo["identity_conflicts"][0]["reason"])
+            self.assertEqual(
+                set(cargo["identity_conflicts"][0]["identities"]),
+                {"pkg:cargo/a@1.0.0", "pkg:cargo/b@1.0.0"},
             )
             self.assertFalse(report["observation_complete"])
             self.assertFalse(report["reclaimable"])
