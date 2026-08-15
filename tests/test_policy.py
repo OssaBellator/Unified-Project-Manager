@@ -67,6 +67,14 @@ class PolicyTests(unittest.TestCase):
             report = evaluate_policy(discover(root))
             self.assertIn("policy.warning-budget-exceeded", {item.code for item in report.violations})
 
+    def test_error_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text("not = [valid", encoding="utf-8")
+            (root / "upm.toml").write_text("[policy]\nmax_errors=0\n", encoding="utf-8")
+            report = evaluate_policy(discover(root))
+            self.assertIn("policy.error-budget-exceeded", {item.code for item in report.violations})
+
     def test_invalid_policy_type_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
