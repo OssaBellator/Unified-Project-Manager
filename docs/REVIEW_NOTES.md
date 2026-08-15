@@ -38,22 +38,44 @@ Both are included in `scripts/test-yarn-native.sh`.
 
 ## Poetry/PDM public promotion
 
-The structured TOML providers for `poetry.lock` and `pdm.lock` are now public as `poetry-lock` and `pdm-lock`, sharing `structured-lock-dependency-graph` scope.
+The structured TOML providers for `poetry.lock` and `pdm.lock` are public as `poetry-lock` and `pdm-lock`, sharing `structured-lock-dependency-graph` scope.
 
-Promotion was done across the public surface together rather than by only changing provider status:
+Promotion is routed across the public surface rather than represented by provider-status metadata alone:
 
 - `graph --native` exposes static validated structured-lock packages, resolved/unresolved/ambiguous edges, and marker/optional conditions;
 - `why --native`, project `impact --native`, and fleet impact serialize the same command-neutral certainty-aware query object;
-- ambiguity evidence retains the exact conditional path to the unresolved `?dependency` hop instead of only listing candidate IDs;
 - native CycloneDX/SPDX suppress broad Python adapter lock observations before merging certainty-aware reachable registry identities;
-- reachable ambiguous candidates remain possible scan inventory but never receive fabricated dependency relationships;
 - native project/fleet audit retains the same validated Poetry/PDM graph results alongside the exact CycloneDX document scanned by OSV-Scanner;
-- advisory correlation distinguishes resolved paths from `possible-via-ambiguous-lock-reference` evidence;
-- `provider_registry` now reports Poetry/PDM coverage with `execution=false`, `network=none`, and `mutation=none`.
+- `provider_registry` reports Poetry/PDM coverage with `execution=false`, `network=none`, and `mutation=none`.
+
+### Reachability hardening completed during promotion review
+
+A deeper consistency pass found that the SBOM layer already propagated `possible` inventory through dependencies of every ambiguous candidate, while public why/impact/advisory reachability stopped at the first ambiguous hop. That could admit a transitive package to the OSV scan without retaining a dependency explanation for it.
+
+The shared reachability model now:
+
+- keeps resolved `packages` separate from ambiguity-derived `possible_packages`;
+- renders each unresolved ambiguity hop as `?dependency` before branching into every candidate;
+- propagates possible reachability through descendants of each candidate rather than only exposing direct candidates;
+- retains marker/optional conditions and ambiguity-hop count on every path;
+- keeps the direct ambiguity record with candidate IDs and the path ending at `?dependency`;
+- lets advisory correlation explain transitive possible findings with the same full path that justified their scan inventory.
+
+For example, `project -> parent -> ?shared -> shared@1 -> leaf` means `leaf` is possible via one unresolved branch; it does not mean UPM selected `shared@1` for a concrete environment.
+
+The same review exposed a pre-existing path-multiplicity test contract that the implementation had not satisfied. Reachability is now path-sensitive and bounded:
+
+- distinct same-condition parent paths are retained instead of being collapsed by a node/condition visited set;
+- `max_paths_per_package` defaults to 64;
+- `max_search_states` defaults to 10000;
+- returned package/ambiguity objects carry `paths_truncated` when necessary;
+- the query result carries `search_truncated` if the traversal budget is reached.
+
+`python_lock_render.py` is shared by project why, project impact, and fleet impact text output so possible-only queries, ambiguity paths, conditions, and truncation warnings are visible outside JSON too.
 
 Unsupported lock dependency shapes or package-record-level conditions remain explicit provider failures. Public support does not imply UPM will guess arbitrary future Poetry/PDM lock semantics.
 
-A serializer bug found during reconstructed local validation was also fixed: `PythonLockPath.to_dict()` now returns JSON-ready lists for path nodes and markers rather than relying on `json.dumps` to convert tuples implicitly.
+A serializer bug found during reconstructed local validation was also fixed: `PythonLockPath.to_dict()` returns JSON-ready lists for path nodes and markers rather than relying on `json.dumps` to convert tuples implicitly.
 
 ## Exact advisory evidence contract
 
@@ -67,7 +89,7 @@ Project and fleet advisory flows share the same rule:
 - fleet output distinguishes planning, native-inventory, scanner, and evidence failures;
 - ordinary status never reruns scanner/providers merely to manufacture freshness.
 
-Poetry/PDM now participate in this same retained-evidence path through `NativeCycloneDxInventory.python_lock_results`.
+Poetry/PDM participate in this same retained-evidence path through `NativeCycloneDxInventory.python_lock_results`. Resolved findings retain conditional path evidence; direct or transitive ambiguity-derived findings are labeled `possible-via-ambiguous-lock-reference` and retain the full `?dependency` candidate path.
 
 ## Local validation boundary
 
@@ -95,14 +117,15 @@ sh ./scripts/test-python-lock-public-provider.sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
-Focused reconstructed/local validation in this execution environment includes the previously recorded Yarn and structured-lock slices plus the current public-promotion core slice:
+`test-python-lock-native-validated.sh` now also includes the path-multiplicity and shared text-renderer regressions.
 
-- resolved conditional Poetry/PDM reachability;
-- condition-preserving ambiguity paths;
-- OSV correlation for resolved and ambiguity-only structured-lock findings;
-- **3/3 current reconstructed promotion-core tests passed** after fixing the JSON-ready path serializer.
+Focused reconstructed/local validation in this execution environment includes the previously recorded Yarn and structured-lock slices plus the current reachability hardening:
 
-The new end-to-end public-provider shell driver is committed and included in `test-python-lock-native-validated.sh`, which is included by `check-all-local-latest.sh`. This execution environment still cannot materialize the entire private branch as one checkout, so that full driver and the full aggregate have not been claimed as executed here.
+- the current reachability rewrite passed **5/5 reconstructed tests** covering conditional paths, direct ambiguity, transitive possible branches, same-condition path multiplicity/path caps, and search-state truncation;
+- a separate reconstructed query/advisory check confirmed that a transitive package below an ambiguous candidate is reported as `possible-via-ambiguous-lock-reference` with the full `?dependency` path;
+- the shared possible-path text-renderer smoke check passed.
+
+The end-to-end public-provider shell driver is committed and included in `test-python-lock-native-validated.sh`, which is included by `check-all-local-latest.sh`. This execution environment still cannot materialize the entire private branch as one checkout, so that full driver and the full aggregate have not been claimed as executed here.
 
 ## Merge hygiene
 
