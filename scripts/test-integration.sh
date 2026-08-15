@@ -21,6 +21,14 @@ for test_file in \
   tests/test_pnpm_provider_entrypoint.py \
   tests/test_pnpm_sbom.py \
   tests/test_pnpm_sbom_entrypoint.py \
+  tests/test_yarn_graph.py \
+  tests/test_yarn_impact.py \
+  tests/test_yarn_provider_entrypoint.py \
+  tests/test_yarn_why_impact_entrypoint.py \
+  tests/test_yarn_sbom_merge.py \
+  tests/test_yarn_sbom_entrypoint.py \
+  tests/test_yarn_security_impact.py \
+  tests/test_yarn_native_audit.py \
   tests/test_cargo_graph.py \
   tests/test_cargo_workspace.py \
   tests/test_uv_graph.py \
