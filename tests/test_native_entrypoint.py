@@ -83,7 +83,7 @@ class NativeEntrypointTests(unittest.TestCase):
                 return NativeGraphResult(plan, modules, [], 0)
 
             output = io.StringIO()
-            with patch("unified_project_manager.native_entrypoint.execute_native_graph", side_effect=fake_execute), redirect_stdout(output):
+            with patch("unified_project_manager.sbom_provider_entrypoint.execute_native_graph", side_effect=fake_execute), redirect_stdout(output):
                 code = main(["sbom", str(root), "--native"])
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
