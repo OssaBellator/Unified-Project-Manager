@@ -8,6 +8,7 @@ from .doctor import diagnose
 from .models import ProjectGraph
 from .policy import evaluate_policy
 from .provider_registry import provider_summary
+from .receipt_chain import CHAIN_PATH, validate_receipt_chain
 from .receipt_history import latest_receipt_drift
 from .workspace_health import node_workspace_findings
 
@@ -32,6 +33,8 @@ def local_evidence_status(
     advisory = evaluate_audit_status(graph, max_age_seconds=advisory_max_age_seconds)
     receipts = latest_receipt_drift(graph)
     providers = provider_summary(graph)
+    chain_path = graph.root / CHAIN_PATH
+    chain = validate_receipt_chain(graph.root) if chain_path.is_file() else None
 
     workspace_errors = sum(1 for finding in workspace_findings if finding.severity == 'error')
     workspace_warnings = sum(1 for finding in workspace_findings if finding.severity == 'warning')
@@ -46,6 +49,8 @@ def local_evidence_status(
         blockers.append('known-vulnerabilities')
     if receipts.state in {'drifted', 'invalid', 'invalid-latest-history'}:
         blockers.append('receipt-state')
+    if chain is not None and not chain.valid:
+        blockers.append('receipt-chain')
 
     return {
         'root': str(graph.root),
@@ -63,6 +68,9 @@ def local_evidence_status(
             'policy_passed': policy.passed,
             'advisory_state': advisory.state,
             'receipt_state': receipts.state,
+            'receipt_chain_state': (
+                'absent' if chain is None else ('valid' if chain.valid else 'invalid')
+            ),
             'relationship_provider_coverage': {
                 'supported': providers['supported_components'],
                 'total': providers['total_components'],
@@ -74,6 +82,14 @@ def local_evidence_status(
         'policy': policy.to_dict(),
         'advisory_evidence': advisory.to_dict(),
         'mutation_receipts': receipts.to_dict(),
+        'mutation_receipt_chain': (
+            chain.to_dict() if chain is not None else {
+                'present': False,
+                'valid': None,
+                'path': CHAIN_PATH.as_posix(),
+                'authenticated': False,
+            }
+        ),
         'relationship_providers': providers,
         'integrity_snapshot': {
             'path': SNAPSHOT_PATH.as_posix(),
