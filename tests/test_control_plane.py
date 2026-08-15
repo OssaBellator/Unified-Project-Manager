@@ -84,6 +84,7 @@ class StatusTests(unittest.TestCase):
             self.assertFalse(data["integrity_snapshot"]["exists"])
             self.assertEqual(data["native_verification"]["coverage"]["planned_components"], 1)
             self.assertIsNone(data["storage"])
+            self.assertTrue(data["policy"]["passed"])
 
     def test_status_storage_is_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -109,6 +110,19 @@ class StatusTests(unittest.TestCase):
             self.assertIn(code, (0, 1))
             self.assertEqual(data["summary"]["ecosystems"], ["go"])
             self.assertEqual(data["native_verification"]["coverage"]["planned_components"], 1)
+
+    def test_status_fails_configured_policy_violation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+            (root / "upm.toml").write_text('[policy]\ndenied_managers=["npm"]\n', encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(["status", str(root), "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertFalse(data["policy"]["passed"])
 
 
 class PolicyCliTests(unittest.TestCase):
