@@ -93,7 +93,7 @@ class PythonLockQueryContractTests(unittest.TestCase):
         self.assertEqual(payload["packages"][0]["paths"][0]["optional_edges"], 1)
         self.assertEqual(payload["packages"][0]["paths"][0]["markers"], ["sys_platform == 'linux'"])
 
-    def test_reachable_ambiguity_matches_without_fabricating_package_path(self) -> None:
+    def test_reachable_ambiguity_retains_conditional_path_without_fabricating_candidate_path(self) -> None:
         parent = self._package("parent#1", "parent", "1.0.0")
         shared_one = self._package("shared#1", "shared", "1.0.0")
         shared_two = self._package("shared#2", "shared", "2.0.0")
@@ -104,6 +104,8 @@ class PythonLockQueryContractTests(unittest.TestCase):
                 self._edge(
                     "parent#1", "shared", None,
                     candidates=("shared#1", "shared#2"),
+                    marker="sys_platform == 'linux'",
+                    optional=True,
                     ambiguous=True,
                 ),
             ],
@@ -115,8 +117,14 @@ class PythonLockQueryContractTests(unittest.TestCase):
         self.assertTrue(payload["uncertain"])
         self.assertEqual(payload["packages"], [])
         self.assertEqual(payload["summary"]["ambiguities"], 1)
-        self.assertEqual(payload["ambiguities"][0]["source"], "parent@1.0.0")
-        self.assertEqual(payload["ambiguities"][0]["candidate_ids"], ["shared#1", "shared#2"])
+        ambiguity = payload["ambiguities"][0]
+        self.assertEqual(ambiguity["source"], "parent@1.0.0")
+        self.assertEqual(ambiguity["candidate_ids"], ["shared#1", "shared#2"])
+        self.assertTrue(ambiguity["optional"])
+        self.assertTrue(ambiguity["conditional"])
+        self.assertEqual(ambiguity["paths"][0]["nodes"][-1], "?shared")
+        self.assertEqual(ambiguity["paths"][0]["markers"], ["sys_platform == 'linux'"])
+        self.assertEqual(ambiguity["paths"][0]["optional_edges"], 1)
 
 
 if __name__ == "__main__":
