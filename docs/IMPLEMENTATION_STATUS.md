@@ -27,26 +27,37 @@ Current public behavior includes:
 - preview-first OSV-Scanner advisory scanning with persisted SBOM-bound evidence;
 - relationship-provider coverage surfaced in local status without hidden provider execution.
 
-No GitHub Actions workflows are used. Validation remains local and script-driven through:
+No GitHub Actions workflows are used. Validation remains local and script-driven. The current aggregate entrypoint is:
+
+```sh
+sh ./scripts/check-all-local-latest.sh
+```
+
+Focused slices remain independently runnable, including:
 
 ```sh
 sh ./scripts/check.sh
 sh ./scripts/test-integration.sh
 sh ./scripts/test-native-security.sh
-sh ./scripts/check-all-local.sh
+sh ./scripts/test-yarn-execution-compat.sh
+sh ./scripts/test-yarn-native.sh
+sh ./scripts/test-python-lock-native-validated.sh
 ```
 
 ## Native relationship providers
 
-`--native` relationship analysis now has five provider families:
+`--native` relationship analysis now has six public provider families:
 
 - **Go** — selected modules, module requirement graph, package-import `why`, replacements, module provenance; cache-only/offline by default through `GOPROXY=off`;
 - **npm** — workspace-aware lock-only logical dependency tree through npm plus native lockfile-only CycloneDX/SPDX provenance;
 - **pnpm** — workspace-aware lock-only logical dependency tree preserving alias/project/dedupe occurrence evidence plus native lockfile-only CycloneDX/SPDX provenance;
+- **Yarn Berry 2+** — exact descriptor/locator and virtual/workspace identity from native `yarn info`; network disabled, install state redirected, cache immutable, and reachable-only SBOM/advisory identity;
 - **Cargo** — `cargo metadata --locked --offline`, package IDs/kinds/targets, with workspace ownership derived from Cargo manifests rather than arbitrary nesting;
 - **uv** — static universal project/workspace graph from authoritative `uv.lock`, preserving marker/fork ambiguity and selected-member scope instead of guessing.
 
-Public `graph`, `why`, `impact`, fleet impact, and native SBOM routes retain provider/scope labels rather than pretending these evidence classes are identical.
+Public `graph`, `why`, `impact`, fleet impact, native SBOM, and advisory routes retain provider/scope labels rather than pretending these evidence classes are identical.
+
+A structured static provider for Poetry/PDM lockfiles exists below the public routing line. It remains deliberately unadvertised until every public route shares the same certainty/ambiguity model.
 
 ## Workspace ownership
 
@@ -69,6 +80,8 @@ Workspace ownership is part of the provider contract rather than a CLI formattin
 - `install --all` / `sync --all` collapse workspace members to one authoritative root operation where ownership is proven;
 - npm relationship/SBOM member selection promotes to the root `package-lock.json` and uses an exact `--workspace ./path` selector;
 - pnpm relationship queries promote members to the root `pnpm-lock.yaml`; native SBOM member selection uses an exact root-relative `--filter` path;
+- Yarn Berry unscoped relationship queries are root-owned and use one recursive `--all` query; selected members retain root ownership while executing from the member cwd;
+- Yarn package identity preserves exact descriptors/locators, virtual packages, and workspace locators; unreachable stored resolutions are excluded from SBOM/advisory inventory;
 - provider coverage and skip suppression use the same plan-derived ownership model, so members are not simultaneously “served” and “unsupported.”
 
 ### Cargo
@@ -103,9 +116,10 @@ Implemented layers include:
 - preview-first project and fleet OSV-Scanner plans;
 - temporary CycloneDX scan artifacts;
 - correct distinction between OSV exit code 1 (findings) and scanner failure;
-- provider-backed `audit --native` inventory whose Go/Cargo queries are forced offline, npm/pnpm SBOM queries are lockfile-only, and uv inventory is static;
-- dependency-path correlation for npm, pnpm, Cargo, Go, and uv;
+- provider-backed `audit --native` inventory whose Go/Cargo queries are forced offline, npm/pnpm SBOM queries are lockfile-only, Yarn Berry relationship inventory is network-disabled and project-state-preserving, and uv inventory is static;
+- dependency-path correlation for npm, pnpm, Yarn Berry, Cargo, Go, and uv;
 - pnpm advisory path evidence preserves alias, workspace-project, scope, and dedupe metadata;
+- Yarn advisory paths retain exact locator/virtual/workspace relationship identity and are scoped to reachable stored resolutions;
 - uv workspace advisory paths come from the shared lock but retain the member project path that reaches the affected package;
 - versioned persisted advisory evidence at `.upm/audits/osv.json`;
 - evidence fingerprints bound to the exact scanned SBOM;
@@ -124,6 +138,7 @@ CycloneDX 1.7 and SPDX 2.3 are public formats.
 - npm delegates package identity/relationships to npm's native `--package-lock-only` SBOM. Exact workspace selection prunes sibling workspaces without changing the authoritative root document identity;
 - pnpm delegates package identity/relationships to pnpm's native `--lockfile-only` SBOM. Whole workspaces use native split output; selected members use exact path filters;
 - named-registry PURL qualifiers produced by pnpm are preserved;
+- Yarn Berry contributes only locators reachable from active project/workspace roots; npm-protocol resolutions may become npm PURLs, while workspace/file/git/patch and other non-registry sources remain non-registry;
 - Cargo relationships are admitted only where static lock identity supports trustworthy registry endpoints;
 - uv may establish PyPI identities directly from registry sources in authoritative `uv.lock`; selected workspace SBOMs are member-reachability scoped, while ambiguous/conditional relationships remain omitted rather than flattened;
 - native npm/pnpm document-local refs are remapped into stable aggregate identities;
@@ -155,15 +170,16 @@ Focused reconstructed/local validation completed for:
 - pnpm graph/impact parsing, workspace ownership, exact executable use, and logical occurrence metadata;
 - pnpm native SBOM split/filter planning plus CycloneDX/SPDX merge behavior;
 - real local npm lock-only graph and native SBOM workspace behavior using npm 10.9.2;
-- Cargo workspace ownership across explicit members, excludes, automatic path-dependency fallback, `package.workspace` non-membership behavior, and unrelated nested projects (**7 focused filesystem tests passed**).
+- Cargo workspace ownership across explicit members, excludes, automatic path-dependency fallback, `package.workspace` non-membership behavior, and unrelated nested projects (**7 focused filesystem tests passed**);
+- Yarn Berry execution compatibility against a simulated Yarn 2.4.3 runtime, confirming the provider no longer injects hardened-mode configuration while retaining network refusal, telemetry suppression, immutable cache, temporary install state, and resolved-binary execution (**1 focused test passed**).
 
-The repository regression suite now additionally covers uv shared-lock ownership across public graph/impact, provider coverage, CycloneDX/SPDX selection, native advisory inventory/path correlation, zero-network status blockers, root-owned batch planning, mixed Node+uv planning, and applied mutation receipts. These are included in `scripts/test-integration.sh` / `scripts/test-native-security.sh` but the latest full branch has not been materialized and executed end-to-end in this runtime.
+The repository regression suite additionally covers uv shared-lock ownership across public graph/impact, provider coverage, CycloneDX/SPDX selection, native advisory inventory/path correlation, zero-network status blockers, root-owned batch planning, mixed Node+uv planning, and applied mutation receipts. Yarn Berry has dedicated graph/impact/why/SBOM/advisory/fleet regressions plus the focused execution-compatibility driver. These are included in the local aggregate scripts, but the latest full branch has not been materialized and executed end-to-end in this runtime.
 
 ## Important remaining gaps
 
 The next highest-value work is narrower than before:
 
-1. add authoritative relationship/SBOM providers for Yarn/Poetry/PDM only where their native tools expose stable non-mutating evidence without heuristic lock parsing;
+1. promote the existing conservative Poetry/PDM structured-lock provider only after graph, why, impact, fleet impact, SBOM, advisory, and provider-status routing share one explicit uncertainty model;
 2. make mixed-ecosystem project/root component representation in aggregate SBOMs more explicit and uniform across providers;
 3. deepen package/cache provenance before any reclaim recommendation is automated;
 4. model source/API/runtime reachability separately from dependency-graph impact rather than upgrading dependency evidence into exploitability claims;
