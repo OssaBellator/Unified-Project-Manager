@@ -8,9 +8,7 @@ A stronger-sounding class must never be inferred from a weaker one.
 
 ### 1. Inventory presence
 
-A concrete package/module identity is represented in the selected static or native inventory.
-
-This says only that the package is part of the inventory scope. It does not establish that a project dependency path reaches it.
+A concrete package/module identity is represented in the selected static or native inventory. This says only that the package is part of the inventory scope.
 
 ### 2. Dependency-graph reachability
 
@@ -33,13 +31,7 @@ upm projects audit --native --go-import-reachability
 upm projects audit --native --go-import-reachability --apply
 ```
 
-After an applied native scan reports a vulnerable Go module already correlated to UPM's retained native dependency inventory, UPM may execute:
-
-```text
-go mod why -m <module>
-```
-
-through the existing `GOPROXY=off` wrapper.
+After an applied native scan reports a vulnerable Go module already correlated to UPM's retained native dependency inventory, UPM executes `go mod why -m <module>` through the existing `GOPROXY=off` wrapper.
 
 Go defines `go mod why -m` as a query over the **package import graph**, finding a path to any package in the target module rather than querying the module requirement graph.
 
@@ -62,10 +54,33 @@ test_imports_may_contribute = true
 
 These fields are emitted for both positive and negative successful queries because they describe the query semantics, not the answer.
 
+#### Go replacement identity
+
+A Go `replace` directive changes where the required module's contents come from; application import paths continue to use the **required/original module path**.
+
+UPM therefore keeps two identities when a replacement is active:
+
+```text
+queried_module = <logical required module path>
+effective_module = <replacement module identity used for scan/package identity>
+replacement_active = true
+```
+
+`go mod why -m` is always queried with `queried_module`, not `effective_module`.
+
+For example, if the dependency graph contains:
+
+```text
+require example.com/original v1.2.3
+replace example.com/original => example.com/fork v1.2.3-fixed
+```
+
+and OSV correlates a finding to the effective `example.com/fork` identity, UPM still asks Go why a package from `example.com/original` is imported. Both identities remain in the emitted evidence instead of silently swapping the import-query target to the replacement path.
+
 States are explicit:
 
 - `package-import-reachable` — the query succeeded and returned an import path in Go's any-build-tag package graph;
-- `not-package-import-reachable` — the query succeeded and Go reported that the main module does not need a package in that module under the same any-build-tag package graph;
+- `not-package-import-reachable` — the query succeeded and Go reported that the main module does not need a package in that module under the same package graph;
 - `query-failed` — the import query could not be completed. This is not converted into a negative reachability result.
 
 Each row also retains the already-known dependency path for context, but the dependency path and import path remain separate fields.
@@ -75,8 +90,6 @@ Each row also retains the already-known dependency path for context, but the dep
 Not implemented as a public evidence provider.
 
 Package-import reachability does not prove that a vulnerable function, method, type, symbol, or API is referenced.
-
-Current Go import evidence reports:
 
 ```text
 api_reachability = not-evaluated
@@ -88,8 +101,6 @@ Not implemented as a public evidence provider.
 
 Static import or symbol evidence would still not prove that a runtime execution path reaches the vulnerable operation with relevant inputs.
 
-Current Go import evidence reports:
-
 ```text
 runtime_reachability = not-evaluated
 ```
@@ -97,8 +108,6 @@ runtime_reachability = not-evaluated
 ### 6. Exploitability
 
 UPM does not infer exploitability from package inventory, dependency paths, imports, or advisory presence.
-
-Current reachability rows report:
 
 ```text
 exploitability = not-established
@@ -112,7 +121,7 @@ A future exploitability claim would need a separate evidence contract appropriat
 
 That requirement ensures UPM only runs the stronger import query for Go advisory impacts already correlated to the retained native inventory used by the scan. Compatibility-only `--native-go` does not currently retain the same correlation object and therefore is not accepted for this enrichment.
 
-Preview remains non-executing. The Go import query runs only after an applied native scan, and only for vulnerable Go module impacts. Multiple advisories for the same component/module share one import query.
+Preview remains non-executing. The Go import query runs only after an applied native scan, and only for vulnerable Go module impacts. Multiple advisories for the same component/logical-module pair share one import query.
 
 The query uses UPM's offline Go wrapper (`GOPROXY=off`). It is an explicit audit enrichment, not something ordinary `status` or policy evaluation runs silently.
 
@@ -128,7 +137,7 @@ persisted = false
 
 It is not written into `.upm/audits/osv.json`, and ordinary status does not replay or surface it as durable evidence.
 
-This avoids mixing two freshness models: the persisted OSV evidence is bound to an exact scanned SBOM, while package-import reachability depends on the source/package graph present when the explicit query runs.
+This avoids mixing two freshness models: persisted OSV evidence is bound to an exact scanned SBOM, while package-import reachability depends on the source/package graph present when the explicit query runs.
 
 A future persisted source-reachability format would need its own source-state fingerprint and freshness contract.
 
@@ -138,4 +147,4 @@ Source/import enrichment never changes a valid scanner result into a false clean
 
 If `go mod why -m` cannot complete, the row is `query-failed` with its error/return code. The independently valid OSV evidence may still be persisted because scanner validity and source-reachability enrichment are separate evidence layers.
 
-Likewise, a successful `not-package-import-reachable` result is not a statement that an advisory is impossible to exploit through all build configurations, generated code, reflection, plugins, runtime loading, or future source changes. It is only the result of Go's any-build-tag package-import graph queried at that moment.
+Likewise, a successful `not-package-import-reachable` result is not a statement that an advisory is impossible to exploit through all build configurations, generated code, reflection, plugins, runtime loading, or future source changes. It is only the result of Go's queried package-import graph at that moment.
