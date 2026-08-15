@@ -9,7 +9,7 @@ from .pnpm_graph import PnpmGraphError, PnpmGraphResult
 @dataclass(frozen=True)
 class PnpmImpact:
     component: str
-    project: str
+    workspace_project: str
     query: str
     ref: str
     alias: str
@@ -73,7 +73,7 @@ def analyze_pnpm_impact(result: PnpmGraphResult, package: str) -> list[PnpmImpac
         target_label = target.name + (f"@{target.version}" if target.version else "")
         impacts.append(PnpmImpact(
             component=result.plan.component,
-            project=project_path,
+            workspace_project=project_path,
             query=package,
             ref=target.ref,
             alias=target.alias,
