@@ -116,6 +116,18 @@ class SecurityScanResult:
         }
 
 
+def _dependency_component_count(bom: dict[str, Any]) -> int:
+    """Count dependency library components, excluding project topology anchors."""
+    components = bom.get("components")
+    if not isinstance(components, list):
+        return 0
+    return sum(
+        1
+        for component in components
+        if isinstance(component, dict) and component.get("type") == "library"
+    )
+
+
 def _native_go_results(
     graph: ProjectGraph,
     *,
@@ -155,7 +167,7 @@ def plan_security_scan(
     native_providers: bool = False,
 ) -> SecurityScanPlan:
     static_bom = cyclonedx_bom(graph)
-    static_count = len(static_bom.get("components", [])) if isinstance(static_bom.get("components"), list) else 0
+    static_count = _dependency_component_count(static_bom)
     has_go = any(component.ecosystem == "go" for component in graph.components)
     provider_coverage = provider_summary(graph)
     has_native_provider = provider_coverage["supported_components"] > 0
@@ -210,7 +222,7 @@ def execute_security_scan(
     except NativeCycloneDxError as exc:
         raise SecurityScanError(str(exc)) from exc
 
-    package_count = len(bom.get("components", [])) if isinstance(bom.get("components"), list) else 0
+    package_count = _dependency_component_count(bom)
     if package_count == 0:
         return SecurityScanResult(
             plan,
