@@ -30,7 +30,7 @@ def execute_native_graph_offline(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     which: Callable[[str], str | None] = shutil.which,
 ) -> NativeGraphResult:
-    """Execute an existing Go graph plan with module-proxy lookup disabled."""
+    """Execute a component-scoped Go graph with proxy and ambient workspace use disabled."""
     return execute_native_graph(plan, run=_offline_runner(run), which=which)
 
 
@@ -42,7 +42,7 @@ def query_native_why_offline(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     which: Callable[[str], str | None] = shutil.which,
 ) -> tuple[list[NativeWhyResult], list[NativeGraphSkip]]:
-    """Run `go mod why -m` with GOPROXY=off while retaining component scope."""
+    """Run component-scoped `go mod why -m` with GOPROXY=off and GOWORK=off."""
     return query_native_why(
         graph,
         module,
