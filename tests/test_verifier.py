@@ -44,6 +44,22 @@ class NativeVerificationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("needs update", result.stderr)
 
+    def test_execute_uses_resolved_binary_and_go_component_disables_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph = ProjectGraph(root, [Component("go", root, "go", manifests=["go.mod"])])
+            plan = plan_native_verification(graph)[0][0]
+            calls = []
+
+            def fake_run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            result = execute_verification(plan, run=fake_run, which=lambda _name: "/toolchains/go")
+            self.assertTrue(result.succeeded)
+            self.assertEqual(calls[0][0][0], "/toolchains/go")
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], "off")
+
     def test_conflicting_lockfiles_are_skipped_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
