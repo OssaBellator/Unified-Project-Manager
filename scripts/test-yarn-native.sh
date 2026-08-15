@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 for test_file in \
+  tests/test_yarn_execution_policy.py \
   tests/test_yarn_graph.py \
   tests/test_yarn_execution_compat.py \
   tests/test_yarn_impact.py \
