@@ -87,15 +87,15 @@ PNPM_PROVIDER = NativeProviderCapability(
     provider='pnpm-lock-tree',
     ecosystem='node',
     manager='pnpm',
-    evidence='pnpm logical dependency tree reconstructed from pnpm-lock state',
+    evidence='pnpm logical dependency tree plus native lockfile-only SBOM provenance',
     graph_scope='logical-dependency-tree',
     why_scope='logical-dependency-tree',
     impact_scope='logical-dependency-tree',
-    source='pnpm list --depth Infinity --json --lockfile-only',
+    source='pnpm list --depth Infinity --json --lockfile-only + pnpm sbom --lockfile-only',
     execution=True,
     network='none',
     mutation='project-read-only',
-    supports_sbom_relationships=False,
+    supports_sbom_relationships=True,
 )
 
 CARGO_PROVIDER = NativeProviderCapability(
