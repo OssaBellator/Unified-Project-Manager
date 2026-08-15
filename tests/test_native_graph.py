@@ -116,8 +116,8 @@ class NativeSbomTests(unittest.TestCase):
             plan = NativeGraphPlan(".:go", "go", "go", root, ("go",), ("go",))
             bom = cyclonedx_bom_with_native(graph, [NativeGraphResult(plan, modules, edges, 0)])
             refs = {item["bom-ref"]: item for item in bom["components"]}
-            self.assertIn("pkg:golang/example.com%2Fa@v1.2.0", refs)
-            self.assertIn("pkg:golang/example.com%2Fnew@v1.1.0", refs)
+            self.assertIn("pkg:golang/example.com/a@v1.2.0", refs)
+            self.assertIn("pkg:golang/example.com/new@v1.1.0", refs)
             local = next(item for item in bom["components"] if item["name"] == "example.com/local")
             self.assertNotIn("version", local)
             self.assertNotIn("purl", local)
