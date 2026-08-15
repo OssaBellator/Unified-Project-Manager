@@ -59,6 +59,22 @@ class PolicyTests(unittest.TestCase):
             report = evaluate_policy(discover(root))
             self.assertIn("policy.native-verification-required", {item.code for item in report.violations})
 
+    def test_cache_integrity_coverage_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "requirements.txt").write_text("requests==2\n", encoding="utf-8")
+            (root / "upm.toml").write_text("[policy]\nrequire_cache_integrity_verification=true\n", encoding="utf-8")
+            report = evaluate_policy(discover(root))
+            self.assertIn("policy.cache-integrity-verification-required", {item.code for item in report.violations})
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"packageManager":"pnpm@10"}', encoding="utf-8")
+            (root / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+            (root / "upm.toml").write_text("[policy]\nrequire_cache_integrity_verification=true\n", encoding="utf-8")
+            report = evaluate_policy(discover(root))
+            self.assertNotIn("policy.cache-integrity-verification-required", {item.code for item in report.violations})
+
     def test_warning_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
