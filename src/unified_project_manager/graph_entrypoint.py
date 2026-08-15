@@ -8,10 +8,9 @@ from pathlib import Path
 
 from .cargo_graph import CargoGraphError, execute_cargo_graph, plan_cargo_graphs
 from .discovery import discover
-from .models import ProjectGraph
 from .native_graph import NativeGraphError, execute_native_graph, plan_native_graph
 from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
-from .operations import OperationError, select_component
+from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,21 +20,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("path", nargs="?", default=".")
     parser.add_argument("--component", help="Limit native graph querying to one component")
-    parser.add_argument("--preview", action="store_true", help="Show read-only native graph commands without executing them")
+    parser.add_argument("--preview", action="store_true", help="Show read-only native graph commands/sources without executing them")
     parser.add_argument("--all-edges", action="store_true", help="For Go, include edges from non-selected source versions")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--native", action="store_true", help=argparse.SUPPRESS)
     return parser
-
-
-def _selected_graph(graph: ProjectGraph, selector: str | None) -> ProjectGraph:
-    if selector is None:
-        return graph
-    try:
-        component = select_component(graph, selector)
-    except OperationError as exc:
-        raise ValueError(str(exc)) from exc
-    return ProjectGraph(graph.root, [component], graph.workspaces)
 
 
 def native_graph_command(argv: list[str]) -> int:
@@ -44,18 +33,27 @@ def native_graph_command(argv: list[str]) -> int:
         root = Path(args.path).expanduser().resolve()
         if not root.is_dir():
             raise ValueError(f"project path is not a directory: {root}")
-        graph = _selected_graph(discover(root), args.component)
-        go_plans, go_skips = plan_native_graph(graph)
-        npm_plans = plan_npm_graphs(graph)
-        cargo_plans = plan_cargo_graphs(graph)
-    except (FileNotFoundError, NotADirectoryError, NativeGraphError, NpmGraphError, CargoGraphError, ValueError) as exc:
+        graph = discover(root)
+        go_plans, go_skips = plan_native_graph(graph, selector=args.component)
+        npm_plans = plan_npm_graphs(graph, selector=args.component)
+        cargo_plans = plan_cargo_graphs(graph, selector=args.component)
+        uv_plans = plan_uv_graphs(graph, selector=args.component)
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        NativeGraphError,
+        NpmGraphError,
+        CargoGraphError,
+        UvGraphError,
+        ValueError,
+    ) as exc:
         if args.as_json:
             print(json.dumps({"error": str(exc)}, indent=2))
         else:
             print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    handled_components = {plan.component for plan in [*npm_plans, *cargo_plans]}
+    handled_components = {plan.component for plan in [*npm_plans, *cargo_plans, *uv_plans]}
     skips = [skip for skip in go_skips if skip.component not in handled_components]
 
     if args.preview:
@@ -70,14 +68,19 @@ def native_graph_command(argv: list[str]) -> int:
             plans.append({"provider": "npm-lock-tree", **plan.to_dict(root), "commands": [list(plan.argv)]})
         for plan in cargo_plans:
             plans.append({"provider": "cargo-metadata", **plan.to_dict(root), "commands": [list(plan.argv)]})
+        for plan in uv_plans:
+            plans.append({"provider": "uv-lock", **plan.to_dict(root), "commands": []})
         payload = {"executed": False, "plans": plans, "skips": [skip.to_dict() for skip in skips]}
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             for item in plans:
                 print(f"{item['component']} [{item['provider']}]")
-                for command in item["commands"]:
-                    print(f"  {shlex.join(command)}")
+                if item["commands"]:
+                    for command in item["commands"]:
+                        print(f"  {shlex.join(command)}")
+                else:
+                    print(f"  static source: {item.get('lockfile', item.get('source', 'native state'))}")
             for skip in skips:
                 print(f"- {skip.component}: skipped ({skip.reason})")
         return 0 if plans else 1
@@ -85,12 +88,15 @@ def native_graph_command(argv: list[str]) -> int:
     go_results = [execute_native_graph(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
+    uv_results = [execute_uv_graph(plan) for plan in uv_plans]
     results = [
         {"provider": "go-modules", **result.to_dict(root)} for result in go_results
     ] + [
         {"provider": "npm-lock-tree", **result.to_dict(root)} for result in npm_results
     ] + [
         {"provider": "cargo-metadata", **result.to_dict(root)} for result in cargo_results
+    ] + [
+        {"provider": "uv-lock", **result.to_dict(root)} for result in uv_results
     ]
 
     if args.as_json:
@@ -159,10 +165,33 @@ def native_graph_command(argv: list[str]) -> int:
                 kinds = ",".join(edge.kinds)
                 print(f"    {source_label} -> {target_label} [{kinds}]")
 
+        for result in uv_results:
+            print(f"{result.plan.component} [uv-lock]")
+            if not result.succeeded:
+                print(f"  x uv.lock graph failed: {result.error}")
+                continue
+            packages = {package.package_id: package for package in result.packages}
+            print("  universal lock packages:")
+            for package in result.packages:
+                marker = " [project]" if package.project_member else ""
+                print(f"    {package.name}@{package.version}{marker}")
+            print("  dependency edges:")
+            for edge in result.edges:
+                source = packages.get(edge.source_id)
+                source_label = f"{source.name}@{source.version}" if source else edge.source_id
+                marker = f" if {edge.marker}" if edge.marker else ""
+                if edge.target_id:
+                    target = packages.get(edge.target_id)
+                    target_label = f"{target.name}@{target.version}" if target else edge.target_id
+                    print(f"    {source_label} -> {target_label}{marker}")
+                else:
+                    candidates = ", ".join(edge.candidate_ids) or "none"
+                    print(f"    {source_label} -> {edge.dependency_name}{marker} [ambiguous candidates: {candidates}]")
+
         for skip in skips:
             print(f"- {skip.component}: skipped ({skip.reason})")
 
-    all_results = [*go_results, *npm_results, *cargo_results]
+    all_results = [*go_results, *npm_results, *cargo_results, *uv_results]
     return 0 if all_results and all(result.succeeded for result in all_results) else 1
 
 
