@@ -13,6 +13,7 @@ for test_file in \
   tests/test_receipt_post_verification.py \
   tests/test_public_provider_integration.py \
   tests/test_fleet_provider_entrypoint.py \
+  tests/test_fleet_status_entrypoint.py \
   tests/test_spdx_uv_semantics.py \
   tests/test_status_evidence_integration.py \
   tests/test_audit_status_integration.py \
