@@ -4,6 +4,7 @@ from typing import Any
 
 from .models import ProjectGraph
 from .sbom import cyclonedx_bom_with_native, purl_for
+from .uv_scope import uv_scope_package_ids
 
 
 def _add_property(entry: dict[str, Any], name: str, value: str) -> None:
@@ -21,13 +22,13 @@ def cyclonedx_bom_with_providers(
     cargo_results: list[object] | None = None,
     uv_results: list[object] | None = None,
 ) -> dict[str, Any]:
-    """Enrich a CycloneDX BOM with authoritative provider relationships.
+    """Enrich a CycloneDX BOM with authoritative provider evidence.
 
     Go selected-module results may add concrete components and relationships.
-    npm/Cargo/uv graph results add relationships only when endpoint identities
-    were already supported by static native provenance. uv marker-conditional or
-    ambiguous fork edges are intentionally not flattened into unconditional
-    CycloneDX dependency edges; omission counts remain explicit as properties.
+    npm/Cargo graph results add relationships only where package identity was
+    established elsewhere. uv.lock is itself authoritative package identity for
+    registry packages, so uv may add PyPI components directly while refusing to
+    relabel local/editable/path/git/url packages as registry artifacts.
     """
     bom = cyclonedx_bom_with_native(graph, go_results or [])
     components = {
@@ -110,6 +111,7 @@ def cyclonedx_bom_with_providers(
     for result in uv_results or []:
         if not getattr(result, "succeeded", False):
             continue
+        allowed = uv_scope_package_ids(result)
         package_refs: dict[str, str] = {}
         for package in getattr(result, "packages", []):
             package_id = getattr(package, "package_id", None)
@@ -118,31 +120,46 @@ def cyclonedx_bom_with_providers(
             source_kind = getattr(package, "source_kind", None)
             if not all(isinstance(value, str) and value for value in (package_id, name, version)):
                 continue
-            if source_kind != "registry":
+            if package_id not in allowed or source_kind != "registry":
                 continue
             try:
                 purl = purl_for("python", name, version)
             except ValueError:
                 continue
-            if purl not in components:
-                continue
+            entry = components.get(purl)
+            if entry is None:
+                entry = {
+                    "type": "library",
+                    "name": name,
+                    "version": version,
+                    "bom-ref": purl,
+                    "purl": purl,
+                }
+                components[purl] = entry
             package_refs[package_id] = purl
-            _add_property(components[purl], "upm:uv:identity-kind", "uv-lock-universal")
+            _add_property(entry, "upm:uv:identity-kind", "uv-lock-universal")
+            selected_component = getattr(getattr(result, "plan", None), "selected_component", None)
+            if isinstance(selected_component, str):
+                _add_property(entry, "upm:uv:scope-component", selected_component)
 
         conditional_omitted: dict[str, int] = {}
         ambiguous_omitted: dict[str, int] = {}
         for edge in getattr(result, "edges", []):
-            source = package_refs.get(getattr(edge, "source_id", ""))
-            target = package_refs.get(getattr(edge, "target_id", ""))
-            if not source:
+            source_id = getattr(edge, "source_id", "")
+            if source_id not in allowed:
                 continue
-            if getattr(edge, "ambiguous", False) or not target:
-                ambiguous_omitted[source] = ambiguous_omitted.get(source, 0) + 1
+            source = package_refs.get(source_id)
+            target_id = getattr(edge, "target_id", "")
+            target = package_refs.get(target_id) if target_id in allowed else None
+            if getattr(edge, "ambiguous", False) or not target_id:
+                if source:
+                    ambiguous_omitted[source] = ambiguous_omitted.get(source, 0) + 1
                 continue
             if getattr(edge, "marker", None):
-                conditional_omitted[source] = conditional_omitted.get(source, 0) + 1
+                if source:
+                    conditional_omitted[source] = conditional_omitted.get(source, 0) + 1
                 continue
-            if source != target:
+            if source and target and source != target:
                 dependency_sets.setdefault(source, set()).add(target)
 
         for ref, count in conditional_omitted.items():
