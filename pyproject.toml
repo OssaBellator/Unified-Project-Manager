@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "unified-project-manager"
 version = "0.1.0"
-description = "A package-manager-agnostic control plane for project discovery and health."
+description = "A package-manager-agnostic control plane for project discovery, health, and native workflows."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Unified Project Manager contributors" }]
 dependencies = []
 
 [project.scripts]
-upm = "unified_project_manager.cli:main"
+upm = "unified_project_manager.entrypoint:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
