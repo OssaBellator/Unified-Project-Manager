@@ -15,6 +15,7 @@ from unified_project_manager.npm_graph import (
     NpmGraphPlan,
     NpmGraphResult,
     execute_npm_graph,
+    npm_provider_component_keys,
     parse_npm_ls,
     plan_npm_graphs,
 )
@@ -69,6 +70,45 @@ class NpmGraphTests(unittest.TestCase):
             (root / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
             plans = plan_npm_graphs(discover(root))
             self.assertEqual(plans[0].argv, ("npm", "ls", "--all", "--json", "--package-lock-only"))
+
+    def test_workspace_member_selector_promotes_to_root_lock_with_exact_workspace_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text(json.dumps({
+                "name": "root", "private": True, "packageManager": "npm@11", "workspaces": ["packages/*"]
+            }), encoding="utf-8")
+            (root / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+            member = root / "packages" / "app"
+            member.mkdir(parents=True)
+            (member / "package.json").write_text('{"name":"app","version":"1.0.0"}', encoding="utf-8")
+            graph = discover(root)
+
+            plans = plan_npm_graphs(graph, selector="app")
+
+            self.assertEqual(len(plans), 1)
+            self.assertEqual(plans[0].component, ".:node")
+            self.assertEqual(plans[0].cwd, root)
+            self.assertEqual(plans[0].workspace_selector, "./packages/app")
+            self.assertEqual(plans[0].argv[-2:], ("--workspace", "./packages/app"))
+            self.assertEqual(npm_provider_component_keys(graph), {".:node", "packages/app:node"})
+
+    def test_workspace_root_is_planned_once_for_unscoped_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text(json.dumps({
+                "name": "root", "private": True, "packageManager": "npm@11", "workspaces": ["packages/*"]
+            }), encoding="utf-8")
+            (root / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+            member = root / "packages" / "app"
+            member.mkdir(parents=True)
+            (member / "package.json").write_text('{"name":"app","packageManager":"npm@11"}', encoding="utf-8")
+            (member / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+
+            plans = plan_npm_graphs(discover(root))
+
+            self.assertEqual(len(plans), 1)
+            self.assertEqual(plans[0].cwd, root)
+            self.assertIsNone(plans[0].workspace_selector)
 
     def test_execute_uses_exact_resolved_npm_and_no_node_modules(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
