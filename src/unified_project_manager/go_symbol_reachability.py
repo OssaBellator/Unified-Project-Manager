@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+
+GOVULNCHECK_PROTOCOL_VERSION = "v1.0.0"
+
+
+class GoSymbolReachabilityError(ValueError):
+    """Raised when govulncheck symbol evidence cannot be interpreted safely."""
+
+
+@dataclass(frozen=True)
+class GovulncheckConfig:
+    protocol_version: str
+    scanner_name: str | None
+    scanner_version: str | None
+    database: str | None
+    database_last_modified: str | None
+    go_version: str | None
+    scan_level: str | None
+    scan_mode: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class GovulncheckFrame:
+    module: str
+    version: str | None
+    package: str | None
+    function: str | None
+    receiver: str | None
+    position: dict[str, Any] | None
+
+    @property
+    def symbol(self) -> str | None:
+        if not self.function:
+            return None
+        if self.receiver:
+            return f"{self.receiver}.{self.function}"
+        return self.function
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["symbol"] = self.symbol
+        return data
+
+
+@dataclass(frozen=True)
+class GovulncheckFinding:
+    osv: str
+    fixed_version: str | None
+    trace: tuple[GovulncheckFrame, ...]
+
+    @property
+    def level(self) -> str:
+        if self.trace and self.trace[0].function:
+            return "symbol"
+        if self.trace and self.trace[0].package:
+            return "package"
+        return "module"
+
+    @property
+    def vulnerable_frame(self) -> GovulncheckFrame | None:
+        return self.trace[0] if self.trace else None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "osv": self.osv,
+            "fixed_version": self.fixed_version,
+            "level": self.level,
+            "trace": [frame.to_dict() for frame in self.trace],
+        }
+
+
+@dataclass(frozen=True)
+class GovulncheckReport:
+    config: GovulncheckConfig
+    aliases: dict[str, tuple[str, ...]]
+    findings: tuple[GovulncheckFinding, ...]
+
+    @property
+    def symbol_findings(self) -> tuple[GovulncheckFinding, ...]:
+        return tuple(finding for finding in self.findings if finding.level == "symbol")
+
+    def advisory_ids(self, osv_id: str) -> tuple[str, ...]:
+        values = {osv_id, *self.aliases.get(osv_id, ())}
+        return tuple(sorted(values))
+
+    def matches_advisory(self, osv_id: str, advisory_id: str) -> bool:
+        return advisory_id in self.advisory_ids(osv_id)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "config": self.config.to_dict(),
+            "aliases": {key: list(value) for key, value in sorted(self.aliases.items())},
+            "findings": [finding.to_dict() for finding in self.findings],
+            "symbol_findings": [finding.to_dict() for finding in self.symbol_findings],
+        }
+
+
+@dataclass(frozen=True)
+class GovulncheckSymbolPlan:
+    cwd: Path
+    database: Path
+    database_uri: str
+    argv: tuple[str, ...]
+    environment: dict[str, str]
+    telemetry_mode_required: str = "off"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cwd": str(self.cwd),
+            "database": str(self.database),
+            "database_uri": self.database_uri,
+            "argv": list(self.argv),
+            "environment": dict(self.environment),
+            "telemetry_mode_required": self.telemetry_mode_required,
+            "network": "disabled-by-local-db-and-go-environment",
+            "project_mutation": "not-planned",
+            "interpretation": (
+                "pre-public govulncheck source/symbol plan; symbol findings are static call-graph evidence, "
+                "not runtime/data-flow reachability or exploitability"
+            ),
+        }
+
+
+def _decode_stream(text: str) -> list[dict[str, Any]]:
+    decoder = json.JSONDecoder()
+    index = 0
+    messages: list[dict[str, Any]] = []
+    while index < len(text):
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index >= len(text):
+            break
+        try:
+            value, index = decoder.raw_decode(text, index)
+        except json.JSONDecodeError as exc:
+            raise GoSymbolReachabilityError(f"Could not parse govulncheck JSON stream: {exc}") from exc
+        if not isinstance(value, dict):
+            raise GoSymbolReachabilityError("govulncheck JSON stream contained a non-object message")
+        messages.append(value)
+    return messages
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _parse_config(value: object) -> GovulncheckConfig:
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck config message is not an object")
+    protocol = value.get("protocol_version")
+    if protocol != GOVULNCHECK_PROTOCOL_VERSION:
+        raise GoSymbolReachabilityError(
+            f"Unsupported govulncheck protocol version: {protocol!r}; expected {GOVULNCHECK_PROTOCOL_VERSION}"
+        )
+    config = GovulncheckConfig(
+        protocol_version=protocol,
+        scanner_name=_optional_string(value.get("scanner_name")),
+        scanner_version=_optional_string(value.get("scanner_version")),
+        database=_optional_string(value.get("db")),
+        database_last_modified=_optional_string(value.get("db_last_modified")),
+        go_version=_optional_string(value.get("go_version")),
+        scan_level=_optional_string(value.get("scan_level")),
+        scan_mode=_optional_string(value.get("scan_mode")),
+    )
+    if config.scan_mode not in {None, "source"}:
+        raise GoSymbolReachabilityError(
+            f"govulncheck stream is not source-mode evidence: {config.scan_mode!r}"
+        )
+    if config.scan_level not in {None, "symbol"}:
+        raise GoSymbolReachabilityError(
+            f"govulncheck stream is not symbol-level evidence: {config.scan_level!r}"
+        )
+    return config
+
+
+def _parse_position(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck frame position is not an object")
+    position: dict[str, Any] = {}
+    filename = value.get("filename")
+    if isinstance(filename, str) and filename:
+        position["filename"] = filename
+    for name in ("offset", "line", "column"):
+        item = value.get(name)
+        if isinstance(item, int) and not isinstance(item, bool):
+            position[name] = item
+    return position
+
+
+def _parse_frame(value: object) -> GovulncheckFrame:
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck finding trace contained a non-object frame")
+    module = value.get("module")
+    if not isinstance(module, str) or not module:
+        raise GoSymbolReachabilityError("govulncheck finding frame is missing module identity")
+    return GovulncheckFrame(
+        module=module,
+        version=_optional_string(value.get("version")),
+        package=_optional_string(value.get("package")),
+        function=_optional_string(value.get("function")),
+        receiver=_optional_string(value.get("receiver")),
+        position=_parse_position(value.get("position")),
+    )
+
+
+def _parse_finding(value: object) -> GovulncheckFinding:
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck finding message is not an object")
+    osv = value.get("osv")
+    if not isinstance(osv, str) or not osv:
+        raise GoSymbolReachabilityError("govulncheck finding is missing an OSV identifier")
+    trace_value = value.get("trace", [])
+    if not isinstance(trace_value, list):
+        raise GoSymbolReachabilityError("govulncheck finding trace is not an array")
+    return GovulncheckFinding(
+        osv=osv,
+        fixed_version=_optional_string(value.get("fixed_version")),
+        trace=tuple(_parse_frame(frame) for frame in trace_value),
+    )
+
+
+def _parse_osv_aliases(value: object) -> tuple[str, tuple[str, ...]]:
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck OSV message is not an object")
+    osv_id = value.get("id")
+    if not isinstance(osv_id, str) or not osv_id:
+        raise GoSymbolReachabilityError("govulncheck OSV message is missing its id")
+    aliases = value.get("aliases", [])
+    if aliases is None:
+        aliases = []
+    if not isinstance(aliases, list) or not all(isinstance(item, str) for item in aliases):
+        raise GoSymbolReachabilityError("govulncheck OSV aliases are not a string array")
+    return osv_id, tuple(sorted(set(item for item in aliases if item)))
+
+
+def parse_govulncheck_symbol_stream(text: str) -> GovulncheckReport:
+    """Parse govulncheck v1 streaming JSON without flattening evidence levels.
+
+    Official govulncheck JSON may emit module-, package-, and symbol-level
+    findings for the same vulnerability. Only findings whose first trace frame
+    contains a function are classified as symbol-level/called-symbol evidence.
+    Message order after the required leading config message is not assumed.
+    """
+
+    messages = _decode_stream(text)
+    if not messages:
+        raise GoSymbolReachabilityError("govulncheck JSON stream is empty")
+    first = messages[0]
+    if set(first) != {"config"}:
+        raise GoSymbolReachabilityError("govulncheck config must be the first and only field in the first message")
+    config = _parse_config(first["config"])
+
+    aliases: dict[str, tuple[str, ...]] = {}
+    findings: list[GovulncheckFinding] = []
+    allowed_fields = {"config", "progress", "SBOM", "osv", "finding"}
+    for index, message in enumerate(messages[1:], start=2):
+        populated = [key for key in allowed_fields if key in message and message[key] is not None]
+        unknown = set(message) - allowed_fields
+        if unknown:
+            raise GoSymbolReachabilityError(
+                f"govulncheck message {index} contains unsupported field(s): {', '.join(sorted(unknown))}"
+            )
+        if len(populated) != 1:
+            raise GoSymbolReachabilityError(
+                f"govulncheck message {index} must contain exactly one populated protocol field"
+            )
+        field = populated[0]
+        if field == "config":
+            raise GoSymbolReachabilityError("govulncheck stream contained more than one config message")
+        if field == "osv":
+            osv_id, osv_aliases = _parse_osv_aliases(message[field])
+            aliases[osv_id] = osv_aliases
+        elif field == "finding":
+            findings.append(_parse_finding(message[field]))
+
+    return GovulncheckReport(
+        config=config,
+        aliases=dict(sorted(aliases.items())),
+        findings=tuple(findings),
+    )
+
+
+def build_govulncheck_symbol_plan(
+    cwd: str | Path,
+    local_database: str | Path,
+    *,
+    executable: str = "govulncheck",
+) -> GovulncheckSymbolPlan:
+    """Build an offline, pre-public govulncheck symbol-analysis plan.
+
+    The caller must separately verify that Go telemetry mode is already `off`.
+    UPM intentionally does not mutate the user's telemetry configuration merely
+    to execute this provider.
+    """
+
+    project = Path(cwd).expanduser().resolve()
+    database = Path(local_database).expanduser().resolve()
+    if not project.is_dir():
+        raise GoSymbolReachabilityError(f"Go symbol-analysis cwd is not a directory: {project}")
+    if not database.is_dir():
+        raise GoSymbolReachabilityError(f"Go vulnerability database is not a directory: {database}")
+    if not executable:
+        raise GoSymbolReachabilityError("govulncheck executable name/path is empty")
+
+    database_uri = database.as_uri()
+    return GovulncheckSymbolPlan(
+        cwd=project,
+        database=database,
+        database_uri=database_uri,
+        argv=(
+            executable,
+            "-format", "json",
+            "-mode", "source",
+            "-scan", "symbol",
+            "-db", database_uri,
+            "./...",
+        ),
+        environment={
+            "GOPROXY": "off",
+            "GOWORK": "off",
+            "GOSUMDB": "off",
+            "GOTOOLCHAIN": "local",
+        },
+    )
+
+
+def validate_govulncheck_telemetry_mode(mode: str) -> None:
+    """Require telemetry to be disabled before subprocess execution is allowed."""
+    if mode != "off":
+        raise GoSymbolReachabilityError(
+            "govulncheck symbol analysis requires Go telemetry mode 'off'; "
+            "UPM will not change the user's telemetry configuration automatically"
+        )
