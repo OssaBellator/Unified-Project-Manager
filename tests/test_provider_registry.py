@@ -34,6 +34,22 @@ class ProviderRegistryTests(unittest.TestCase):
             pnpm_coverage = next(item for item in summary['coverage'] if item['manager'] == 'pnpm')
             self.assertFalse(pnpm_coverage['provider']['supports_sbom_relationships'])
 
+    def test_pnpm_workspace_member_inherits_root_relationship_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'package.json').write_text('{"name":"root","packageManager":"pnpm@11"}', encoding='utf-8')
+            (root / 'pnpm-workspace.yaml').write_text('packages:\n  - packages/*\n', encoding='utf-8')
+            (root / 'pnpm-lock.yaml').write_text("lockfileVersion: '9.0'\n", encoding='utf-8')
+            member = root / 'packages' / 'app'
+            member.mkdir(parents=True)
+            (member / 'package.json').write_text('{"name":"app"}', encoding='utf-8')
+
+            coverage = {item.component: item for item in provider_coverage(discover(root))}
+
+            self.assertTrue(coverage['.:node'].supported)
+            self.assertTrue(coverage['packages/app:node'].supported)
+            self.assertEqual(coverage['packages/app:node'].provider.provider, 'pnpm-lock-tree')
+
     def test_network_guarantees_are_provider_specific(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
