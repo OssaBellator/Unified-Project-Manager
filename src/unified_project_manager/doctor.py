@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from collections import defaultdict
 from collections.abc import Callable
 
 from .installed import installed_findings
 from .models import DoctorReport, Finding, ProjectGraph
 from .state import integrity_findings
+from .toolchains import toolchain_findings
 
 MANAGER_EXECUTABLES = {
     "npm": "npm", "pnpm": "pnpm", "yarn": "yarn", "bun": "bun",
     "uv": "uv", "pip": "python", "poetry": "poetry", "pdm": "pdm", "cargo": "cargo",
 }
-TOOLCHAIN_EXECUTABLES = {"node": "node", "python": "python", "rust": "rustc"}
 
 
 def _normalized_dependency(ecosystem: str, name: str) -> str:
@@ -23,7 +24,13 @@ def _normalized_dependency(ecosystem: str, name: str) -> str:
     return value
 
 
-def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.which, *, deep: bool = False) -> DoctorReport:
+def diagnose(
+    graph: ProjectGraph,
+    which: Callable[[str], str | None] = shutil.which,
+    *,
+    deep: bool = False,
+    run_version: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> DoctorReport:
     report = DoctorReport(root=graph.root)
     if not graph.components:
         report.findings.append(Finding("project.empty", "warning", "No supported project manifests were discovered."))
@@ -93,16 +100,6 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
         else:
             report.findings.append(Finding("manager.unknown", "warning", f"Could not infer a package manager for this {component.ecosystem} component.", key, "Add a native lockfile or package-manager declaration."))
 
-        for toolchain in component.toolchains:
-            executable = TOOLCHAIN_EXECUTABLES.get(toolchain.name, toolchain.name)
-            marker = ("toolchain", executable)
-            if marker in checked_executables:
-                continue
-            checked_executables.add(marker)
-            if which(executable) is None:
-                requirement = f" ({toolchain.requirement})" if toolchain.requirement else ""
-                report.findings.append(Finding("toolchain.unavailable", "warning", f"Toolchain '{toolchain.name}'{requirement} is not available on PATH.", key))
-
         local: dict[str, list] = defaultdict(list)
         for dependency in component.dependencies:
             normalized = _normalized_dependency(component.ecosystem, dependency.name)
@@ -120,6 +117,7 @@ def diagnose(graph: ProjectGraph, which: Callable[[str], str | None] = shutil.wh
             rendered = ", ".join(f"{component}={requirement or '*'}" for component, requirement in declarations)
             report.findings.append(Finding("dependency.version-divergence", "info", f"{ecosystem} dependency '{name}' uses different requirements across components: {rendered}."))
 
+    report.findings.extend(toolchain_findings(graph, which=which, run=run_version))
     report.findings.extend(integrity_findings(graph))
     if deep:
         report.findings.extend(installed_findings(graph))
