@@ -97,9 +97,27 @@ def _python_lock_reachability_states(
     return admitted, conditional_only, possible_only
 
 
+def python_lock_inventory_states(result: PythonLockGraphResult) -> dict[str, str]:
+    """Return the public fleet/SBOM certainty state for admitted package ids.
+
+    If a package has both a definite/conditional resolved path and an ambiguous
+    alternative, the stronger resolved state wins. ``possible`` is reserved for
+    packages whose project reachability depends entirely on one or more ambiguous
+    lock references.
+    """
+    admitted, conditional_only, possible_only = _python_lock_reachability_states(result)
+    return {
+        package_id: (
+            _POSSIBLE if package_id in possible_only
+            else _CONDITIONAL if package_id in conditional_only
+            else _UNCONDITIONAL
+        )
+        for package_id in admitted
+    }
+
+
 def python_lock_scope_ids(result: PythonLockGraphResult) -> set[str]:
-    admitted, _conditional, _possible = _python_lock_reachability_states(result)
-    return admitted
+    return set(python_lock_inventory_states(result))
 
 
 def _registry_purl(package: object) -> str | None:
@@ -219,8 +237,6 @@ def merge_python_lock_cyclonedx(base: dict[str, Any], results: list[PythonLockGr
         ambiguous_omitted: dict[str, int] = defaultdict(int)
         unresolved_omitted: dict[str, int] = defaultdict(int)
         non_registry_omitted: dict[str, int] = defaultdict(int)
-        occurrence = f"{result.plan.component}:{result.plan.lockfile.name}"
-
         for package in result.packages:
             if package.package_id not in allowed:
                 continue
@@ -241,18 +257,21 @@ def merge_python_lock_cyclonedx(base: dict[str, Any], results: list[PythonLockGr
             _add_property(entry, f"upm:{result.plan.manager}:identity-kind", "structured-lock")
             if package.groups:
                 _add_property(entry, f"upm:{result.plan.manager}:groups", ",".join(package.groups))
-            if package.package_id in conditional_only:
-                _add_property(entry, f"upm:{result.plan.manager}:conditional-reachability", "true")
-                _add_property(entry, f"upm:{result.plan.manager}:reachability", "conditional")
             if package.package_id in possible_only:
-                _add_property(entry, f"upm:{result.plan.manager}:ambiguous-reachability", "true")
                 _add_property(entry, f"upm:{result.plan.manager}:reachability", "possible")
-            _add_occurrence(entry, occurrence)
+                _add_property(entry, f"upm:{result.plan.manager}:ambiguous-reachability", "true")
+            elif package.package_id in conditional_only:
+                _add_property(entry, f"upm:{result.plan.manager}:reachability", "conditional")
+                _add_property(entry, f"upm:{result.plan.manager}:conditional-reachability", "true")
+            else:
+                _add_property(entry, f"upm:{result.plan.manager}:reachability", "unconditional")
+            _add_occurrence(entry, f"{result.plan.component}:{result.plan.lockfile.name}")
 
         for edge in result.edges:
             source = refs.get(edge.source_id)
             if not source:
                 continue
+            target = refs.get(edge.target_id or "")
             if edge.ambiguous:
                 ambiguous_omitted[source] += 1
                 continue
@@ -260,22 +279,16 @@ def merge_python_lock_cyclonedx(base: dict[str, Any], results: list[PythonLockGr
                 unresolved_omitted[source] += 1
                 continue
             target_package = package_by_id.get(edge.target_id)
-            target = refs.get(edge.target_id)
-            if target is None:
-                if target_package is not None and _registry_purl(target_package) is None:
-                    non_registry_omitted[source] += 1
-                else:
-                    unresolved_omitted[source] += 1
+            if target_package is not None and _registry_purl(target_package) is None:
+                non_registry_omitted[source] += 1
                 continue
-            if edge.source_id in possible_only:
-                ambiguous_omitted[source] += 1
+            if not target:
                 continue
             if _edge_is_conditional(edge):
                 conditional_omitted[source] += 1
                 continue
             if source != target:
                 dependency_sets.setdefault(source, set()).add(target)
-
         for ref, count in conditional_omitted.items():
             _add_property(components[ref], f"upm:{result.plan.manager}:conditional-edges-omitted", str(count))
         for ref, count in ambiguous_omitted.items():
@@ -285,20 +298,12 @@ def merge_python_lock_cyclonedx(base: dict[str, Any], results: list[PythonLockGr
         for ref, count in non_registry_omitted.items():
             _add_property(components[ref], f"upm:{result.plan.manager}:non-registry-edges-omitted", str(count))
 
-    valid_refs = set(components)
-    cleaned_dependencies: dict[str, set[str]] = {}
-    for ref, values in dependency_sets.items():
-        if ref not in valid_refs:
-            continue
-        kept = {value for value in values if value in valid_refs and value != ref}
-        if kept:
-            cleaned_dependencies[ref] = kept
-
     merged["components"] = [components[ref] for ref in sorted(components)]
-    if cleaned_dependencies:
+    if dependency_sets:
         merged["dependencies"] = [
             {"ref": ref, "dependsOn": sorted(values)}
-            for ref, values in sorted(cleaned_dependencies.items())
+            for ref, values in sorted(dependency_sets.items())
+            if values
         ]
     else:
         merged.pop("dependencies", None)
@@ -328,35 +333,23 @@ def _spdx_package(name: str, version: str, purl: str) -> dict[str, Any]:
     }
 
 
-def _package_purl(package: dict[str, Any]) -> str | None:
-    for ref in package.get("externalRefs", []):
-        if not isinstance(ref, dict):
-            continue
-        if ref.get("referenceType") == "purl" and isinstance(ref.get("referenceLocator"), str):
-            return ref["referenceLocator"]
-    return None
-
-
 def merge_python_lock_spdx(base: dict[str, Any], results: list[PythonLockGraphResult]) -> dict[str, Any]:
     merged = copy.deepcopy(base)
-
-    # SPDX 2.3 static package records do not retain per-component occurrence
-    # provenance. Remove structured-lock package PURLs before rebuilding the
-    # certainty-aware subset. Public callers should additionally use
-    # suppress_python_lock_static_inventory before constructing the base document
-    # so an identical PURL observed by another component is never lost here.
     provider_purls = _result_registry_purls(results)
-    removed_ids: set[str] = set()
-    retained_packages: list[dict[str, Any]] = []
-    for package in merged.get("packages", []):
-        if not isinstance(package, dict) or not isinstance(package.get("SPDXID"), str):
-            continue
-        if _package_purl(package) in provider_purls:
-            removed_ids.add(package["SPDXID"])
-        else:
-            retained_packages.append(package)
-    merged["packages"] = retained_packages
-
+    # SPDX has no occurrence evidence equivalent to CycloneDX, so a static seed
+    # matching a structured-lock provider cannot be distinguished from that
+    # provider's own broad adapter observation. Native callers therefore suppress
+    # provider-owned static inventory before base SPDX construction. This fallback
+    # keeps direct merge callers conservative as well.
+    merged["packages"] = [
+        entry for entry in merged.get("packages", [])
+        if not any(
+            isinstance(ref, dict)
+            and ref.get("referenceType") == "purl"
+            and ref.get("referenceLocator") in provider_purls
+            for ref in entry.get("externalRefs", [])
+        )
+    ]
     packages: dict[str, dict[str, Any]] = {
         entry["SPDXID"]: entry
         for entry in merged.get("packages", [])
@@ -370,13 +363,12 @@ def merge_python_lock_spdx(base: dict[str, Any], results: list[PythonLockGraphRe
         kind = item.get("relationshipType")
         target = item.get("relatedSpdxElement")
         if all(isinstance(value, str) for value in (source, kind, target)):
-            if source not in removed_ids and target not in removed_ids:
-                relationships.add((source, kind, target))
+            relationships.add((source, kind, target))
 
     for result in results:
         if not result.succeeded:
             continue
-        allowed, _conditional_only, possible_only = _python_lock_reachability_states(result)
+        allowed = python_lock_scope_ids(result)
         refs: dict[str, str] = {}
         for package in result.packages:
             if package.package_id not in allowed:
@@ -389,12 +381,10 @@ def merge_python_lock_spdx(base: dict[str, Any], results: list[PythonLockGraphRe
             packages.setdefault(spdx_id, _spdx_package(package.name, package.version, purl))
 
         for edge in result.edges:
-            if edge.ambiguous or edge.target_id is None or _edge_is_conditional(edge):
-                continue
-            if edge.source_id in possible_only:
+            if edge.ambiguous or _edge_is_conditional(edge):
                 continue
             source = refs.get(edge.source_id)
-            target = refs.get(edge.target_id)
+            target = refs.get(edge.target_id or "")
             if source and target and source != target:
                 relationships.add((source, "DEPENDS_ON", target))
 
