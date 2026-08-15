@@ -45,6 +45,7 @@ for test_file in \
   tests/test_security_impact.py \
   tests/test_workspace_health.py \
   tests/test_fleet_provider_entrypoint.py \
+  tests/test_fleet_provider_all_public.py \
   tests/test_fleet_status_entrypoint.py \
   tests/test_fleet_security.py \
   tests/test_fleet_audit_evidence_integration.py \
