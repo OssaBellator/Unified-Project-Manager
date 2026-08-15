@@ -18,11 +18,11 @@ class GovulncheckConfig:
     protocol_version: str
     scanner_name: str | None
     scanner_version: str | None
-    database: str | None
+    database: str
     database_last_modified: str | None
     go_version: str | None
-    scan_level: str | None
-    scan_mode: str | None
+    scan_level: str
+    scan_mode: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -161,25 +161,33 @@ def _parse_config(value: object) -> GovulncheckConfig:
         raise GoSymbolReachabilityError(
             f"Unsupported govulncheck protocol version: {protocol!r}; expected {GOVULNCHECK_PROTOCOL_VERSION}"
         )
-    config = GovulncheckConfig(
+
+    scan_mode = value.get("scan_mode")
+    if scan_mode != "source":
+        raise GoSymbolReachabilityError(
+            f"govulncheck stream is not explicit source-mode evidence: {scan_mode!r}"
+        )
+    scan_level = value.get("scan_level")
+    if scan_level != "symbol":
+        raise GoSymbolReachabilityError(
+            f"govulncheck stream is not explicit symbol-level evidence: {scan_level!r}"
+        )
+    database = value.get("db")
+    if not isinstance(database, str) or not database.startswith("file://"):
+        raise GoSymbolReachabilityError(
+            f"govulncheck stream is not backed by an explicit local file database: {database!r}"
+        )
+
+    return GovulncheckConfig(
         protocol_version=protocol,
         scanner_name=_optional_string(value.get("scanner_name")),
         scanner_version=_optional_string(value.get("scanner_version")),
-        database=_optional_string(value.get("db")),
+        database=database,
         database_last_modified=_optional_string(value.get("db_last_modified")),
         go_version=_optional_string(value.get("go_version")),
-        scan_level=_optional_string(value.get("scan_level")),
-        scan_mode=_optional_string(value.get("scan_mode")),
+        scan_level=scan_level,
+        scan_mode=scan_mode,
     )
-    if config.scan_mode not in {None, "source"}:
-        raise GoSymbolReachabilityError(
-            f"govulncheck stream is not source-mode evidence: {config.scan_mode!r}"
-        )
-    if config.scan_level not in {None, "symbol"}:
-        raise GoSymbolReachabilityError(
-            f"govulncheck stream is not symbol-level evidence: {config.scan_level!r}"
-        )
-    return config
 
 
 def _parse_position(value: object) -> dict[str, Any] | None:
@@ -245,7 +253,7 @@ def _parse_osv_aliases(value: object) -> tuple[str, tuple[str, ...]]:
 
 
 def parse_govulncheck_symbol_stream(text: str) -> GovulncheckReport:
-    """Parse govulncheck v1 streaming JSON without flattening evidence levels.
+    """Parse offline govulncheck v1 source/symbol JSON without flattening levels.
 
     Official govulncheck JSON may emit module-, package-, and symbol-level
     findings for the same vulnerability. Only findings whose first trace frame
