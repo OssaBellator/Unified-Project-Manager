@@ -5,6 +5,7 @@ from pathlib import Path
 from .cargo_workspace import CargoWorkspaceError, cargo_workspace_ownership, inspect_cargo_workspace
 from .models import Finding, ProjectGraph
 from .node_workspace import NodeWorkspaceError, inspect_node_workspace
+from .uv_workspace_health import uv_workspace_findings
 
 
 _SEVERITY = {
@@ -102,6 +103,10 @@ def cargo_workspace_findings(graph: ProjectGraph) -> list[Finding]:
 
 def workspace_findings(graph: ProjectGraph) -> list[Finding]:
     return sorted(
-        [*node_workspace_findings(graph), *cargo_workspace_findings(graph)],
+        [
+            *node_workspace_findings(graph),
+            *cargo_workspace_findings(graph),
+            *uv_workspace_findings(graph),
+        ],
         key=lambda item: (item.severity, item.code, item.component or '', item.message),
     )
