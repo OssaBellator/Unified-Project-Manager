@@ -25,6 +25,9 @@ class _ImportEvidence:
             "version": "v1.2.3",
             "component": ".:go",
             "module": "example.com/dep",
+            "queried_module": "example.com/dep",
+            "effective_module": "example.com/dep",
+            "replacement_active": False,
             "state": "package-import-reachable",
             "import_path": ["example.com/app/pkg", "example.com/dep/pkg"],
             "returncode": 0,
@@ -33,6 +36,8 @@ class _ImportEvidence:
             "provider": "go-mod-why",
             "scope": "package-import-graph",
             "network": "offline",
+            "build_constraints": "any-tags",
+            "current_build_configuration_reachability": "not-evaluated",
             "test_imports_may_contribute": True,
             "api_reachability": "not-evaluated",
             "runtime_reachability": "not-evaluated",
@@ -157,6 +162,11 @@ class GoImportReachabilityAuditTests(unittest.TestCase):
             self.assertEqual(len(data["go_import_reachability"]), 1)
             source = data["go_import_reachability"][0]
             self.assertEqual(source["state"], "package-import-reachable")
+            self.assertEqual(source["queried_module"], "example.com/dep")
+            self.assertEqual(source["effective_module"], "example.com/dep")
+            self.assertFalse(source["replacement_active"])
+            self.assertEqual(source["build_constraints"], "any-tags")
+            self.assertEqual(source["current_build_configuration_reachability"], "not-evaluated")
             self.assertEqual(source["api_reachability"], "not-evaluated")
             self.assertEqual(source["runtime_reachability"], "not-evaluated")
             self.assertEqual(source["exploitability"], "not-established")
@@ -202,6 +212,7 @@ class GoImportReachabilityAuditTests(unittest.TestCase):
             source = data["projects"][0]["go_import_reachability"][0]
             self.assertEqual(source["component"], ".:go")
             self.assertEqual(source["state"], "package-import-reachable")
+            self.assertEqual(source["build_constraints"], "any-tags")
             self.assertFalse(source["persisted"])
 
 
