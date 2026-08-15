@@ -27,14 +27,20 @@ class GoImportReachabilityEvidence:
             "provider": "go-mod-why",
             "scope": "package-import-graph",
             "network": "offline",
+            # cmd/go's why implementation loads the package graph with
+            # imports.AnyTags(). The evidence is therefore intentionally not a
+            # statement about the caller's current build-tag configuration.
+            "build_constraints": "any-tags",
+            "current_build_configuration_reachability": "not-evaluated",
             "test_imports_may_contribute": True,
             "api_reachability": "not-evaluated",
             "runtime_reachability": "not-evaluated",
             "exploitability": "not-established",
             "persisted": False,
             "interpretation": (
-                "Go package-import reachability only; this does not establish API-call, "
-                "runtime-call, data-flow, or exploitability reachability"
+                "Go package-import reachability in go mod why's any-build-tag package graph; "
+                "this does not establish current-build, API-call, runtime-call, data-flow, "
+                "or exploitability reachability"
             ),
         })
         data["import_path"] = list(self.import_path)
@@ -97,9 +103,11 @@ def collect_go_import_reachability(
     to the same package occurrence. `go mod why -m` is executed through UPM's
     GOPROXY=off boundary by default.
 
-    This evidence intentionally stops at package-import reachability. It does not
-    claim that a vulnerable function/API is called, that a runtime path reaches
-    it, or that the advisory is exploitable in the selected program.
+    Go's why implementation evaluates an any-build-tag package graph and can
+    include test imports. Accordingly this evidence intentionally stops at that
+    package-import graph: it does not claim reachability in the current build
+    configuration, that a vulnerable function/API is called, that a runtime path
+    reaches it, or that the advisory is exploitable in the selected program.
     """
 
     cache: dict[tuple[str, str], tuple[str, tuple[str, ...], int | None, str | None]] = {}
