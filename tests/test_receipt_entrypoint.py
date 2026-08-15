@@ -112,12 +112,22 @@ class ReceiptEntrypointTests(unittest.TestCase):
             self.assertFalse(changed["receipt_chain"]["valid"])
             self.assertTrue(changed["receipt_chain"]["unexpected_receipts"])
 
+            status_code, status = self._json(["status", str(root), "--json"])
+            self.assertEqual(status_code, 1)
+            self.assertIn("receipt-chain", status["summary"]["blockers"])
+            self.assertEqual(status["local_evidence"]["summary"]["receipt_chain_state"], "invalid")
+
             reanchor_code, reanchored = self._json([
                 "receipts", "chain", str(root), "--apply", "--json"
             ])
             self.assertEqual(reanchor_code, 0)
             self.assertTrue(reanchored["validation"]["valid"])
             self.assertEqual(len(reanchored["chain"]["entries"]), 2)
+
+            clear_code, clear = self._json(["status", str(root), "--json"])
+            self.assertEqual(clear_code, 0)
+            self.assertNotIn("receipt-chain", clear["summary"]["blockers"])
+            self.assertEqual(clear["local_evidence"]["summary"]["receipt_chain_state"], "valid")
 
     def test_receipts_absent_is_clean_non_mutating_status(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
