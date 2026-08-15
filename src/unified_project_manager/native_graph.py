@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -369,6 +370,12 @@ def parse_go_requirement_edges(
     ))
 
 
+def _go_command_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["GOWORK"] = "off"
+    return env
+
+
 def execute_native_graph(
     plan: NativeGraphPlan,
     *,
@@ -381,7 +388,7 @@ def execute_native_graph(
 
     selected_argv = [executable, *plan.selected_argv[1:]]
     try:
-        selected_result = run(selected_argv, cwd=plan.cwd, text=True, capture_output=True, check=False)
+        selected_result = run(selected_argv, cwd=plan.cwd, text=True, capture_output=True, check=False, env=_go_command_env())
     except OSError as exc:
         return NativeGraphResult(plan, [], [], 127, stderr=str(exc))
     if selected_result.returncode != 0:
@@ -399,7 +406,7 @@ def execute_native_graph(
 
     edges_argv = [executable, *plan.edges_argv[1:]]
     try:
-        edge_result = run(edges_argv, cwd=plan.cwd, text=True, capture_output=True, check=False)
+        edge_result = run(edges_argv, cwd=plan.cwd, text=True, capture_output=True, check=False, env=_go_command_env())
     except OSError as exc:
         return NativeGraphResult(plan, modules, [], 127, stderr=str(exc))
     if edge_result.returncode != 0:
@@ -453,7 +460,7 @@ def query_native_why(
             continue
         argv = [executable, "mod", "why", "-m", module]
         try:
-            completed = run(argv, cwd=component.path, text=True, capture_output=True, check=False)
+            completed = run(argv, cwd=component.path, text=True, capture_output=True, check=False, env=_go_command_env())
         except OSError as exc:
             results.append(NativeWhyResult(key, "go", module, False, (), 127, str(exc)))
             continue
