@@ -39,7 +39,7 @@ This is an assertion, not an inference. Missing or unreadable registered project
 Project-universe closure and observation completeness are separate:
 
 - `project_universe.closed` says whether the explicit closed-universe assertion remains valid for the registered project list;
-- `observation_complete` additionally requires usable cache roots, successful native providers, no applicable provider coverage gaps, and internally consistent byte measurements.
+- `observation_complete` additionally requires usable cache roots, successful native providers, no applicable provider coverage gaps, consistent physical identity, and internally consistent byte measurements.
 
 Therefore a project universe may be closed while the current cache observation is incomplete because, for example, an offline native provider failed.
 
@@ -93,7 +93,7 @@ This deliberately excludes:
 
 Registry-source packages receive their Cargo PURL when provenance supports it. Git checkout identity remains the native Cargo package ID rather than being relabeled as a registry artifact.
 
-## Byte accounting
+## Byte accounting and identity consistency
 
 For each supported manager, the report separates:
 
@@ -101,9 +101,13 @@ For each supported manager, the report separates:
 - `attributed_bytes` — physical source/download objects tied to native package observations from registered projects;
 - `unattributed_bytes` — measured bytes not covered by those attributable objects;
 - `coverage_ratio` — attributed divided by measured bytes where a non-zero total exists;
-- `measurement_consistent` — false if attributed bytes somehow exceed the measured cache total.
+- `measurement_consistent` — false if attributed bytes somehow exceed the measured cache total;
+- `identity_consistent` — false if one physical path is observed as more than one logical package identity;
+- `identity_conflicts` — the conflicting path plus every identity observed for it.
 
 Physical group measurement shares inode identity so hardlinked bytes are not double-counted where the filesystem exposes stable inode information.
+
+Inode deduplication alone is not enough for provenance correctness. If two projects map the same physical path to different package identities, the bytes are still counted only once, but the report is marked incomplete and the conflicting identities are surfaced rather than silently choosing one.
 
 The safety fields are unconditional:
 
