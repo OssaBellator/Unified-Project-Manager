@@ -13,6 +13,7 @@ For the public Berry relationship provider UPM:
 - redirects install-state persistence to a temporary path outside the project;
 - makes Yarn cache mutation immutable;
 - suppresses telemetry;
+- does not force Berry's hardened-mode setting, avoiding an unnecessary compatibility dependency on that configuration name;
 - does not request archive/cache/manifest extras that would intentionally fetch package contents;
 - removes the temporary install-state directory after the query.
 
@@ -37,13 +38,8 @@ Provider capability metadata such as `offline`, `project-read-only`, or `mutatio
 
 A future stronger isolation mode would need process-level controls such as filesystem and network sandboxing, plus a policy for whether project-defined package-manager plugins are permitted. That is a separate feature from relationship normalization and should not be implied by the current provider labels.
 
-## Current compatibility cleanup
+## Berry compatibility contract
 
-`yarn_graph.py` still sets a hardened-mode configuration override that is not needed for the safety model. The preferred cleanup remains:
+The provider deliberately avoids setting `YARN_ENABLE_HARDENED_MODE`. Hardened mode is not part of UPM's safety contract, and forcing that configuration name can make otherwise-supported older Berry runtimes reject the command before graph reconstruction begins.
 
-1. remove that override;
-2. keep Berry network refusal, temporary install state, immutable cache, and telemetry suppression;
-3. fail explicitly if an older/runtime-specific Berry cannot reconstruct its graph under those constraints;
-4. update the focused Yarn execution test and provider documentation together.
-
-Until the existing file can be safely edited through the repository connector, this remains a narrow compatibility cleanup rather than a reason to weaken the fail-closed provider behavior.
+Compatibility does not weaken the fail-closed policy: UPM still disables Berry network access, redirects install state, makes the cache immutable, suppresses telemetry, and reports provider failure explicitly when a runtime cannot reconstruct the graph under those constraints.
