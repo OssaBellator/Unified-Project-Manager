@@ -194,10 +194,12 @@ def status_command(argv: list[str]) -> int:
             "Native verification coverage: "
             f"{coverage['planned_components']}/{coverage['total_components']} plannable"
         )
+        policy = data["policy"]
+        print("Policy: passed" if policy["passed"] else f"Policy: {len(policy['violations'])} violation(s)")
         if data["storage"] is not None:
             total = data["storage"]["summary"]["bytes"]
             print(f"Known local artifact storage: {total / (1024 * 1024):.2f} MiB")
-    return 1 if data["health"]["summary"]["errors"] else 0
+    return 1 if data["health"]["summary"]["errors"] or not data["policy"]["passed"] else 0
 
 
 def dispatch_control_command(arguments: list[str]) -> int | None:
