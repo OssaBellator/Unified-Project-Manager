@@ -37,12 +37,24 @@ The policy check locks the shared environment/preview contract: network disabled
 
 ## Structured Poetry/PDM provider boundary
 
+The comprehensive pre-promotion slice is:
+
 ```sh
-sh ./scripts/test-python-lock-provider-boundary.sh
 sh ./scripts/test-python-lock-native-validated.sh
 ```
 
-The boundary check verifies the internal Poetry/PDM provider ids/scope, plan-based ownership, and suppression of broad adapter `resolved_packages` for native provider-owned components. The validated slice then covers lock-contract validation, relationship parsing, certainty-aware reachability, path multiplicity, and CycloneDX/SPDX uncertainty behavior. Poetry/PDM remain below the public native-provider line until all public routes are integrated atomically.
+Focused drivers are also available for the individual contracts:
+
+```sh
+sh ./scripts/test-python-lock-provider-boundary.sh
+sh ./scripts/test-python-lock-direct-conditions.sh
+sh ./scripts/test-python-lock-query-contract.sh
+sh ./scripts/test-python-lock-sbom-uncertainty.sh
+```
+
+These checks cover the internal Poetry/PDM provider ids/scope, plan-based ownership, suppression of broad adapter `resolved_packages`, supported lock-contract validation, direct optional/marker propagation from `pyproject.toml`, certainty-aware query semantics shared by future `why`/`impact`/fleet routing, path multiplicity, and conservative CycloneDX/SPDX uncertainty behavior.
+
+Poetry/PDM remain below the public native-provider line until graph, why, impact, fleet impact, SBOM, advisory inventory/path correlation, and provider-status coverage can be integrated atomically with the same certainty model.
 
 ## Native-security focused slice
 
