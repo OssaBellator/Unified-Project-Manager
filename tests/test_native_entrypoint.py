@@ -85,7 +85,7 @@ class NativeEntrypointTests(unittest.TestCase):
                 code = main(["sbom", str(root), "--native"])
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
-            self.assertIn("pkg:golang/golang.org%2Fx%2Ftext@v0.22.0", {item.get("purl") for item in data["components"]})
+            self.assertIn("pkg:golang/golang.org/x/text@v0.22.0", {item.get("purl") for item in data["components"]})
 
 
 if __name__ == "__main__":
