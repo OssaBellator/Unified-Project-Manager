@@ -55,9 +55,10 @@ def manager_version_findings(
         if installed is None:
             findings.append(Finding(
                 "manager.version-unreadable",
-                "warning",
-                f"Could not determine the installed {manager} version: {error}.",
+                "info",
+                f"Could not verify the installed {manager} version: {error}.",
                 key,
+                "UPM leaves the declared manager version unverified rather than assuming a mismatch.",
             ))
             continue
         compatible = satisfies_node(installed, requirement)
