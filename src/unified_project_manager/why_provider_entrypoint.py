@@ -138,7 +138,7 @@ def why_command(argv: list[str]) -> int:
         if component.key(graph.root) not in handled
     ]
     answers.sort(key=lambda item: (
-        str(item["provider"]), str(item["component"]), str(item.get("project", "")),
+        str(item["provider"]), str(item["component"]), str(item.get("workspace_project", "")),
         str(item.get("ref", "")), str(item.get("package_id", "")), str(item.get("path", "")),
     ))
 
@@ -161,7 +161,7 @@ def why_command(argv: list[str]) -> int:
                 print("  " + " -> ".join(answer["root_path"]))
             elif provider == "pnpm-lock-tree":
                 version = f"@{answer['version']}" if answer.get("version") else ""
-                print(f"{answer['component']} [pnpm:{answer['project']} logical-tree]: {answer['name']}{version}")
+                print(f"{answer['component']} [pnpm:{answer['workspace_project']} logical-tree]: {answer['name']}{version}")
                 print("  " + " -> ".join(answer["root_path"]))
                 if answer.get("deduped"):
                     print("  pnpm marked this logical occurrence as deduped")
