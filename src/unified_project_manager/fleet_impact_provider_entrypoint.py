@@ -7,7 +7,8 @@ import sys
 from .cargo_graph import execute_cargo_graph, plan_cargo_graphs
 from .cargo_impact import analyze_cargo_impact
 from .discovery import discover
-from .native_graph import execute_native_graph, plan_native_graph
+from .go_offline_provider import execute_native_graph_offline
+from .native_graph import plan_native_graph
 from .native_impact import analyze_native_impact
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
@@ -63,7 +64,7 @@ def fleet_impact_command(argv: list[str]) -> int:
                 skips.append({"project": str(root), **skip.to_dict()})
 
         for plan in go_plans:
-            result = execute_native_graph(plan)
+            result = execute_native_graph_offline(plan)
             if not result.succeeded:
                 failures.append({
                     "project": str(root), "provider": "go-modules", "component": plan.component,
@@ -140,7 +141,7 @@ def fleet_impact_command(argv: list[str]) -> int:
             print(f"No supported native graph selected {args.package!r}.")
         for impact in impacts:
             if impact["provider"] == "go-modules":
-                rendered = f"{impact['project']} [{impact['component']}] [go]: {impact['module']}"
+                rendered = f"{impact['project']} [{impact['component']}] [go/offline]: {impact['module']}"
                 if impact.get("selected_version"):
                     rendered += f" {impact['selected_version']}"
                 print(rendered)
