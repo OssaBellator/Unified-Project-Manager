@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .go_offline_provider import execute_native_graph_offline
 from .models import ProjectGraph
+from .native_cyclonedx import NativeCycloneDxError, NativeCycloneDxInventory, build_native_cyclonedx
 from .native_graph import NativeGraphResult, plan_native_graph
+from .go_offline_provider import execute_native_graph_offline
+from .provider_registry import provider_summary
 from .sbom import cyclonedx_bom, cyclonedx_bom_with_native
 
 
@@ -28,6 +30,15 @@ class SecurityScanPlan:
     argv_template: tuple[str, ...] = (
         "osv-scanner", "scan", "source", "--format", "json", "<temporary-bom.cdx.json>"
     )
+    native_providers: bool = False
+
+    @property
+    def inventory_mode(self) -> str:
+        if self.native_providers:
+            return "native-providers"
+        if self.native_go:
+            return "native-go"
+        return "static-resolved"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,9 +46,11 @@ class SecurityScanPlan:
             "package_count": self.package_count,
             "package_count_exact": self.package_count_exact,
             "native_go": self.native_go,
+            "native_providers": self.native_providers,
+            "inventory_mode": self.inventory_mode,
             "argv": list(self.argv_template),
             "network_may_be_used": True,
-            "native_go_inventory_network": "offline" if self.native_go else "not-used",
+            "provider_inventory_network": False if self.native_providers else None,
             "temporary_sbom": True,
         }
 
@@ -85,6 +98,8 @@ class SecurityScanResult:
         return {"affected_packages": affected_packages, "vulnerabilities": len(vulnerability_ids)}
 
     def to_dict(self) -> dict[str, Any]:
+        # The exact BOM is retained for evidence binding but intentionally not
+        # duplicated into normal CLI output, where the scanner report is enough.
         return {
             "plan": self.plan.to_dict(),
             "returncode": self.returncode,
@@ -114,25 +129,46 @@ def build_security_bom(
     graph: ProjectGraph,
     *,
     native_go: bool = False,
+    native_providers: bool = False,
     execute_go: Callable[[object], NativeGraphResult] = execute_native_graph_offline,
+    build_native: Callable[..., NativeCycloneDxInventory] = build_native_cyclonedx,
 ) -> dict[str, Any]:
+    if native_providers:
+        try:
+            return build_native(graph, execute_go=execute_go).bom
+        except NativeCycloneDxError as exc:
+            raise SecurityScanError(str(exc)) from exc
     if native_go:
         return cyclonedx_bom_with_native(graph, _native_go_results(graph, execute=execute_go))
     return cyclonedx_bom(graph)
 
 
-def plan_security_scan(graph: ProjectGraph, *, native_go: bool = False) -> SecurityScanPlan:
+def plan_security_scan(
+    graph: ProjectGraph,
+    *,
+    native_go: bool = False,
+    native_providers: bool = False,
+) -> SecurityScanPlan:
     static_bom = cyclonedx_bom(graph)
     static_count = len(static_bom.get("components", [])) if isinstance(static_bom.get("components"), list) else 0
     has_go = any(component.ecosystem == "go" for component in graph.components)
-    if static_count == 0 and not (native_go and has_go):
-        hint = " Re-run with --native-go for authoritative selected Go modules." if has_go and not native_go else ""
+    provider_coverage = provider_summary(graph)
+    has_native_provider = provider_coverage["supported_components"] > 0
+    can_enrich = (native_go and has_go) or (native_providers and has_native_provider)
+    if static_count == 0 and not can_enrich:
+        hints = []
+        if has_native_provider and not native_providers:
+            hints.append("Re-run with --native for authoritative provider-backed inventory.")
+        elif has_go and not native_go:
+            hints.append("Re-run with --native-go for authoritative selected Go modules.")
+        hint = " " + " ".join(hints) if hints else ""
         raise SecurityScanError("No concrete resolved packages are available for SBOM advisory scanning." + hint)
     return SecurityScanPlan(
         graph.root,
         static_count,
-        package_count_exact=not (native_go and has_go),
+        package_count_exact=not can_enrich,
         native_go=native_go,
+        native_providers=native_providers,
     )
 
 
@@ -143,15 +179,22 @@ def execute_security_scan(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     which: Callable[[str], str | None] = shutil.which,
     execute_go: Callable[[object], NativeGraphResult] = execute_native_graph_offline,
+    build_native: Callable[..., NativeCycloneDxInventory] = build_native_cyclonedx,
 ) -> SecurityScanResult:
     executable = which("osv-scanner")
     if executable is None:
         return SecurityScanResult(plan, 127, stderr="Executable 'osv-scanner' is not available on PATH.")
 
-    bom = build_security_bom(graph, native_go=plan.native_go, execute_go=execute_go)
+    bom = build_security_bom(
+        graph,
+        native_go=plan.native_go,
+        native_providers=plan.native_providers,
+        execute_go=execute_go,
+        build_native=build_native,
+    )
     package_count = len(bom.get("components", [])) if isinstance(bom.get("components"), list) else 0
     if package_count == 0:
-        return SecurityScanResult(plan, 128, stderr="No concrete packages were available after native inventory enrichment.", bom=bom)
+        return SecurityScanResult(plan, 128, stderr="No concrete packages were available after inventory enrichment.", bom=bom)
 
     with tempfile.TemporaryDirectory(prefix="upm-osv-") as temporary:
         sbom = Path(temporary) / "bom.cdx.json"
