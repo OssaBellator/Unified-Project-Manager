@@ -1,8 +1,8 @@
 # Local-only validation
 
-Unified Project Manager deliberately does not use GitHub Actions in this repository. Validation is designed to run from a local checkout with Python 3.11+.
+Unified Project Manager deliberately does not use GitHub Actions in this repository. Validation is intended to run from a local checkout with Python 3.11+ and ecosystem-native tools already available where a test requires them.
 
-## Local entrypoints
+## Main entrypoints
 
 ```sh
 sh ./scripts/check.sh
@@ -14,53 +14,98 @@ sh ./scripts/test-fleet-providers.sh
 sh ./scripts/test-sbom-project-components.sh
 sh ./scripts/test-cache-provenance.sh
 sh ./scripts/test-go-import-reachability.sh
-sh ./scripts/test-go-symbol-reachability.sh
+sh ./scripts/test-go-symbol-prepublic-all.sh
 sh ./scripts/check-all-local-latest.sh
 ```
 
-No command above invokes GitHub Actions.
+`check-all-local-latest.sh` now includes the complete pre-public Go symbol stack. No command above invokes GitHub Actions.
 
 ## Public Go package-import reachability
 
-The dedicated reachability driver covers `GOPROXY=off` + `GOWORK=off`, any-build-tag/test-import semantics, replacement logical/effective identities, positive/negative/query-failed states, project/fleet routing, report-only semantics, and a real local Go check proving `go mod why -m` leaves `go.mod`/`go.sum` unchanged.
+The dedicated driver covers `GOPROXY=off` + `GOWORK=off`, any-build-tag/test-import semantics, replacements, positive/negative/query-failed states, project/fleet routing, report-only semantics, and a real local Go check proving `go mod why -m` leaves `go.mod`/`go.sum` unchanged.
 
 ## Pre-public Go vulnerable-symbol stack
 
-`scripts/test-go-symbol-reachability.sh` runs parser/planner, strict correlation, public-boundary, preflight, executor, project/fleet reporting, deterministic DB/runtime fixtures, and an optional real govulncheck end-to-end test.
+The complete local stack covers:
 
-The deterministic fixture support is:
+- strict govulncheck parser/planner and mandatory scanner SBOM;
+- strict scanner-build-list/advisory/module/version correlation;
+- public-boundary regression;
+- read-only preflight;
+- fail-closed executor;
+- shared project/fleet reporting;
+- deterministic local vulnerability DB and versioned module-proxy fixtures;
+- scan-declaration provenance identity;
+- planned package-pattern/tag/test alignment;
+- candidate Go-native source/build observation;
+- Go-native vs scanner-SBOM declaration alignment;
+- optional real govulncheck execution and alignment.
 
-- `tests/support_go_vulndb_fixture.py` — writes only the published Go vulnerability DB v1 filesystem endpoints;
-- `tests/support_go_symbol_runtime_fixture.py` — writes a tiny app, versioned dependency file proxy, isolated Go caches, and the local vulnerability DB;
-- `scripts/prepare-go-symbol-validation-fixture.sh DESTINATION` — creates/prepares that fully local fixture for manual validation.
+### Deterministic runtime fixture
 
-### Fully local versioned dependency
+The repo writes its own Go vulnerability DB v1, `example.com/dep@v1.2.3` module proxy, tiny app, and isolated `GOMODCACHE`/`GOCACHE`. Setup uses only the generated `file://` proxy; actual analysis runs with `GOPROXY=off`.
 
-The fixture uses `example.com/dep@v1.2.3` with no `replace`. Setup runs `go mod download` against only the generated `file://` module proxy, with `GOSUMDB=off` and isolated caches. The actual analysis environment then uses `GOPROXY=off`.
+A real Go 1.23.2 check confirms the versioned dependency remains resolvable after the proxy-to-offline transition.
 
-A real installed Go 1.23.2 check already confirms the versioned dependency remains resolvable after that transition.
+### Planned build-selection guard
 
-### Optional real govulncheck test
+The scanner and candidate-observation plans are compared before optional real scanner execution. Current accepted selection:
 
-`tests/test_go_symbol_real_runtime.py` skips unless:
+```text
+patterns = ["./..."]
+tags = []
+tests = false
+```
+
+Test-enabled selection remains deliberately unproven even when both plans request it.
+
+Focused reconstructed result: **6/6**.
+
+### Candidate source/build observation
+
+The candidate now requires Go 1.21+ and runs the normalized loader command:
+
+```text
+go env -json
+go list -e -mod=readonly -deps=true -compiled=true -test=false \
+  -export=false -find=false -buildvcs=false -pgo=off -json -- ./...
+```
+
+It retains broad selected build inputs and `CompiledGoFiles` separately as syntax/type-check inputs. It never labels them freshness evidence.
+
+The exact command was run with installed Go 1.23.2 in a temporary module:
+
+```text
+env exit          = 0
+list exit         = 0
+GoFiles           = [main.go]
+CompiledGoFiles   = [main.go]
+IgnoredGoFiles    = [windows_only.go]
+project snapshot  = unchanged
+```
+
+Go versions below 1.21 are refused for this candidate before package loading rather than silently using a different loader profile.
+
+### Optional real govulncheck tests
+
+Real scanner tests skip unless:
 
 - `go` already exists;
 - `govulncheck` already exists;
 - `go env GOTELEMETRY` is already exactly `off`.
 
-It never installs govulncheck and never changes telemetry. When runnable, it generates the local DB/proxy/caches, snapshots the project after fixture setup, executes the UPM preflight/executor/correlation/report path, requires the synthetic `GO-2099-0001` / `Danger` symbol finding, and requires the project snapshot to remain byte-for-byte identical.
+They never install govulncheck or change telemetry. Before launching the scanner they also require planned package-pattern/tag/test alignment.
 
-### Current live blocker
-
-The DB and versioned dependency source are no longer external blockers because the repo generates them deterministically. A real govulncheck symbol scan is still not claimed here because:
+Current live environment:
 
 ```text
 govulncheck executable = absent
 Go executable = /usr/local/go/bin/go
+Go version = 1.23.2
 GOTELEMETRY = local
 ```
 
-No install or telemetry mutation was performed to bypass those conditions.
+Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanner alignment is still necessary; local Go 1.23.2 observation is not treated as scanner-runtime proof.
 
 ## Focused reconstructed/local results
 
@@ -72,13 +117,17 @@ No install or telemetry mutation was performed to bypass those conditions.
 - Go package-import reachability: **7/7**;
 - Go relationship environment isolation: **3/3**;
 - real local Go import-query immutability: **1/1**;
-- govulncheck parser/planner: **8/8**;
-- strict symbol correlation: **9/9**;
+- govulncheck parser/planner baseline: **8/8**;
+- strict symbol correlation baseline: **9/9**;
 - govulncheck preflight: **6/6**;
-- fail-closed govulncheck executor: **9/9**;
+- fail-closed govulncheck executor baseline: **9/9**;
 - shared project/fleet symbol reporting: **6/6**;
-- deterministic Go vulnerability-DB fixture: **7/7**;
-- fully local versioned runtime fixture: **5/5**, including real Go file-proxy → offline-cache resolution;
-- optional real govulncheck end-to-end regression: **committed but skipped in this environment** because prerequisites are not satisfied.
+- deterministic vulnerability-DB fixture: **7/7**;
+- fully local versioned runtime fixture: **5/5**;
+- scan-SBOM focused invariants: **12/12**;
+- scan-declaration identity: **5/5**;
+- planned build-selection alignment: **6/6**;
+- normalized Go source-observation command: real Go 1.23.2 success with unchanged project snapshot;
+- optional real govulncheck execution/alignment: **committed but not run here** because prerequisites are not satisfied.
 
-The full private branch still cannot be materialized and executed end-to-end in this constrained runtime. Committed local drivers are intended for a normal private checkout.
+The full private branch still cannot be materialized and executed end-to-end in this constrained runtime. Committed drivers are intended for a normal private checkout.
