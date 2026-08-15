@@ -15,7 +15,12 @@ def _storage_parser() -> argparse.ArgumentParser:
         prog="upm cache storage",
         description="Measure authoritative machine-wide package/build cache locations",
     )
-    parser.add_argument("--manager", action="append", choices=("go",), help="Limit probing to one manager; repeatable")
+    parser.add_argument(
+        "--manager",
+        action="append",
+        choices=("go", "npm", "pnpm", "uv", "cargo"),
+        help="Limit probing to one manager; repeatable",
+    )
     parser.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
@@ -80,7 +85,7 @@ def cache_verify_command(argv: list[str]) -> int:
 
 def cache_storage_command(argv: list[str]) -> int:
     args = _storage_parser().parse_args(argv)
-    managers = tuple(args.manager) if args.manager else ("go",)
+    managers = tuple(args.manager) if args.manager else ("go", "npm", "pnpm", "uv", "cargo")
     entries, skips = global_cache_storage(managers=managers)
     summary = global_storage_summary(entries)
     if args.as_json:
