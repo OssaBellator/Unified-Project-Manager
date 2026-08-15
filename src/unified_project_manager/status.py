@@ -23,12 +23,16 @@ def project_status(
     policy = evaluate_policy(graph, deep=deep)
     verification_plans, verification_skips = plan_native_verification(graph)
     components = [component.to_dict(graph.root) for component in graph.components]
+    workspaces = [workspace.to_dict(graph.root) for workspace in graph.workspaces]
     result: dict[str, Any] = {
         "root": str(graph.root),
         "components": components,
+        "workspaces": workspaces,
         "summary": {
             "components": len(graph.components),
+            "workspaces": len(graph.workspaces),
             "ecosystems": sorted({component.ecosystem for component in graph.components}),
+            "workspace_ecosystems": sorted({workspace.ecosystem for workspace in graph.workspaces}),
             "managers": sorted({component.manager for component in graph.components if component.manager}),
             "direct_dependencies": sum(len(component.dependencies) for component in graph.components),
             "resolved_packages": sum(len(component.resolved_packages) for component in graph.components),
