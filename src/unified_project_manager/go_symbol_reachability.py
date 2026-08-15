@@ -29,6 +29,32 @@ class GovulncheckConfig:
 
 
 @dataclass(frozen=True)
+class GovulncheckModule:
+    path: str
+    version: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class GovulncheckSBOM:
+    go_version: str | None
+    modules: tuple[GovulncheckModule, ...]
+    roots: tuple[str, ...]
+
+    def has_module(self, path: str, version: str) -> bool:
+        return any(module.path == path and module.version == version for module in self.modules)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "go_version": self.go_version,
+            "modules": [module.to_dict() for module in self.modules],
+            "roots": list(self.roots),
+        }
+
+
+@dataclass(frozen=True)
 class GovulncheckFrame:
     module: str
     version: str | None
@@ -83,6 +109,7 @@ class GovulncheckReport:
     config: GovulncheckConfig
     aliases: dict[str, tuple[str, ...]]
     findings: tuple[GovulncheckFinding, ...]
+    sbom: GovulncheckSBOM | None = None
 
     @property
     def symbol_findings(self) -> tuple[GovulncheckFinding, ...]:
@@ -98,6 +125,7 @@ class GovulncheckReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "config": self.config.to_dict(),
+            "sbom": self.sbom.to_dict() if self.sbom is not None else None,
             "aliases": {key: list(value) for key, value in sorted(self.aliases.items())},
             "findings": [finding.to_dict() for finding in self.findings],
             "symbol_findings": [finding.to_dict() for finding in self.symbol_findings],
@@ -190,6 +218,38 @@ def _parse_config(value: object) -> GovulncheckConfig:
     )
 
 
+def _parse_sbom_module(value: object) -> GovulncheckModule:
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck SBOM modules must be objects")
+    path = value.get("path")
+    if not isinstance(path, str) or not path:
+        raise GoSymbolReachabilityError("govulncheck SBOM module is missing path identity")
+    return GovulncheckModule(path=path, version=_optional_string(value.get("version")))
+
+
+def _parse_sbom(value: object) -> GovulncheckSBOM:
+    if not isinstance(value, dict):
+        raise GoSymbolReachabilityError("govulncheck SBOM message is not an object")
+    modules_value = value.get("modules", [])
+    if not isinstance(modules_value, list):
+        raise GoSymbolReachabilityError("govulncheck SBOM modules are not an array")
+    roots_value = value.get("roots", [])
+    if not isinstance(roots_value, list) or not all(isinstance(root, str) and root for root in roots_value):
+        raise GoSymbolReachabilityError("govulncheck SBOM roots are not a non-empty-string array")
+    modules = tuple(sorted(
+        (_parse_sbom_module(module) for module in modules_value),
+        key=lambda module: (module.path, module.version or ""),
+    ))
+    roots = tuple(sorted(set(roots_value)))
+    if not roots:
+        raise GoSymbolReachabilityError("govulncheck source scan SBOM has no root packages")
+    return GovulncheckSBOM(
+        go_version=_optional_string(value.get("go_version")),
+        modules=modules,
+        roots=roots,
+    )
+
+
 def _parse_position(value: object) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -255,10 +315,10 @@ def _parse_osv_aliases(value: object) -> tuple[str, tuple[str, ...]]:
 def parse_govulncheck_symbol_stream(text: str) -> GovulncheckReport:
     """Parse offline govulncheck v1 source/symbol JSON without flattening levels.
 
-    Official govulncheck JSON may emit module-, package-, and symbol-level
-    findings for the same vulnerability. Only findings whose first trace frame
-    contains a function are classified as symbol-level/called-symbol evidence.
-    Message order after the required leading config message is not assumed.
+    UPM requires the native scan SBOM for source-symbol evidence so findings can
+    be checked against govulncheck's own declared Go version, module build list,
+    and root package set. Module-, package-, and symbol-level findings remain
+    distinct; only first-frame functions are called-symbol evidence.
     """
 
     messages = _decode_stream(text)
@@ -271,6 +331,7 @@ def parse_govulncheck_symbol_stream(text: str) -> GovulncheckReport:
 
     aliases: dict[str, tuple[str, ...]] = {}
     findings: list[GovulncheckFinding] = []
+    sbom: GovulncheckSBOM | None = None
     allowed_fields = {"config", "progress", "SBOM", "osv", "finding"}
     for index, message in enumerate(messages[1:], start=2):
         populated = [key for key in allowed_fields if key in message and message[key] is not None]
@@ -286,16 +347,24 @@ def parse_govulncheck_symbol_stream(text: str) -> GovulncheckReport:
         field = populated[0]
         if field == "config":
             raise GoSymbolReachabilityError("govulncheck stream contained more than one config message")
-        if field == "osv":
+        if field == "SBOM":
+            if sbom is not None:
+                raise GoSymbolReachabilityError("govulncheck stream contained more than one SBOM message")
+            sbom = _parse_sbom(message[field])
+        elif field == "osv":
             osv_id, osv_aliases = _parse_osv_aliases(message[field])
             aliases[osv_id] = osv_aliases
         elif field == "finding":
             findings.append(_parse_finding(message[field]))
 
+    if sbom is None:
+        raise GoSymbolReachabilityError("govulncheck source-symbol stream is missing its scan SBOM")
+
     return GovulncheckReport(
         config=config,
         aliases=dict(sorted(aliases.items())),
         findings=tuple(findings),
+        sbom=sbom,
     )
 
 
