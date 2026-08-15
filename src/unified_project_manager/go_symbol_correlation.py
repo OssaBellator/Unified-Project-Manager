@@ -232,7 +232,7 @@ def correlate_govulncheck_symbols(
         item.version,
         item.package or "",
         item.symbol,
-        item.trace,
+        repr(item.trace),
     ))
     unmatched.sort(key=lambda item: (
         item.govulncheck_osv,
