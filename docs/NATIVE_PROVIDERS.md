@@ -8,8 +8,8 @@ UPM intentionally does not pretend every ecosystem exposes the same dependency g
 | --- | --- | --- | --- | --- |
 | Go | `go-modules` | selected module build list + module requirement graph | **offline/cache-only by default** (`GOPROXY=off`) | project `go.mod` / `go.sum` are read-only for graph queries |
 | npm | `npm-lock-tree` | npm lock-only logical tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
-| pnpm | `pnpm-lock-tree` | pnpm lock-only logical tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
-| Yarn Berry 2+ | `yarn-berry` | exact descriptor/locator graph from native `yarn info` plus reachable-only SBOM identity | **offline by provider configuration** (`YARN_ENABLE_NETWORK=0`) | install state is redirected; cache is immutable |
+| pnpm | `pnpm-lock-tree` | pnpm lock-only logical dependency tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
+| Yarn Berry 2+ | `yarn-berry-resolution-graph` | exact descriptor/locator graph from native `yarn info` plus reachable-only SBOM identity | **offline by provider configuration** (`YARN_ENABLE_NETWORK=0`) | install state is redirected; cache is immutable |
 | Cargo | `cargo-metadata` | resolved package graph from Cargo metadata | **offline by default** (`--offline`) | lockfile is fixed by `--locked` |
 | uv | `uv-lock` | static universal project/workspace graph from authoritative shared `uv.lock` | none | none |
 
