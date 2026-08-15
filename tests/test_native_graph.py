@@ -18,9 +18,9 @@ from unified_project_manager.native_graph import (
 
 _SELECTED = '''
 {"Path":"example.com/app","Main":true,"Dir":"/src/app","GoMod":"/src/app/go.mod","GoVersion":"1.24"}
-{"Path":"example.com/a","Version":"v1.2.0","Dir":"/cache/a"}
+{"Path":"example.com/a","Version":"v1.2.0","Indirect":true,"Dir":"/cache/a","GoMod":"/cache/a.mod","GoVersion":"1.21","Sum":"h1:ASUM=","GoModSum":"h1:AMOD=","Origin":{"VCS":"git","URL":"https://example.com/a","Hash":"abc123","Ref":"refs/tags/v1.2.0"}}
 {"Path":"example.com/b","Version":"v1.4.0","Dir":"/cache/b"}
-{"Path":"example.com/old","Version":"v1.0.0","Replace":{"Path":"example.com/new","Version":"v1.1.0","Dir":"/cache/new"}}
+{"Path":"example.com/old","Version":"v1.0.0","Replace":{"Path":"example.com/new","Version":"v1.1.0","Dir":"/cache/new","GoVersion":"1.22","Sum":"h1:NEWSUM=","GoModSum":"h1:NEWMOD=","Origin":{"VCS":"git","URL":"https://example.com/new","Hash":"def456"}}}
 {"Path":"example.com/local","Version":"v0.9.0","Replace":{"Path":"../local","Dir":"/src/local"}}
 '''
 
@@ -41,6 +41,15 @@ class NativeGraphTests(unittest.TestCase):
         self.assertEqual(by_name["example.com/old"].effective_version, "v1.1.0")
         self.assertTrue(by_name["example.com/local"].is_local_replacement)
         self.assertIsNone(by_name["example.com/local"].effective_version)
+        self.assertTrue(by_name["example.com/a"].indirect)
+        self.assertEqual(by_name["example.com/a"].effective_checksum, "h1:ASUM=")
+        self.assertEqual(by_name["example.com/a"].effective_go_mod_checksum, "h1:AMOD=")
+        self.assertEqual(by_name["example.com/a"].effective_origin["VCS"], "git")
+        self.assertEqual(by_name["example.com/old"].effective_checksum, "h1:NEWSUM=")
+        self.assertEqual(by_name["example.com/old"].effective_go_version, "1.22")
+        rendered = by_name["example.com/a"].to_dict()
+        self.assertEqual(rendered["directory"], "/cache/a")
+        self.assertEqual(rendered["go_mod"], "/cache/a.mod")
 
     def test_requirement_edges_distinguish_required_from_selected_version(self) -> None:
         modules = parse_go_selected_modules(_SELECTED, ".:go")
@@ -118,6 +127,13 @@ class NativeSbomTests(unittest.TestCase):
             refs = {item["bom-ref"]: item for item in bom["components"]}
             self.assertIn("pkg:golang/example.com/a@v1.2.0", refs)
             self.assertIn("pkg:golang/example.com/new@v1.1.0", refs)
+            a_properties = {item["name"]: item["value"] for item in refs["pkg:golang/example.com/a@v1.2.0"]["properties"]}
+            self.assertEqual(a_properties["upm:go:sum"], "h1:ASUM=")
+            self.assertEqual(a_properties["upm:go:go-mod-sum"], "h1:AMOD=")
+            self.assertEqual(a_properties["upm:go:go-version"], "1.21")
+            self.assertEqual(a_properties["upm:go:indirect"], "true")
+            self.assertIn('"VCS":"git"', a_properties["upm:go:origin"])
+            self.assertNotIn("/cache/a", str(refs["pkg:golang/example.com/a@v1.2.0"]))
             local = next(item for item in bom["components"] if item["name"] == "example.com/local")
             self.assertNotIn("version", local)
             self.assertNotIn("purl", local)
