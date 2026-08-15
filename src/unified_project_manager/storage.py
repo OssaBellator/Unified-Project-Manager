@@ -11,15 +11,16 @@ ARTIFACT_DIRECTORIES = {
     "python": ((".venv", "environment"), ("__pypackages__", "environment")),
     "rust": (("target", "build"),),
 }
+InodeSet = set[tuple[int, int]]
 
 
-def directory_size(path: str | Path) -> tuple[int, int]:
+def directory_size(path: str | Path, *, seen: InodeSet | None = None) -> tuple[int, int]:
     root = Path(path)
     if not root.is_dir() or root.is_symlink():
         return 0, 0
     total = 0
     files = 0
-    seen: set[tuple[int, int]] = set()
+    identities = seen if seen is not None else set()
     stack = [root]
     while stack:
         directory = stack.pop()
@@ -38,10 +39,10 @@ def directory_size(path: str | Path) -> tuple[int, int]:
                     except OSError:
                         continue
                     identity = (stat.st_dev, stat.st_ino)
-                    if stat.st_ino and identity in seen:
+                    if stat.st_ino and identity in identities:
                         continue
                     if stat.st_ino:
-                        seen.add(identity)
+                        identities.add(identity)
                     total += stat.st_size
                     files += 1
         except OSError:
@@ -49,14 +50,15 @@ def directory_size(path: str | Path) -> tuple[int, int]:
     return total, files
 
 
-def project_storage(graph: ProjectGraph) -> list[dict[str, Any]]:
+def project_storage(graph: ProjectGraph, *, seen: InodeSet | None = None) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
+    identities = seen if seen is not None else set()
     for component in graph.components:
         for relative, category in ARTIFACT_DIRECTORIES.get(component.ecosystem, ()):
             target = component.path / relative
             if not target.is_dir() or target.is_symlink():
                 continue
-            size, files = directory_size(target)
+            size, files = directory_size(target, seen=identities)
             entries.append({
                 "component": component.key(graph.root),
                 "ecosystem": component.ecosystem,
