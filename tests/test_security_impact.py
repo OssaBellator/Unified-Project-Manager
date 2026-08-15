@@ -6,11 +6,12 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.cargo_graph import CargoGraphPlan, CargoGraphResult, parse_cargo_metadata
+from unified_project_manager.discovery import discover
 from unified_project_manager.native_graph import NativeGraphPlan, NativeGraphResult, NativeModule, NativeRequirementEdge
 from unified_project_manager.npm_graph import NpmGraphPlan, NpmGraphResult, parse_npm_ls
 from unified_project_manager.pnpm_graph import PnpmGraphPlan, PnpmGraphResult, parse_pnpm_list
 from unified_project_manager.security_impact import correlate_advisory_impact
-from unified_project_manager.uv_graph import parse_uv_lock
+from unified_project_manager.uv_graph import execute_uv_graph, parse_uv_lock, plan_uv_graphs
 
 
 class SecurityImpactTests(unittest.TestCase):
@@ -133,6 +134,55 @@ source = { registry = "https://pypi.org/simple" }
             impact = correlate_advisory_impact(report, uv_results=[uv])[0]
             self.assertEqual(impact.provider, "uv-lock")
             self.assertEqual(impact.paths, (("app@0.1.0", "my-package@2.0.0"),))
+
+    def test_uv_workspace_advisory_maps_to_member_path_from_shared_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="root"\nversion="0.1.0"\n'
+                '[tool.uv.workspace]\nmembers=["packages/*"]\n', encoding="utf-8"
+            )
+            app = root / "packages" / "app"
+            sibling = root / "packages" / "sibling"
+            app.mkdir(parents=True); sibling.mkdir(parents=True)
+            (app / "pyproject.toml").write_text('[project]\nname="app"\nversion="0.1.0"\n', encoding="utf-8")
+            (sibling / "pyproject.toml").write_text('[project]\nname="sibling"\nversion="0.1.0"\n', encoding="utf-8")
+            (root / "uv.lock").write_text('''
+version = 1
+[[package]]
+name = "root"
+version = "0.1.0"
+source = { editable = "." }
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { editable = "packages/app" }
+dependencies = [{ name = "bar", version = "1.2.3" }]
+[[package]]
+name = "sibling"
+version = "0.1.0"
+source = { editable = "packages/sibling" }
+dependencies = [{ name = "other", version = "9.9.9" }]
+[[package]]
+name = "bar"
+version = "1.2.3"
+source = { registry = "https://pypi.org/simple" }
+[[package]]
+name = "other"
+version = "9.9.9"
+source = { registry = "https://pypi.org/simple" }
+''', encoding="utf-8")
+            uv = execute_uv_graph(plan_uv_graphs(discover(root))[0])
+            report = {"results":[{"packages":[{
+                "package":{"name":"bar","version":"1.2.3","ecosystem":"PyPI"},
+                "vulnerabilities":[{"id":"PYSEC-WORKSPACE"}],
+            }]}]}
+
+            impact = correlate_advisory_impact(report, uv_results=[uv])[0]
+
+            self.assertEqual(impact.provider, "uv-lock")
+            self.assertEqual(impact.paths, (("app@0.1.0", "bar@1.2.3"),))
+            self.assertNotIn("sibling@0.1.0", {part for path in impact.paths for part in path})
 
 
 if __name__ == "__main__":
