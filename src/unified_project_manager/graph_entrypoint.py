@@ -13,6 +13,9 @@ from .native_graph import NativeGraphError, plan_native_graph
 from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
 from .pnpm_graph import PnpmGraphError, execute_pnpm_graph, plan_pnpm_graphs
 from .provider_ownership import provider_owned_component_keys
+from .python_lock_graph import PythonLockGraphError, plan_python_lock_graphs
+from .python_lock_provider import python_lock_provider_name
+from .python_lock_validation import execute_validated_python_lock_graph
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 from .yarn_execution_policy import yarn_execution_guards
 from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
@@ -45,6 +48,7 @@ def native_graph_command(argv: list[str]) -> int:
         yarn_plans = plan_yarn_graphs(graph, selector=args.component)
         cargo_plans = plan_cargo_graphs(graph, selector=args.component)
         uv_plans = plan_uv_graphs(graph, selector=args.component)
+        python_lock_plans = plan_python_lock_graphs(graph, selector=args.component)
     except (
         FileNotFoundError,
         NotADirectoryError,
@@ -54,6 +58,7 @@ def native_graph_command(argv: list[str]) -> int:
         YarnGraphError,
         CargoGraphError,
         UvGraphError,
+        PythonLockGraphError,
         ValueError,
     ) as exc:
         if args.as_json:
@@ -69,6 +74,7 @@ def native_graph_command(argv: list[str]) -> int:
         yarn_plans=yarn_plans,
         cargo_plans=cargo_plans,
         uv_plans=uv_plans,
+        python_lock_plans=python_lock_plans,
     )
     skips = [skip for skip in go_skips if skip.component not in handled_components]
 
@@ -96,6 +102,13 @@ def native_graph_command(argv: list[str]) -> int:
             plans.append({"provider": "cargo-metadata", **plan.to_dict(root), "commands": [list(plan.argv)]})
         for plan in uv_plans:
             plans.append({"provider": "uv-lock", **plan.to_dict(root), "commands": []})
+        for plan in python_lock_plans:
+            plans.append({
+                "provider": python_lock_provider_name(plan),
+                **plan.to_dict(root),
+                "commands": [],
+                "certainty": "conditional-and-ambiguity-preserving",
+            })
         payload = {"executed": False, "plans": plans, "skips": [skip.to_dict() for skip in skips]}
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
@@ -117,6 +130,7 @@ def native_graph_command(argv: list[str]) -> int:
     yarn_results = [execute_yarn_graph(plan) for plan in yarn_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
+    python_lock_results = [execute_validated_python_lock_graph(graph, plan) for plan in python_lock_plans]
     results = [
         {"provider": "go-modules", **result.to_dict(root)} for result in go_results
     ] + [
@@ -129,6 +143,9 @@ def native_graph_command(argv: list[str]) -> int:
         {"provider": "cargo-metadata", **result.to_dict(root)} for result in cargo_results
     ] + [
         {"provider": "uv-lock", **result.to_dict(root)} for result in uv_results
+    ] + [
+        {"provider": python_lock_provider_name(result.plan), **result.to_dict(root)}
+        for result in python_lock_results
     ]
 
     if args.as_json:
@@ -267,10 +284,49 @@ def native_graph_command(argv: list[str]) -> int:
                     candidates = ", ".join(edge.candidate_ids) or "none"
                     print(f"    {source_label} -> {edge.dependency_name}{marker} [ambiguous candidates: {candidates}]")
 
+        for result in python_lock_results:
+            provider = python_lock_provider_name(result.plan)
+            print(f"{result.plan.component} [{provider}]")
+            if not result.succeeded:
+                print(f"  x structured lock graph failed: {result.error}")
+                continue
+            packages = {package.package_id: package for package in result.packages}
+            print("  structured lock packages:")
+            for package in result.packages:
+                groups = f" [groups={','.join(package.groups)}]" if package.groups else ""
+                print(f"    {package.name}@{package.version} [{package.source_kind}]{groups}")
+            print("  dependency edges:")
+            for edge in result.edges:
+                source = packages.get(edge.source_id)
+                source_label = f"{source.name}@{source.version}" if source else edge.source_id
+                flags = []
+                if edge.marker:
+                    flags.append(f"if {edge.marker}")
+                if edge.optional:
+                    flags.append("optional")
+                suffix = f" [{' ; '.join(flags)}]" if flags else ""
+                if edge.target_id:
+                    target = packages.get(edge.target_id)
+                    target_label = f"{target.name}@{target.version}" if target else edge.target_id
+                    print(f"    {source_label} -> {target_label}{suffix}")
+                elif edge.candidate_ids:
+                    candidates = ", ".join(edge.candidate_ids)
+                    print(f"    {source_label} -> {edge.dependency_name}{suffix} [ambiguous candidates: {candidates}]")
+                else:
+                    print(f"    {source_label} -> {edge.dependency_name}{suffix} [unresolved]")
+
         for skip in skips:
             print(f"- {skip.component}: skipped ({skip.reason})")
 
-    all_results = [*go_results, *npm_results, *pnpm_results, *yarn_results, *cargo_results, *uv_results]
+    all_results = [
+        *go_results,
+        *npm_results,
+        *pnpm_results,
+        *yarn_results,
+        *cargo_results,
+        *uv_results,
+        *python_lock_results,
+    ]
     return 0 if all_results and all(result.succeeded for result in all_results) else 1
 
 
