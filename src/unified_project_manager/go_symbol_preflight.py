@@ -14,6 +14,7 @@ from .go_symbol_reachability import GovulncheckSymbolPlan
 @dataclass(frozen=True)
 class GovulncheckSymbolPreflight:
     ready: bool
+    project: str
     go_executable: str | None
     govulncheck_executable: str | None
     telemetry_mode: str | None
@@ -56,6 +57,10 @@ def preflight_govulncheck_symbol(
     """
 
     reasons: list[str] = []
+    project = plan.cwd.expanduser().resolve()
+    if not project.is_dir():
+        reasons.append(f"Go symbol-analysis project directory is unavailable: {project}")
+
     database = plan.database.expanduser().resolve()
     if not database.is_dir():
         reasons.append(f"local vulnerability database is unavailable: {database}")
@@ -70,13 +75,13 @@ def preflight_govulncheck_symbol(
         reasons.append(f"govulncheck executable is not available: {requested_govulncheck}")
 
     telemetry_mode: str | None = None
-    if go_executable is not None:
+    if go_executable is not None and project.is_dir():
         environment = dict(os.environ)
         environment.update(plan.environment)
         try:
             completed = run(
                 [go_executable, "env", "GOTELEMETRY"],
-                cwd=plan.cwd,
+                cwd=project,
                 env=environment,
                 text=True,
                 capture_output=True,
@@ -102,6 +107,7 @@ def preflight_govulncheck_symbol(
 
     return GovulncheckSymbolPreflight(
         ready=not reasons,
+        project=str(project),
         go_executable=go_executable,
         govulncheck_executable=govulncheck_executable,
         telemetry_mode=telemetry_mode,
