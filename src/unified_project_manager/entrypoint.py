@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .cache_entrypoint import dispatch_cache_command
+from .control_entrypoint import dispatch_control_command
 from .discovery import discover
 from .initializer import InitializationError, execute_initialization, plan_initialization
 from .impact_entrypoint import dispatch_impact_command
@@ -239,6 +240,9 @@ def _is_go_init(arguments: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    control_result = dispatch_control_command(arguments)
+    if control_result is not None:
+        return control_result
     cache_result = dispatch_cache_command(arguments)
     if cache_result is not None:
         return cache_result
