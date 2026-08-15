@@ -14,6 +14,7 @@ from .npm_impact import analyze_npm_impact
 from .operations import OperationError, select_component
 from .pnpm_graph import execute_pnpm_graph, plan_pnpm_graphs
 from .pnpm_impact import analyze_pnpm_impact
+from .provider_ownership import provider_owned_component_keys
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
 
@@ -62,7 +63,13 @@ def why_command(argv: list[str]) -> int:
 
     answers: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
-    handled: set[str] = set()
+    handled = provider_owned_component_keys(
+        graph,
+        npm_plans=npm_plans,
+        pnpm_plans=pnpm_plans,
+        cargo_plans=cargo_plans,
+        uv_plans=uv_plans,
+    )
 
     try:
         go_results, go_skips = query_native_why_offline(graph, args.package, selector=args.component)
@@ -86,7 +93,6 @@ def why_command(argv: list[str]) -> int:
             handled.add(skip.component)
 
     for plan in npm_plans:
-        handled.add(plan.component)
         result = execute_npm_graph(plan)
         if not result.succeeded:
             failures.append({"provider": "npm-lock-tree", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
@@ -95,7 +101,6 @@ def why_command(argv: list[str]) -> int:
             answers.append({"provider": "npm-lock-tree", "scope": "logical-dependency-tree", **impact.to_dict()})
 
     for plan in pnpm_plans:
-        handled.add(plan.component)
         result = execute_pnpm_graph(plan)
         if not result.succeeded:
             failures.append({"provider": "pnpm-lock-tree", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
@@ -104,7 +109,6 @@ def why_command(argv: list[str]) -> int:
             answers.append({"provider": "pnpm-lock-tree", "scope": "logical-dependency-tree", **impact.to_dict()})
 
     for plan in cargo_plans:
-        handled.add(plan.component)
         result = execute_cargo_graph(plan)
         if not result.succeeded:
             failures.append({"provider": "cargo-metadata", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
@@ -113,7 +117,6 @@ def why_command(argv: list[str]) -> int:
             answers.append({"provider": "cargo-metadata", "scope": "locked-offline-dependency-graph", **impact.to_dict()})
 
     for plan in uv_plans:
-        handled.add(plan.component)
         result = execute_uv_graph(plan)
         if not result.succeeded:
             failures.append({"provider": "uv-lock", "component": plan.component, "error": result.error, "returncode": None})
