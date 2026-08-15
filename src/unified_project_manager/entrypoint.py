@@ -156,6 +156,7 @@ def _projects_storage(argv: list[str]) -> int:
     args = _projects_storage_parser().parse_args(argv)
     entries = []
     missing = []
+    seen: set[tuple[int, int]] = set()
     try:
         roots = registered_paths(args.registry)
     except RegistryError as exc:
@@ -166,7 +167,7 @@ def _projects_storage(argv: list[str]) -> int:
             missing.append(str(root))
             continue
         try:
-            for entry in project_storage(discover(root)):
+            for entry in project_storage(discover(root), seen=seen):
                 entries.append(dict(entry, project=str(root)))
         except (OSError, ValueError):
             missing.append(str(root))
@@ -224,6 +225,8 @@ def _go_init(argv: list[str]) -> int:
 def _is_go_init(arguments: list[str]) -> bool:
     if not arguments or arguments[0] != "init":
         return False
+    if "--ecosystem=go" in arguments:
+        return True
     try:
         index = arguments.index("--ecosystem")
     except ValueError:
