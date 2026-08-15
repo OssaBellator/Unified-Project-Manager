@@ -16,6 +16,7 @@ from .registry import RegistryError, registered_paths
 from .storage import project_storage, storage_summary
 from .tasks import TaskError, execute_task, list_native_tasks, load_tasks, plan_native_task, plan_task
 from .workspace_entrypoint import dispatch_workspace_command
+from .workspace_sync_entrypoint import dispatch_workspace_sync_command
 
 
 def _storage_parser() -> argparse.ArgumentParser:
@@ -241,6 +242,9 @@ def _is_go_init(arguments: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    workspace_sync_result = dispatch_workspace_sync_command(arguments)
+    if workspace_sync_result is not None:
+        return workspace_sync_result
     workspace_result = dispatch_workspace_command(arguments)
     if workspace_result is not None:
         return workspace_result
