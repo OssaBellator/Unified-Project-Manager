@@ -112,8 +112,8 @@ def project_statuses(path: str | Path | None = None, *, deep: bool = False) -> l
     return statuses
 
 
-def fleet_resolved_duplicates(path: str | Path | None = None) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+def fleet_inventory(path: str | Path | None = None) -> list[dict[str, Any]]:
+    inventory: list[dict[str, Any]] = []
     for root in registered_paths(path):
         if not root.is_dir():
             continue
@@ -123,15 +123,28 @@ def fleet_resolved_duplicates(path: str | Path | None = None) -> list[dict[str, 
             continue
         for component in graph.components:
             for package in component.resolved_packages:
-                key = (component.ecosystem, normalize_package_name(component.ecosystem, package.name))
-                groups.setdefault(key, []).append({
+                inventory.append({
                     "project": str(root),
                     "component": component.key(graph.root),
+                    "ecosystem": component.ecosystem,
+                    "manager": component.manager,
                     "name": package.name,
+                    "normalized_name": normalize_package_name(component.ecosystem, package.name),
                     "version": package.version,
                     "source": package.source,
                     "location": package.location,
                 })
+    return sorted(inventory, key=lambda item: (
+        item["ecosystem"], item["normalized_name"], item["version"], item["project"], item["component"], item["location"] or ""
+    ))
+
+
+def fleet_resolved_duplicates(path: str | Path | None = None) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in fleet_inventory(path):
+        key = (item["ecosystem"], item["normalized_name"])
+        occurrence = {field: item[field] for field in ("project", "component", "name", "version", "source", "location")}
+        groups.setdefault(key, []).append(occurrence)
 
     result: list[dict[str, Any]] = []
     for (ecosystem, name), occurrences in sorted(groups.items()):
