@@ -183,7 +183,10 @@ def status_command(argv: list[str]) -> int:
             f"Health: {health['health_score']}% "
             f"({health['summary']['errors']} errors, {health['summary']['warnings']} warnings)"
         )
-        print(f"Components: {summary['components']} | ecosystems: {ecosystems} | managers: {managers}")
+        print(
+            f"Components: {summary['components']} | workspaces: {summary['workspaces']} | "
+            f"ecosystems: {ecosystems} | managers: {managers}"
+        )
         print(
             f"Dependencies: {summary['direct_dependencies']} direct | "
             f"{summary['resolved_packages']} resolved observations"
