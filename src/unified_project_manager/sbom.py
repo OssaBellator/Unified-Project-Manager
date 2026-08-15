@@ -16,6 +16,14 @@ def _encode(value: str) -> str:
     return quote(value, safe=".-_~")
 
 
+def _namespace_and_name(value: str) -> tuple[str, str]:
+    segments = [segment for segment in value.split("/") if segment]
+    if len(segments) < 2:
+        raise ValueError(f"Package identity requires namespace/name form: {value!r}")
+    namespace = "/".join(_encode(segment) for segment in segments[:-1])
+    return namespace, _encode(segments[-1])
+
+
 def purl_for(ecosystem: str, name: str, version: str) -> str:
     if ecosystem == "node":
         if name.startswith("@") and "/" in name:
@@ -28,7 +36,8 @@ def purl_for(ecosystem: str, name: str, version: str) -> str:
     if ecosystem == "rust":
         return f"pkg:cargo/{_encode(name)}@{_encode(version)}"
     if ecosystem == "go":
-        return f"pkg:golang/{_encode(name)}@{_encode(version)}"
+        namespace, package = _namespace_and_name(name)
+        return f"pkg:golang/{namespace}/{package}@{_encode(version)}"
     raise ValueError(f"No Package URL mapping is defined for ecosystem '{ecosystem}'.")
 
 
@@ -47,7 +56,10 @@ def _registry_purl(component: Component, package: ResolvedPackage) -> str | None
             return None
         return purl_for("rust", package.name, package.version)
     if component.ecosystem == "go":
-        return purl_for("go", package.name, package.version)
+        try:
+            return purl_for("go", package.name, package.version)
+        except ValueError:
+            return None
     return None
 
 
@@ -113,6 +125,13 @@ def write_cyclonedx(graph: ProjectGraph, output: str | Path) -> Path:
     return target
 
 
+def _go_native_ref(name: str, version: str) -> str | None:
+    try:
+        return purl_for("go", name, version)
+    except ValueError:
+        return None
+
+
 def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object]) -> dict[str, Any]:
     """Enrich the normal BOM with authoritative live native inventory.
 
@@ -151,7 +170,12 @@ def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object])
                 continue
 
             if isinstance(effective_version, str) and effective_version:
-                ref = purl_for("go", effective_name, effective_version)
+                purl = _go_native_ref(effective_name, effective_version)
+                if purl is not None:
+                    ref = purl
+                else:
+                    identity = "\0".join((component_key, logical_name, effective_name, effective_version))
+                    ref = f"urn:upm:go-module:sha256:{hashlib.sha256(identity.encode()).hexdigest()}"
                 entry = component_entries.get(ref)
                 if entry is None:
                     entry = {
@@ -159,8 +183,10 @@ def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object])
                         "name": effective_name,
                         "version": effective_version,
                         "bom-ref": ref,
-                        "purl": ref,
+                        "properties": [{"name": "upm:go:identity-kind", "value": "selected-module"}],
                     }
+                    if purl is not None:
+                        entry["purl"] = purl
                     component_entries[ref] = entry
                     occurrence_sets[ref] = set()
                 if logical_name != effective_name:
@@ -184,6 +210,7 @@ def cyclonedx_bom_with_native(graph: ProjectGraph, native_results: list[object])
                         "name": logical_name,
                         "bom-ref": ref,
                         "properties": [
+                            {"name": "upm:go:identity-kind", "value": "selected-module"},
                             {"name": "upm:go:replacement-kind", "value": "local"},
                             {"name": "upm:go:replacement", "value": str(replacement_name or replacement_dir or "local")},
                         ],
