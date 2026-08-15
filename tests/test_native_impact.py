@@ -81,13 +81,14 @@ class NativeImpactTests(unittest.TestCase):
                 return result
 
             output = io.StringIO()
-            with patch("unified_project_manager.impact_entrypoint.execute_native_graph", side_effect=fake_execute), redirect_stdout(output):
+            with patch("unified_project_manager.fleet_impact_provider_entrypoint.execute_native_graph", side_effect=fake_execute), redirect_stdout(output):
                 code = main(["projects", "impact", "example.com/b", "--native", "--registry", str(registry), "--json"])
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
-            self.assertEqual(data["scope"], "module-requirement")
             self.assertEqual(data["affected_projects"], 2)
             self.assertEqual(len(data["impacts"]), 2)
+            self.assertEqual({item["provider"] for item in data["impacts"]}, {"go-modules"})
+            self.assertEqual({item["scope"] for item in data["impacts"]}, {"module-requirement"})
 
 
 if __name__ == "__main__":
