@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .cargo_workspace import CargoWorkspaceError, cargo_workspace_ownership
 from .models import Component, ProjectGraph
 
 
@@ -99,93 +100,68 @@ def _matches(component: Component, graph: ProjectGraph, selector: str) -> bool:
     }
 
 
-def _inside_known_workspace(component: Component, graph: ProjectGraph) -> bool:
-    for candidate in graph.components:
-        if candidate is component or candidate.ecosystem != "rust":
-            continue
-        if not candidate.metadata.get("workspace"):
-            continue
-        try:
-            component.path.relative_to(candidate.path)
-        except ValueError:
-            continue
-        return True
-    return False
+def _ownership(graph: ProjectGraph):
+    try:
+        return cargo_workspace_ownership(graph)
+    except CargoWorkspaceError as exc:
+        raise CargoGraphError(str(exc)) from exc
 
 
 def plan_cargo_graphs(graph: ProjectGraph, selector: str | None = None) -> list[CargoGraphPlan]:
-    candidates = [
-        component
-        for component in graph.components
-        if component.ecosystem == "rust"
-        and component.manager == "cargo"
-        and "Cargo.lock" in component.lockfiles
-        and not _inside_known_workspace(component, graph)
-    ]
+    roots, owners = _ownership(graph)
+    rust_components = [component for component in graph.components if component.ecosystem == "rust"]
+    by_path = {component.path.resolve(): component for component in rust_components}
+
     if selector is not None:
-        direct = [component for component in graph.components if component.ecosystem == "rust" and _matches(component, graph, selector)]
+        direct = [component for component in rust_components if _matches(component, graph, selector)]
         if len(direct) > 1:
             choices = ", ".join(component.key(graph.root) for component in direct)
             raise CargoGraphError(f"Component selector '{selector}' is ambiguous for Cargo graph ingestion: {choices}")
-        if direct:
-            selected = direct[0]
-            if _inside_known_workspace(selected, graph):
-                owners = [
-                    component for component in graph.components
-                    if component.ecosystem == "rust" and component.metadata.get("workspace")
-                    and selected.path != component.path
-                    and _is_relative_to(selected.path, component.path)
-                ]
-                if owners:
-                    selected = min(owners, key=lambda item: len(item.path.parts))
-            candidates = [selected] if selected in candidates or "Cargo.lock" in selected.lockfiles else []
-        else:
-            candidates = []
-    return [CargoGraphPlan(component.key(graph.root), component.path) for component in candidates]
+        if not direct:
+            return []
+        selected = direct[0]
+        owner = owners.get(selected.path.resolve())
+        if owner is not None:
+            root_component = by_path.get(owner.root)
+            if root_component is None or "Cargo.lock" not in root_component.lockfiles:
+                return []
+            return [CargoGraphPlan(root_component.key(graph.root), root_component.path)]
+        if selected.manager == "cargo" and "Cargo.lock" in selected.lockfiles:
+            return [CargoGraphPlan(selected.key(graph.root), selected.path)]
+        return []
+
+    plans: list[CargoGraphPlan] = []
+    for component in rust_components:
+        path = component.path.resolve()
+        if path in owners:
+            continue
+        if component.manager != "cargo" or "Cargo.lock" not in component.lockfiles:
+            continue
+        plans.append(CargoGraphPlan(component.key(graph.root), component.path))
+    plans.sort(key=lambda plan: plan.cwd.relative_to(graph.root).as_posix())
+    return plans
 
 
 def cargo_provider_component_keys(
     graph: ProjectGraph,
     plans: Iterable[CargoGraphPlan] | None = None,
 ) -> set[str]:
-    """Return discovered Rust components served by authoritative Cargo plans.
-
-    Cargo metadata executed at a discovered workspace root returns the workspace
-    graph. Ownership intentionally mirrors the current planner's workspace model
-    so status/skip accounting cannot contradict selector promotion.
-    """
+    """Return discovered Rust components served by authoritative Cargo plans."""
     selected = tuple(plans) if plans is not None else tuple(plan_cargo_graphs(graph))
-    roots = {plan.cwd.resolve(): plan for plan in selected}
+    if not selected:
+        return set()
+    roots, _owners = _ownership(graph)
+    by_path = {component.path.resolve(): component for component in graph.components if component.ecosystem == "rust"}
     result: set[str] = set()
-    for component in graph.components:
-        if component.ecosystem != "rust":
-            continue
-        path = component.path.resolve()
-        if path in roots:
-            result.add(component.key(graph.root))
-            continue
-        for root_path in roots:
-            root_component = next(
-                (
-                    candidate for candidate in graph.components
-                    if candidate.ecosystem == "rust" and candidate.path.resolve() == root_path
-                ),
-                None,
-            )
-            if root_component is None or not root_component.metadata.get("workspace"):
-                continue
-            if _is_relative_to(path, root_path):
-                result.add(component.key(graph.root))
-                break
+    for plan in selected:
+        root_path = plan.cwd.resolve()
+        root_component = by_path.get(root_path)
+        if root_component is not None:
+            result.add(root_component.key(graph.root))
+        workspace = roots.get(root_path)
+        if workspace is not None:
+            result.update(workspace.members)
     return result
-
-
-def _is_relative_to(path: Path, parent: Path) -> bool:
-    try:
-        path.relative_to(parent)
-        return True
-    except ValueError:
-        return False
 
 
 def parse_cargo_metadata(text: str, component: str) -> tuple[list[CargoPackage], list[CargoDependencyEdge], str | None, str | None]:
