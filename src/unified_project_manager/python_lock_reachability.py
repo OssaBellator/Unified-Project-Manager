@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from .python_lock_graph import (
@@ -24,7 +24,10 @@ class PythonLockPath:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            **asdict(self),
+            "root": self.root,
+            "nodes": list(self.nodes),
+            "markers": list(self.markers),
+            "optional_edges": self.optional_edges,
             "conditional": self.conditional,
         }
 
