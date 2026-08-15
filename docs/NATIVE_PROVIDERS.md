@@ -10,7 +10,7 @@ UPM intentionally does not pretend every ecosystem exposes the same dependency g
 | npm | `npm-lock-tree` | npm lock-only logical tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
 | pnpm | `pnpm-lock-tree` | pnpm lock-only logical tree plus native lockfile-only SBOM provenance | lock-backed; no `node_modules` required | none |
 | Cargo | `cargo-metadata` | resolved package graph from Cargo metadata | **offline by default** (`--offline`) | lockfile is fixed by `--locked` |
-| uv | `uv-lock` | static relationship graph from universal `uv.lock` | none | none |
+| uv | `uv-lock` | static universal project/workspace graph from authoritative shared `uv.lock` | none | none |
 
 ## Go
 
@@ -88,25 +88,35 @@ cargo metadata --format-version 1 --locked --offline
 
 `--locked` refuses lockfile drift; `--offline` refuses network access. Missing local registry/package metadata is an explicit provider failure.
 
-Workspace ownership is no longer inferred from simple directory nesting. UPM builds a static ownership model from Cargo manifests using:
+Workspace ownership is not inferred from simple directory nesting. UPM builds a conservative static ownership model from Cargo manifests:
 
-- `[workspace].members` paths/globs;
-- `[workspace].exclude`;
-- a root `[package]` when present;
-- explicit `package.workspace` pointers;
-- discovered in-workspace local path dependencies.
+- when `[workspace].members` is present, those member paths/globs define the discovered member set, subject to `[workspace].exclude`;
+- a root `[package]` is itself a workspace member;
+- when a root package has **no explicit members list**, discovered in-root path dependencies are followed transitively as Cargo's automatic-membership fallback;
+- `package.workspace` is treated as root/consistency evidence for already-proven membership, not as an independent membership grant.
 
-Only manifests whose membership can be supported by that state are promoted to the workspace-root graph. An unrelated nested Cargo project with its own lockfile remains an independent graph owner. Unmatched member patterns become local workspace-health warnings rather than silently claiming membership.
+Only manifests whose membership can be supported by that state are promoted to the workspace-root graph. An unrelated nested Cargo project with its own lockfile remains an independent graph owner. Unmatched explicit member patterns become local workspace-health warnings rather than silently claiming membership.
 
 Cargo package IDs remain graph identity, so multiple versions of the same crate stay distinct. Dependency kinds and target expressions from Cargo metadata are retained on edges.
 
 ## uv
 
-`uv.lock` is universal across environments, so UPM does not reduce it to one `{name -> version}` mapping.
+`uv.lock` is universal across environments, and a uv workspace has one shared authoritative lock. UPM therefore does not model workspace members as independent resolver states.
+
+Workspace ownership is derived from `[tool.uv.workspace].members` and `exclude`. A workspace root without its shared `uv.lock`, overlapping ownership, or a nested included uv workspace fails closed. Stale/unmatched member patterns are surfaced by local workspace health.
+
+Relationship planning follows shared-lock ownership:
+
+- an unscoped query reads one `uv.lock` for the whole workspace;
+- selecting a member promotes the read to the workspace-root lock while retaining the selected member's normalized project name/version as query context;
+- selected `why`/`impact` only traverse packages reachable from that member's locked project node, so sibling-only paths do not leak into the answer;
+- provider coverage uses the same ownership model, so members without a local lockfile are still correctly reported as served by `uv-lock`.
 
 The static uv provider retains package/source identity and dependency markers. An edge resolves only when its lock reference identifies exactly one package. Ambiguous/forked references retain candidate IDs and are excluded from reverse reachability rather than guessed.
 
-Conditional or ambiguous uv edges are not flattened into unconditional CycloneDX/SPDX relationships.
+For native CycloneDX/SPDX export, `uv.lock` itself may establish PyPI identity for `source_kind = registry` packages. Local/editable/path/git/url packages are never relabeled as PyPI packages. A selected member exports only registry packages reachable from that member's project node; sibling-only packages are excluded. Marker-conditional or ambiguous edges are not flattened into unconditional SBOM relationships.
+
+Workspace-wide install/sync planning is also root-owned. `install --all` collapses a proven uv workspace to one root `uv sync --all-packages`; reproducible `sync --all` adds `--locked` instead of independently syncing each member against a lock they do not own.
 
 ## Provider ownership and skips
 
@@ -116,7 +126,7 @@ Workspace-aware providers may serve more discovered components than the provider
 - scoped npm workspace plans own only root context plus the selected member;
 - recursive pnpm plans own the pnpm workspace members they serve;
 - Cargo workspace plans own only manifest-proven members;
-- uv plans own their component directly.
+- unscoped uv workspace plans own all proven members, while scoped plans own only root context plus the selected member.
 
 This prevents contradictory output where a workspace member is both successfully served by a root provider and reported as unsupported.
 
@@ -129,7 +139,7 @@ Provider scopes remain deliberately distinct:
 - npm: `logical-dependency-tree`;
 - pnpm: `logical-dependency-tree` with workspace-project occurrence identity;
 - Cargo: `locked-offline-dependency-graph`;
-- uv: `universal-lock-dependency-graph`.
+- uv: `universal-lock-dependency-graph`, scoped to a selected workspace project when requested.
 
 None implies source/API/runtime reachability or exploitability.
 
@@ -141,7 +151,7 @@ Package identity and relationship evidence remain provenance-aware.
 - npm uses npm's native lockfile-only CycloneDX/SPDX package identity and relationships.
 - pnpm uses pnpm's native lockfile-only CycloneDX/SPDX identity; UPM preserves native PURLs and registry qualifiers.
 - Cargo provider edges are admitted only where static lock provenance supports registry endpoint identity.
-- uv relationships are admitted only when the universal-lock reference is unambiguous and unconditional for the target representation.
+- uv may add registry package identities directly from authoritative `uv.lock`, but relationships are admitted only when the universal-lock reference is unambiguous and unconditional for the target representation.
 - local/path/workspace packages are never relabeled as registry packages just to make a graph look complete.
 
 ## Failure policy
