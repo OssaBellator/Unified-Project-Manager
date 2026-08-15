@@ -8,6 +8,7 @@ from .models import ProjectGraph
 from .npm_graph import NpmGraphPlan, npm_provider_component_keys
 from .pnpm_graph import PnpmGraphPlan, pnpm_provider_component_keys
 from .uv_graph import UvGraphPlan, uv_provider_component_keys
+from .yarn_graph import YarnGraphPlan, yarn_provider_component_keys
 
 
 def _npm_owned_component_keys(graph: ProjectGraph, plans: tuple[NpmGraphPlan, ...]) -> set[str]:
@@ -34,6 +35,7 @@ def provider_owned_component_keys(
     *,
     npm_plans: Iterable[NpmGraphPlan] = (),
     pnpm_plans: Iterable[PnpmGraphPlan] = (),
+    yarn_plans: Iterable[YarnGraphPlan] = (),
     cargo_plans: Iterable[CargoGraphPlan] = (),
     uv_plans: Iterable[UvGraphPlan] = (),
 ) -> set[str]:
@@ -45,10 +47,12 @@ def provider_owned_component_keys(
     """
     npm = tuple(npm_plans)
     pnpm = tuple(pnpm_plans)
+    yarn = tuple(yarn_plans)
     cargo = tuple(cargo_plans)
     uv = tuple(uv_plans)
     result = _npm_owned_component_keys(graph, npm)
     result.update(pnpm_provider_component_keys(graph, pnpm))
+    result.update(yarn_provider_component_keys(graph, yarn))
     result.update(cargo_provider_component_keys(graph, cargo))
     result.update(uv_provider_component_keys(graph, uv))
     return result
