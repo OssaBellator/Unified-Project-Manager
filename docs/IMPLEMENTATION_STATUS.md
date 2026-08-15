@@ -27,9 +27,25 @@ Vulnerable-symbol reachability is still **not public**, but lower-level groundwo
 3. read-only preflight requiring exact project/DB/executables and telemetry already `off`;
 4. fail-closed executor gated by the exact ready preflight;
 5. shared project/fleet reporting over already-built execution/correlation results;
-6. a public-boundary regression keeping govulncheck out of the eight-provider registry.
+6. deterministic synthetic vulnerability-DB + local versioned module-proxy/runtime fixtures;
+7. an optional real govulncheck end-to-end regression gated by already-satisfied tool/telemetry prerequisites;
+8. a public-boundary regression keeping govulncheck out of the eight-provider registry.
 
-### Executor
+### Self-contained offline fixture
+
+The repo can now generate its own local Go vulnerability DB v1 fixture and versioned dependency source. The DB uses only the published filesystem endpoints (`index/db.json`, `index/modules.json`, `index/vulns.json`, `ID/<GO-ID>.json`). The runtime fixture exposes `example.com/dep@v1.2.3` through a generated `file://` Go module proxy and uses isolated `GOMODCACHE`/`GOCACHE` directories.
+
+Fixture setup runs `go mod download` only against that local file proxy with checksum-DB access disabled. The actual analysis environment then switches to `GOPROXY=off`. A real installed Go 1.23.2 check confirms the cached dependency resolves offline after that transition.
+
+Manual fixture helper:
+
+```sh
+sh ./scripts/prepare-go-symbol-validation-fixture.sh /tmp/upm-go-symbol-fixture
+```
+
+This removes downloaded public DB and network dependency source as prerequisites for future real govulncheck validation.
+
+### Executor/reporting
 
 The executor uses the preflight-resolved executable directly with no shell and the offline environment:
 
@@ -40,13 +56,9 @@ GOSUMDB = off
 GOTOOLCHAIN = local
 ```
 
-Govulncheck JSON mode returns exit 0 even when vulnerabilities are present, so exit 0 means “command completed”; findings come from validated JSON. Nonzero means execution failure and stdout is not accepted as valid symbol evidence. Malformed JSON, reported-DB mismatch, or preflight/plan mismatch fail closed.
+Govulncheck JSON mode exit 0 means “command completed”; findings come from validated JSON. Nonzero is execution failure. Malformed JSON, reported-DB mismatch, or preflight/plan mismatch fail closed.
 
-### Shared project/fleet reporting
-
-A successful execution can produce strict matched/unmatched symbol correlation. A blocked/failed/invalid execution produces `correlation=null`; UPM does not turn provider failure into a negative symbol-reachability claim.
-
-Fleet aggregation keeps independent counts for execution success/failure, raw symbol findings, correlated matches, and unmatched symbol findings, and never reruns execution or correlation.
+A successful execution can produce strict matched/unmatched symbol correlation. Failed/blocked/invalid execution leaves `correlation=null`; fleet reporting keeps execution failure, raw findings, correlated matches, and unmatched findings separate.
 
 Everything remains:
 
@@ -57,24 +69,25 @@ runtime_reachability = not-evaluated
 exploitability = not-established
 ```
 
-### Persistence/freshness still deferred
+### Optional real-runtime test
 
-UPM has not invented a persisted symbol-evidence fingerprint. A correct freshness model must conservatively represent the actual source/build configuration govulncheck analyzed, including local replacements and relevant source/build inputs. It should not reuse only `go.mod`/`go.sum` or the scanned SBOM as a proxy for call-graph freshness.
+`tests/test_go_symbol_real_runtime.py` is committed and included in the local symbol driver. It skips unless `go` and `govulncheck` already exist and `GOTELEMETRY` is already `off`. It never installs a tool or changes telemetry.
 
-Ordinary status therefore has no hidden symbol execution or symbol freshness replay.
+When runnable, it creates only local fixtures, pre-populates the isolated versioned module cache, snapshots the project, executes UPM preflight/executor/correlation/reporting, requires the synthetic symbol result, and requires the entire project snapshot to remain unchanged.
 
-### Live real-runtime blocker
-
-No real govulncheck scan is claimed:
+The deterministic DB/source fixtures are therefore no longer live blockers. In this environment the remaining prerequisites are:
 
 ```text
 govulncheck executable = absent
 Go executable = /usr/local/go/bin/go
 GOTELEMETRY = local
-usable local vulnerability DB = not found
 ```
 
-No tool install, DB download, or telemetry mutation was performed.
+No install or telemetry mutation was performed.
+
+### Persistence/freshness still deferred
+
+UPM has not invented a persisted symbol-evidence fingerprint. A correct freshness model must conservatively represent the actual source/build configuration govulncheck analyzed. It should not reuse only `go.mod`/`go.sum` or the scanned SBOM as a call-graph freshness proxy.
 
 See `GO_SYMBOL_REACHABILITY.md`.
 
@@ -98,12 +111,15 @@ The full private branch cannot be materialized end-to-end here. Focused reconstr
 - strict symbol correlation: **9/9**;
 - govulncheck preflight: **6/6**;
 - fail-closed govulncheck executor: **9/9**;
-- shared project/fleet symbol reporting: **6/6**.
+- shared project/fleet symbol reporting: **6/6**;
+- deterministic Go vulnerability-DB fixture: **7/7**;
+- fully local versioned runtime fixture: **5/5**, including real Go local-proxy → offline-cache resolution;
+- optional real govulncheck end-to-end regression: committed but skipped here because prerequisites are not met.
 
 ## Important remaining gaps
 
-1. validate govulncheck against a real local vulnerability DB and characterize actual project/cache/tool side effects;
-2. prove strict correlation against real output;
+1. run the optional real govulncheck regression when the binary already exists and telemetry is already `off`, then characterize actual non-project cache/tool side effects;
+2. prove strict correlation against that real govulncheck stream;
 3. define a conservative source/build-state fingerprint plus separate symbol persistence/freshness semantics before public routing;
 4. add runtime/data-flow or exploitability evidence only where ecosystem-native evidence supports it;
 5. deepen physical cache provenance only where manager-native identity supports it;
