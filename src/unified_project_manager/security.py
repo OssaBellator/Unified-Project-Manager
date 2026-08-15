@@ -22,6 +22,7 @@ class SecurityScanError(ValueError):
 class SecurityScanPlan:
     root: Path
     package_count: int
+    package_count_exact: bool
     native_go: bool
     argv_template: tuple[str, ...] = (
         "osv-scanner", "scan", "source", "--format", "json", "<temporary-bom.cdx.json>"
@@ -31,6 +32,7 @@ class SecurityScanPlan:
         return {
             "root": str(self.root),
             "package_count": self.package_count,
+            "package_count_exact": self.package_count_exact,
             "native_go": self.native_go,
             "argv": list(self.argv_template),
             "network_may_be_used": True,
@@ -117,12 +119,18 @@ def build_security_bom(
 
 
 def plan_security_scan(graph: ProjectGraph, *, native_go: bool = False) -> SecurityScanPlan:
-    bom = build_security_bom(graph, native_go=native_go)
-    package_count = len(bom.get("components", [])) if isinstance(bom.get("components"), list) else 0
-    if package_count == 0:
-        hint = " Re-run with --native-go for authoritative selected Go modules." if any(component.ecosystem == "go" for component in graph.components) and not native_go else ""
+    static_bom = cyclonedx_bom(graph)
+    static_count = len(static_bom.get("components", [])) if isinstance(static_bom.get("components"), list) else 0
+    has_go = any(component.ecosystem == "go" for component in graph.components)
+    if static_count == 0 and not (native_go and has_go):
+        hint = " Re-run with --native-go for authoritative selected Go modules." if has_go and not native_go else ""
         raise SecurityScanError("No concrete resolved packages are available for SBOM advisory scanning." + hint)
-    return SecurityScanPlan(graph.root, package_count, native_go)
+    return SecurityScanPlan(
+        graph.root,
+        static_count,
+        package_count_exact=not (native_go and has_go),
+        native_go=native_go,
+    )
 
 
 def execute_security_scan(
@@ -138,6 +146,10 @@ def execute_security_scan(
         return SecurityScanResult(plan, 127, stderr="Executable 'osv-scanner' is not available on PATH.")
 
     bom = build_security_bom(graph, native_go=plan.native_go, execute_go=execute_go)
+    package_count = len(bom.get("components", [])) if isinstance(bom.get("components"), list) else 0
+    if package_count == 0:
+        return SecurityScanResult(plan, 128, stderr="No concrete packages were available after native inventory enrichment.")
+
     with tempfile.TemporaryDirectory(prefix="upm-osv-") as temporary:
         sbom = Path(temporary) / "bom.cdx.json"
         sbom.write_text(json.dumps(bom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
