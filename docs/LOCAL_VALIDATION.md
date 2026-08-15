@@ -50,9 +50,10 @@ sh ./scripts/test-python-lock-provider-boundary.sh
 sh ./scripts/test-python-lock-direct-conditions.sh
 sh ./scripts/test-python-lock-query-contract.sh
 sh ./scripts/test-python-lock-sbom-uncertainty.sh
+sh ./scripts/test-python-lock-native-inventory.sh
 ```
 
-These checks cover the internal Poetry/PDM provider ids/scope, plan-based ownership, suppression of broad adapter `resolved_packages`, supported lock-contract validation, direct optional/marker propagation from `pyproject.toml`, certainty-aware query semantics shared by future `why`/`impact`/fleet routing, path multiplicity, and conservative CycloneDX/SPDX uncertainty behavior.
+These checks cover the internal Poetry/PDM provider ids/scope, plan-based ownership, suppression of broad adapter `resolved_packages`, supported lock-contract validation, direct optional/marker propagation from `pyproject.toml`, certainty-aware query semantics shared by future `why`/`impact`/fleet routing, path multiplicity, conservative CycloneDX/SPDX uncertainty behavior, and fail-closed construction of an exact CycloneDX document that retains the same validated lock results for later advisory-path correlation.
 
 Poetry/PDM remain below the public native-provider line until graph, why, impact, fleet impact, SBOM, advisory inventory/path correlation, and provider-status coverage can be integrated atomically with the same certainty model.
 
