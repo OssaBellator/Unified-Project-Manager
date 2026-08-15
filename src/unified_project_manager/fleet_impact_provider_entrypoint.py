@@ -138,7 +138,7 @@ def fleet_impact_command(argv: list[str]) -> int:
 
     impacts.sort(key=lambda item: (
         str(item["project"]), str(item["provider"]), str(item["component"]),
-        str(item.get("project", "")), str(item.get("ref", "")),
+        str(item.get("workspace_project", "")), str(item.get("ref", "")),
         str(item.get("module", "")), str(item.get("package_id", "")),
     ))
     affected_projects = sorted({str(item["project"]) for item in impacts})
@@ -171,7 +171,8 @@ def fleet_impact_command(argv: list[str]) -> int:
                 print("  logical path: " + " -> ".join(impact["root_path"]))
             elif impact["provider"] == "pnpm-lock-tree":
                 version = f"@{impact['version']}" if impact.get("version") else ""
-                print(f"{impact['project']} [{impact['component']}] [pnpm:{impact.get('project', '.')}]: {impact['name']}{version}")
+                workspace_project = impact.get("workspace_project", ".")
+                print(f"{impact['project']} [{impact['component']}] [pnpm:{workspace_project}]: {impact['name']}{version}")
                 print("  logical path: " + " -> ".join(impact["root_path"]))
             elif impact["provider"] == "cargo-metadata":
                 print(f"{impact['project']} [{impact['component']}] [cargo]: {impact['name']}@{impact['version']}")
