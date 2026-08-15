@@ -149,6 +149,8 @@ def fleet_audit_command(argv: list[str]) -> int:
                 "network": "offline" if args.go_import_reachability else None,
                 "persisted": False if args.go_import_reachability else None,
                 "scope": "package-import-graph" if args.go_import_reachability else None,
+                "build_constraints": "any-tags" if args.go_import_reachability else None,
+                "current_build_configuration_reachability": "not-evaluated" if args.go_import_reachability else None,
             },
             "projects": projects,
             "missing": missing,
@@ -169,7 +171,8 @@ def fleet_audit_command(argv: list[str]) -> int:
             if args.go_import_reachability:
                 print(
                     "Go package-import reachability is opt-in and will run offline after each applied scan; "
-                    "it is report-only and does not establish API/runtime exploitability."
+                    "go mod why uses an any-build-tag package graph, so current-build/API/runtime "
+                    "reachability and exploitability remain unevaluated."
                 )
             print("Preview only. OSV-Scanner may use the network; re-run with --apply to execute and persist valid scan evidence.")
         return 0
@@ -302,11 +305,19 @@ def fleet_audit_command(argv: list[str]) -> int:
                         label += f"@{source['version']}"
                     print(f"    {label} [go-mod-why] {source['component']}")
                     print(f"      package-import reachability: {source['state']}")
+                    if source.get("replacement_active"):
+                        print(
+                            f"      required module queried: {source.get('queried_module')} "
+                            f"(effective replacement: {source.get('effective_module')})"
+                        )
                     if source.get("import_path"):
                         print("      import path: " + " -> ".join(source["import_path"]))
                     if source.get("error"):
                         print(f"      import query error: {source['error']}")
-                    print("      API/runtime reachability: not evaluated; exploitability not established")
+                    print(
+                        f"      build constraints: {source.get('build_constraints', 'unknown')}; "
+                        "current-build/API/runtime reachability not evaluated; exploitability not established"
+                    )
             else:
                 print(f"✓ {item['project']}: clean for scanned inventory")
             if item["dependency_impact_warning"]:
