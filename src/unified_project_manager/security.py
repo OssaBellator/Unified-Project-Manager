@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .go_offline_provider import execute_native_graph_offline
 from .models import ProjectGraph
 from .native_cyclonedx import NativeCycloneDxError, NativeCycloneDxInventory, build_native_cyclonedx
 from .native_graph import NativeGraphResult, plan_native_graph
-from .go_offline_provider import execute_native_graph_offline
 from .provider_registry import provider_summary
 from .sbom import cyclonedx_bom, cyclonedx_bom_with_native
 
@@ -62,6 +62,7 @@ class SecurityScanResult:
     report: dict[str, Any] | None = None
     stderr: str = ""
     bom: dict[str, Any] | None = None
+    native_inventory: NativeCycloneDxInventory | None = None
 
     @property
     def scanner_succeeded(self) -> bool:
@@ -98,8 +99,9 @@ class SecurityScanResult:
         return {"affected_packages": affected_packages, "vulnerabilities": len(vulnerability_ids)}
 
     def to_dict(self) -> dict[str, Any]:
-        # The exact BOM is retained for evidence binding but intentionally not
-        # duplicated into normal CLI output, where the scanner report is enough.
+        # The exact BOM/provider objects are retained for evidence binding and
+        # dependency-path correlation but intentionally not duplicated wholesale
+        # into normal CLI output.
         return {
             "plan": self.plan.to_dict(),
             "returncode": self.returncode,
@@ -108,6 +110,9 @@ class SecurityScanResult:
             "summary": self.summary,
             "report": self.report,
             "stderr": self.stderr,
+            "native_provider_counts": (
+                self.native_inventory.provider_counts() if self.native_inventory is not None else None
+            ),
         }
 
 
@@ -185,16 +190,35 @@ def execute_security_scan(
     if executable is None:
         return SecurityScanResult(plan, 127, stderr="Executable 'osv-scanner' is not available on PATH.")
 
-    bom = build_security_bom(
-        graph,
-        native_go=plan.native_go,
-        native_providers=plan.native_providers,
-        execute_go=execute_go,
-        build_native=build_native,
-    )
+    native_inventory: NativeCycloneDxInventory | None = None
+    try:
+        if plan.native_providers:
+            native_inventory = build_native(
+                graph,
+                execute_go=execute_go,
+                include_path_graphs=True,
+            )
+            bom = native_inventory.bom
+        else:
+            bom = build_security_bom(
+                graph,
+                native_go=plan.native_go,
+                native_providers=False,
+                execute_go=execute_go,
+                build_native=build_native,
+            )
+    except NativeCycloneDxError as exc:
+        raise SecurityScanError(str(exc)) from exc
+
     package_count = len(bom.get("components", [])) if isinstance(bom.get("components"), list) else 0
     if package_count == 0:
-        return SecurityScanResult(plan, 128, stderr="No concrete packages were available after inventory enrichment.", bom=bom)
+        return SecurityScanResult(
+            plan,
+            128,
+            stderr="No concrete packages were available after inventory enrichment.",
+            bom=bom,
+            native_inventory=native_inventory,
+        )
 
     with tempfile.TemporaryDirectory(prefix="upm-osv-") as temporary:
         sbom = Path(temporary) / "bom.cdx.json"
@@ -203,15 +227,36 @@ def execute_security_scan(
         try:
             completed = run(argv, cwd=graph.root, text=True, capture_output=True, check=False)
         except OSError as exc:
-            return SecurityScanResult(plan, 127, stderr=str(exc), bom=bom)
+            return SecurityScanResult(
+                plan, 127, stderr=str(exc), bom=bom, native_inventory=native_inventory
+            )
 
     report = None
     if (completed.stdout or "").strip():
         try:
             parsed = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
-            return SecurityScanResult(plan, 127, stderr=f"Could not parse OSV-Scanner JSON output: {exc}", bom=bom)
+            return SecurityScanResult(
+                plan,
+                127,
+                stderr=f"Could not parse OSV-Scanner JSON output: {exc}",
+                bom=bom,
+                native_inventory=native_inventory,
+            )
         if not isinstance(parsed, dict):
-            return SecurityScanResult(plan, 127, stderr="OSV-Scanner JSON output root is not an object.", bom=bom)
+            return SecurityScanResult(
+                plan,
+                127,
+                stderr="OSV-Scanner JSON output root is not an object.",
+                bom=bom,
+                native_inventory=native_inventory,
+            )
         report = parsed
-    return SecurityScanResult(plan, completed.returncode, report, completed.stderr or "", bom)
+    return SecurityScanResult(
+        plan,
+        completed.returncode,
+        report,
+        completed.stderr or "",
+        bom,
+        native_inventory,
+    )
