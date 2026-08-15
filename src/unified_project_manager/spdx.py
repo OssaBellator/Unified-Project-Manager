@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .models import Component, ProjectGraph, ResolvedPackage
 from .sbom import purl_for
+from .uv_scope import uv_scope_package_ids
 
 SPDX_VERSION = "SPDX-2.3"
 SPDX_DATA_LICENSE = "CC0-1.0"
@@ -170,28 +171,40 @@ def spdx_document(
             if source and target:
                 _add_relationship(relationships, source, "DEPENDS_ON", target)
 
+    # uv.lock is authoritative package identity for registry packages. For a
+    # selected workspace member, only registry packages reachable from that
+    # member's locked project node are admitted; siblings remain out of scope.
     for result in uv_results or []:
         if not getattr(result, "succeeded", False):
             continue
+        allowed = uv_scope_package_ids(result)
         refs: dict[str, str] = {}
         for package in getattr(result, "packages", []):
             package_id = getattr(package, "package_id", None)
             name = getattr(package, "name", None)
             version = getattr(package, "version", None)
             source_kind = getattr(package, "source_kind", None)
-            if not all(isinstance(value, str) for value in (package_id, name, version)):
+            if not all(isinstance(value, str) and value for value in (package_id, name, version)):
                 continue
-            if source_kind != "registry":
+            if package_id not in allowed or source_kind != "registry":
                 continue
+            purl = purl_for("python", name, version)
+            spdx_id = _spdx_ref(purl)
+            packages.setdefault(spdx_id, _package_record(name, version, purl, purl))
+            refs[package_id] = spdx_id
             normalized = re.sub(r"[-_.]+", "-", name).lower()
-            target = lookup.get(("python", normalized, version)) or lookup.get(("python", name.lower(), version))
-            if target:
-                refs[package_id] = target
+            lookup[("python", normalized, version)] = spdx_id
+            lookup[("python", name.lower(), version)] = spdx_id
+
         for edge in getattr(result, "edges", []):
+            source_id = getattr(edge, "source_id", "")
+            target_id = getattr(edge, "target_id", "")
+            if source_id not in allowed or target_id not in allowed:
+                continue
             if getattr(edge, "ambiguous", False) or getattr(edge, "marker", None):
                 continue
-            source = refs.get(getattr(edge, "source_id", ""))
-            target = refs.get(getattr(edge, "target_id", ""))
+            source = refs.get(source_id)
+            target = refs.get(target_id)
             if source and target:
                 _add_relationship(relationships, source, "DEPENDS_ON", target)
 
