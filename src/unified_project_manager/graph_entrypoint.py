@@ -8,7 +8,8 @@ from pathlib import Path
 
 from .cargo_graph import CargoGraphError, execute_cargo_graph, plan_cargo_graphs
 from .discovery import discover
-from .native_graph import NativeGraphError, execute_native_graph, plan_native_graph
+from .go_offline_provider import execute_native_graph_offline
+from .native_graph import NativeGraphError, plan_native_graph
 from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 
@@ -63,6 +64,7 @@ def native_graph_command(argv: list[str]) -> int:
                 "provider": "go-modules",
                 **plan.to_dict(root),
                 "commands": [list(plan.selected_argv), list(plan.edges_argv)],
+                "network": "offline",
             })
         for plan in npm_plans:
             plans.append({"provider": "npm-lock-tree", **plan.to_dict(root), "commands": [list(plan.argv)]})
@@ -85,7 +87,7 @@ def native_graph_command(argv: list[str]) -> int:
                 print(f"- {skip.component}: skipped ({skip.reason})")
         return 0 if plans else 1
 
-    go_results = [execute_native_graph(plan) for plan in go_plans]
+    go_results = [execute_native_graph_offline(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
@@ -105,7 +107,7 @@ def native_graph_command(argv: list[str]) -> int:
         for result in go_results:
             print(f"{result.plan.component} [go-modules]")
             if not result.succeeded:
-                print(f"  x native graph failed: {result.stderr}")
+                print(f"  x offline native graph failed: {result.stderr}")
                 continue
             print("  selected build list:")
             for module in result.modules:
