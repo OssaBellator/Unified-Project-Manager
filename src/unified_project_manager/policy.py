@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .cache_coverage import cache_integrity_coverage
 from .doctor import diagnose
 from .models import ProjectGraph
 from .verifier import plan_native_verification
@@ -19,6 +20,7 @@ class PolicyConfig:
     require_lockfiles: bool = False
     require_integrity_snapshot: bool = False
     require_native_verification: bool = False
+    require_cache_integrity_verification: bool = False
     allowed_managers: tuple[str, ...] = ()
     denied_managers: tuple[str, ...] = ()
     max_warnings: int | None = None
@@ -87,7 +89,12 @@ def load_policy(root: str | Path) -> PolicyConfig:
         raise PolicyError("upm.toml [policy] must be a table.")
 
     bool_fields: dict[str, bool] = {}
-    for name in ("require_lockfiles", "require_integrity_snapshot", "require_native_verification"):
+    for name in (
+        "require_lockfiles",
+        "require_integrity_snapshot",
+        "require_native_verification",
+        "require_cache_integrity_verification",
+    ):
         raw = value.get(name, False)
         if not isinstance(raw, bool):
             raise PolicyError(f"upm.toml policy.{name} must be a boolean.")
@@ -110,6 +117,7 @@ def load_policy(root: str | Path) -> PolicyConfig:
         require_lockfiles=bool_fields["require_lockfiles"],
         require_integrity_snapshot=bool_fields["require_integrity_snapshot"],
         require_native_verification=bool_fields["require_native_verification"],
+        require_cache_integrity_verification=bool_fields["require_cache_integrity_verification"],
         allowed_managers=allowed,
         denied_managers=denied,
         max_warnings=max_warnings,
@@ -159,6 +167,15 @@ def evaluate_policy(graph: ProjectGraph, *, deep: bool = False) -> PolicyReport:
                     "policy.native-verification-required",
                     f"No configured non-mutating native verifier: {skip.reason}",
                     skip.component,
+                ))
+
+    if config.require_cache_integrity_verification:
+        for coverage in cache_integrity_coverage(graph):
+            if not coverage.supported:
+                report.violations.append(PolicyViolation(
+                    "policy.cache-integrity-verification-required",
+                    coverage.reason or "No configured authoritative cache-integrity verifier.",
+                    coverage.component,
                 ))
 
     if config.max_errors is not None and doctor.errors > config.max_errors:
