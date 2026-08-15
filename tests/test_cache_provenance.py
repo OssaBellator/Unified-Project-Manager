@@ -44,11 +44,14 @@ class CacheProvenanceTests(unittest.TestCase):
             (cargo_source / "lib.rs").write_bytes(b"x" * 7)
             (cargo_source / "Cargo.toml").write_text("[package]\nname='serde'\nversion='1.0.0'\n", encoding="utf-8")
             (cargo_home / "git").mkdir(parents=True)
+            cargo_attributed = sum(
+                path.stat().st_size for path in cargo_source.iterdir() if path.is_file()
+            )
 
             entries = [
                 GlobalStorageEntry("go", "module-cache", str(gomodcache), 20, 3),
                 GlobalStorageEntry("go", "build-cache", str(root / "gobuild"), 100, 1),
-                GlobalStorageEntry("cargo", "registry-cache", str(cargo_home / "registry"), 20, 2),
+                GlobalStorageEntry("cargo", "registry-cache", str(cargo_home / "registry"), cargo_attributed + 4, 3),
                 GlobalStorageEntry("cargo", "git-cache", str(cargo_home / "git"), 0, 0),
             ]
 
@@ -112,9 +115,9 @@ class CacheProvenanceTests(unittest.TestCase):
             self.assertNotEqual(managers["go"]["total_bytes"], 120)
 
             cargo = managers["cargo"]
-            self.assertEqual(cargo["total_bytes"], 20)
-            self.assertGreaterEqual(cargo["attributed_bytes"], 7)
-            self.assertLessEqual(cargo["attributed_bytes"], 20)
+            self.assertEqual(cargo["total_bytes"], cargo_attributed + 4)
+            self.assertEqual(cargo["attributed_bytes"], cargo_attributed)
+            self.assertEqual(cargo["unattributed_bytes"], 4)
             self.assertEqual({group["cache_kind"] for group in cargo["groups"]}, {"registry-source"})
             self.assertTrue(all(not group["reclaimable"] for group in cargo["groups"]))
 
