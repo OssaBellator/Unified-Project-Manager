@@ -48,6 +48,7 @@ class SecurityScanResult:
     returncode: int
     report: dict[str, Any] | None = None
     stderr: str = ""
+    bom: dict[str, Any] | None = None
 
     @property
     def scanner_succeeded(self) -> bool:
@@ -150,7 +151,7 @@ def execute_security_scan(
     bom = build_security_bom(graph, native_go=plan.native_go, execute_go=execute_go)
     package_count = len(bom.get("components", [])) if isinstance(bom.get("components"), list) else 0
     if package_count == 0:
-        return SecurityScanResult(plan, 128, stderr="No concrete packages were available after native inventory enrichment.")
+        return SecurityScanResult(plan, 128, stderr="No concrete packages were available after native inventory enrichment.", bom=bom)
 
     with tempfile.TemporaryDirectory(prefix="upm-osv-") as temporary:
         sbom = Path(temporary) / "bom.cdx.json"
@@ -159,15 +160,15 @@ def execute_security_scan(
         try:
             completed = run(argv, cwd=graph.root, text=True, capture_output=True, check=False)
         except OSError as exc:
-            return SecurityScanResult(plan, 127, stderr=str(exc))
+            return SecurityScanResult(plan, 127, stderr=str(exc), bom=bom)
 
     report = None
     if (completed.stdout or "").strip():
         try:
             parsed = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
-            return SecurityScanResult(plan, 127, stderr=f"Could not parse OSV-Scanner JSON output: {exc}")
+            return SecurityScanResult(plan, 127, stderr=f"Could not parse OSV-Scanner JSON output: {exc}", bom=bom)
         if not isinstance(parsed, dict):
-            return SecurityScanResult(plan, 127, stderr="OSV-Scanner JSON output root is not an object.")
+            return SecurityScanResult(plan, 127, stderr="OSV-Scanner JSON output root is not an object.", bom=bom)
         report = parsed
-    return SecurityScanResult(plan, completed.returncode, report, completed.stderr or "")
+    return SecurityScanResult(plan, completed.returncode, report, completed.stderr or "", bom)
