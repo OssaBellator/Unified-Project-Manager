@@ -14,6 +14,7 @@ from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
 from .pnpm_graph import PnpmGraphError, execute_pnpm_graph, plan_pnpm_graphs
 from .provider_ownership import provider_owned_component_keys
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
+from .yarn_execution_policy import yarn_execution_guards
 from .yarn_graph import YarnGraphError, execute_yarn_graph, plan_yarn_graphs
 
 
@@ -89,13 +90,7 @@ def native_graph_command(argv: list[str]) -> int:
                 "provider": "yarn-berry-resolution-graph",
                 **plan.to_dict(root),
                 "commands": [list(plan.argv)],
-                "execution_guards": {
-                    "network": "disabled",
-                    "install_state": "temporary",
-                    "cache": "immutable",
-                    "hardened_mode": "disabled",
-                    "telemetry": "disabled",
-                },
+                "execution_guards": yarn_execution_guards(),
             })
         for plan in cargo_plans:
             plans.append({"provider": "cargo-metadata", **plan.to_dict(root), "commands": [list(plan.argv)]})
