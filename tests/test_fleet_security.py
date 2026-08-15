@@ -8,8 +8,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from unified_project_manager.discovery import discover
 from unified_project_manager.entrypoint import main
 from unified_project_manager.registry import register_project
+from unified_project_manager.sbom import cyclonedx_bom
 from unified_project_manager.security import SecurityScanPlan, SecurityScanResult
 
 
@@ -62,10 +64,20 @@ class FleetSecurityTests(unittest.TestCase):
             register_project(one, registry)
             register_project(two, registry)
 
-            clean = SecurityScanResult(SecurityScanPlan(one, 1, True, False), 0, {"results": []})
-            vulnerable = SecurityScanResult(SecurityScanPlan(two, 1, True, False), 1, {
-                "results": [{"packages": [{"vulnerabilities": [{"id": "GHSA-test"}]}]}],
-            })
+            one_graph = discover(one)
+            two_graph = discover(two)
+            clean = SecurityScanResult(
+                SecurityScanPlan(one, 1, True, False),
+                0,
+                {"results": []},
+                bom=cyclonedx_bom(one_graph),
+            )
+            vulnerable = SecurityScanResult(
+                SecurityScanPlan(two, 1, True, False),
+                1,
+                {"results": [{"packages": [{"vulnerabilities": [{"id": "GHSA-test"}]}]}]},
+                bom=cyclonedx_bom(two_graph),
+            )
             output = io.StringIO()
             with patch(
                 "unified_project_manager.fleet_security_entrypoint.execute_security_scan",
@@ -76,7 +88,32 @@ class FleetSecurityTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(payload["summary"]["vulnerable_projects"], 1)
             self.assertEqual(payload["summary"]["scanner_failures"], 0)
+            self.assertEqual(payload["summary"]["evidence_failures"], 0)
             self.assertEqual(payload["summary"]["unique_vulnerabilities"], 1)
+            self.assertTrue(all(item["evidence_path"] for item in payload["projects"]))
+
+    def test_success_without_exact_bom_is_fleet_evidence_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            registry = root / "projects.json"
+            project = root / "app"
+            self._npm_project(project, "app")
+            register_project(project, registry)
+            success_without_bom = SecurityScanResult(
+                SecurityScanPlan(project, 1, True, False), 0, {"results": []}
+            )
+            output = io.StringIO()
+            with patch(
+                "unified_project_manager.fleet_security_entrypoint.execute_security_scan",
+                return_value=success_without_bom,
+            ), redirect_stdout(output):
+                code = main(["projects", "audit", "--registry", str(registry), "--apply", "--json"])
+            payload = json.loads(output.getvalue())
+
+            self.assertEqual(code, 2)
+            self.assertEqual(payload["summary"]["evidence_failures"], 1)
+            self.assertIn("exact scanned SBOM", payload["projects"][0]["evidence_error"])
+            self.assertIsNone(payload["projects"][0]["evidence_path"])
 
     def test_apply_returns_scanner_failure_separately(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -92,6 +129,7 @@ class FleetSecurityTests(unittest.TestCase):
             payload = json.loads(output.getvalue())
             self.assertEqual(code, 2)
             self.assertEqual(payload["summary"]["scanner_failures"], 1)
+            self.assertEqual(payload["summary"]["evidence_failures"], 0)
             self.assertEqual(payload["summary"]["vulnerable_projects"], 0)
 
 
