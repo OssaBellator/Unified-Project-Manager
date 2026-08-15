@@ -12,6 +12,8 @@ from .go_offline_provider import query_native_why_offline
 from .npm_graph import execute_npm_graph, plan_npm_graphs
 from .npm_impact import analyze_npm_impact
 from .operations import OperationError, select_component
+from .pnpm_graph import execute_pnpm_graph, plan_pnpm_graphs
+from .pnpm_impact import analyze_pnpm_impact
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
 
@@ -48,6 +50,7 @@ def why_command(argv: list[str]) -> int:
             except OperationError as exc:
                 raise ValueError(str(exc)) from exc
         npm_plans = plan_npm_graphs(graph, selector=args.component)
+        pnpm_plans = plan_pnpm_graphs(graph, selector=args.component)
         cargo_plans = plan_cargo_graphs(graph, selector=args.component)
         uv_plans = plan_uv_graphs(graph, selector=args.component)
     except (OSError, ValueError) as exc:
@@ -89,11 +92,16 @@ def why_command(argv: list[str]) -> int:
             failures.append({"provider": "npm-lock-tree", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
             continue
         for impact in analyze_npm_impact(result, args.package):
-            answers.append({
-                "provider": "npm-lock-tree",
-                "scope": "logical-dependency-tree",
-                **impact.to_dict(),
-            })
+            answers.append({"provider": "npm-lock-tree", "scope": "logical-dependency-tree", **impact.to_dict()})
+
+    for plan in pnpm_plans:
+        handled.add(plan.component)
+        result = execute_pnpm_graph(plan)
+        if not result.succeeded:
+            failures.append({"provider": "pnpm-lock-tree", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
+            continue
+        for impact in analyze_pnpm_impact(result, args.package):
+            answers.append({"provider": "pnpm-lock-tree", "scope": "logical-dependency-tree", **impact.to_dict()})
 
     for plan in cargo_plans:
         handled.add(plan.component)
@@ -102,11 +110,7 @@ def why_command(argv: list[str]) -> int:
             failures.append({"provider": "cargo-metadata", "component": plan.component, "error": result.stderr, "returncode": result.returncode})
             continue
         for impact in analyze_cargo_impact(result, args.package):
-            answers.append({
-                "provider": "cargo-metadata",
-                "scope": "locked-offline-dependency-graph",
-                **impact.to_dict(),
-            })
+            answers.append({"provider": "cargo-metadata", "scope": "locked-offline-dependency-graph", **impact.to_dict()})
 
     for plan in uv_plans:
         handled.add(plan.component)
@@ -115,13 +119,9 @@ def why_command(argv: list[str]) -> int:
             failures.append({"provider": "uv-lock", "component": plan.component, "error": result.error, "returncode": None})
             continue
         for impact in analyze_uv_impact(result, args.package):
-            answers.append({
-                "provider": "uv-lock",
-                "scope": "universal-lock-graph",
-                **impact.to_dict(),
-            })
+            answers.append({"provider": "uv-lock", "scope": "universal-lock-graph", **impact.to_dict()})
 
-    if selected_key and (npm_plans or cargo_plans or uv_plans):
+    if selected_key and (npm_plans or pnpm_plans or cargo_plans or uv_plans):
         handled.add(selected_key)
 
     target_components = graph.components
@@ -138,8 +138,8 @@ def why_command(argv: list[str]) -> int:
         if component.key(graph.root) not in handled
     ]
     answers.sort(key=lambda item: (
-        str(item["provider"]), str(item["component"]), str(item.get("ref", "")),
-        str(item.get("package_id", "")), str(item.get("path", "")),
+        str(item["provider"]), str(item["component"]), str(item.get("project", "")),
+        str(item.get("ref", "")), str(item.get("package_id", "")), str(item.get("path", "")),
     ))
 
     if args.as_json:
@@ -159,6 +159,12 @@ def why_command(argv: list[str]) -> int:
                 version = f"@{answer['version']}" if answer.get("version") else ""
                 print(f"{answer['component']} [npm logical-tree]: {answer['name']}{version}")
                 print("  " + " -> ".join(answer["root_path"]))
+            elif provider == "pnpm-lock-tree":
+                version = f"@{answer['version']}" if answer.get("version") else ""
+                print(f"{answer['component']} [pnpm:{answer['project']} logical-tree]: {answer['name']}{version}")
+                print("  " + " -> ".join(answer["root_path"]))
+                if answer.get("deduped"):
+                    print("  pnpm marked this logical occurrence as deduped")
             elif provider == "cargo-metadata":
                 print(f"{answer['component']} [cargo locked-offline]: {answer['name']}@{answer['version']}")
                 for path in answer.get("workspace_paths", []):
