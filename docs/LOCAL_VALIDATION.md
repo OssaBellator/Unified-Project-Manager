@@ -88,8 +88,10 @@ These regressions cover:
 - `package-import-reachable` when offline `go mod why -m` returns a package import path;
 - explicit successful `not-package-import-reachable` instead of treating an empty path as failure;
 - `query-failed` for command failure or provider skip, never converted to a clean negative;
-- one query per component/module even when several advisories refer to the same vulnerable module;
+- one query per component/logical-module pair even when several advisories refer to the same vulnerable module;
 - non-Go dependency impacts never triggering Go source queries;
+- Go's `why` graph being emitted explicitly as `build_constraints=any-tags`, with `current_build_configuration_reachability=not-evaluated` and `test_imports_may_contribute=true`;
+- versioned Go replacements querying the logical required module path while retaining the effective replacement identity separately (`queried_module`, `effective_module`, `replacement_active`);
 - `--go-import-reachability` requiring full `--native` scan inventory rather than compatibility-only `--native-go`;
 - preview remaining non-executing;
 - project and fleet applied routing keeping source/import evidence separate from dependency impacts;
@@ -131,7 +133,7 @@ Focused reconstructed/local validation currently includes:
 - additional Cargo physical-object checks passed for multi-crate checkout-root grouping and noncanonical shallow checkout refusal;
 - cache provenance report semantics: **7/7** reconstructed checks passed;
 - separate cache identity-precision checks passed for legitimate multi-identity Cargo git containers, conflicting multi-identity Cargo registry objects, and competing Go PURLs on one physical path;
-- Go package-import reachability core: **6/6** reconstructed checks passed for positive import reachability, successful negative, query failure, provider skip, query deduplication, and non-Go filtering.
+- Go package-import reachability core: **7/7** reconstructed checks passed for positive import reachability, replacement-aware logical/effective module identity, successful negative, query failure, provider skip, query deduplication, non-Go filtering, and the any-build-tag/current-build-not-evaluated evidence contract.
 
 The project/fleet CLI reachability regressions are committed and included in local scripts, but they are not represented as having run end-to-end in this constrained runtime.
 
