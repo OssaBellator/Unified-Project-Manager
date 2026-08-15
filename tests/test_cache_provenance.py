@@ -168,6 +168,39 @@ class CacheProvenanceTests(unittest.TestCase):
             self.assertEqual(report["provider_failures"][0]["error"], "offline module data missing")
             self.assertFalse(report["reclaimable"])
 
+    def test_unlocked_cargo_component_is_an_explicit_incomplete_provider_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            (project / "Cargo.toml").write_text(
+                '[package]\nname="app"\nversion="0.1.0"\n', encoding="utf-8"
+            )
+            cargo_home = root / "cargo-home"
+            (cargo_home / "registry").mkdir(parents=True)
+            (cargo_home / "git").mkdir(parents=True)
+
+            with patch("unified_project_manager.cache_provenance.execute_cargo_graph") as execute:
+                report = collect_cache_provenance(
+                    roots=[project],
+                    managers=("cargo",),
+                    closed_universe=True,
+                    storage_probe=lambda *, managers: (
+                        [
+                            GlobalStorageEntry("cargo", "registry-cache", str(cargo_home / "registry"), 0, 0),
+                            GlobalStorageEntry("cargo", "git-cache", str(cargo_home / "git"), 0, 0),
+                        ],
+                        [],
+                    ),
+                )
+
+            execute.assert_not_called()
+            self.assertTrue(report["project_universe"]["closed"])
+            self.assertFalse(report["observation_complete"])
+            self.assertEqual(len(report["provider_skips"]), 1)
+            self.assertIn("locked Cargo provider plan", report["provider_skips"][0]["reason"])
+            self.assertFalse(report["reclaimable"])
+
     def test_public_cli_routes_json_without_reclaim_claim(self) -> None:
         report = {
             "scope": "registered-project-cache-provenance",
