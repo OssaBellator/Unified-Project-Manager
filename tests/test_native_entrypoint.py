@@ -64,11 +64,13 @@ class NativeEntrypointTests(unittest.TestCase):
             self._go_project(root)
             result = NativeWhyResult(".:go", "go", "example.com/a", True, ("example.com/app/pkg", "example.com/a/pkg"), 0)
             output = io.StringIO()
-            with patch("unified_project_manager.native_entrypoint.query_native_why", return_value=([result], [])), redirect_stdout(output):
+            with patch("unified_project_manager.why_provider_entrypoint.query_native_why", return_value=([result], [])), redirect_stdout(output):
                 code = main(["why", "example.com/a", str(root), "--native", "--json"])
             data = json.loads(output.getvalue())
             self.assertEqual(code, 0)
-            self.assertEqual(data["results"][0]["path"], ["example.com/app/pkg", "example.com/a/pkg"])
+            self.assertEqual(data["answers"][0]["provider"], "go-mod-why")
+            self.assertEqual(data["answers"][0]["scope"], "package-import-chain")
+            self.assertEqual(data["answers"][0]["path"], ["example.com/app/pkg", "example.com/a/pkg"])
 
     def test_native_sbom_adds_go_selected_module(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
