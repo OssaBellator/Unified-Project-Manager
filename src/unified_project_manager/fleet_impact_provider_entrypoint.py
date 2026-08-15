@@ -15,6 +15,10 @@ from .npm_impact import analyze_npm_impact
 from .pnpm_graph import execute_pnpm_graph, plan_pnpm_graphs
 from .pnpm_impact import analyze_pnpm_impact
 from .provider_ownership import provider_owned_component_keys
+from .python_lock_graph import plan_python_lock_graphs
+from .python_lock_provider import python_lock_provider_name
+from .python_lock_queries import query_python_lock_result
+from .python_lock_validation import execute_validated_python_lock_graph
 from .registry import RegistryError, registered_paths
 from .uv_graph import execute_uv_graph, plan_uv_graphs
 from .uv_impact import analyze_uv_impact
@@ -61,6 +65,7 @@ def fleet_impact_command(argv: list[str]) -> int:
             yarn_plans = plan_yarn_graphs(graph)
             cargo_plans = plan_cargo_graphs(graph)
             uv_plans = plan_uv_graphs(graph)
+            python_lock_plans = plan_python_lock_graphs(graph)
         except (OSError, ValueError) as exc:
             failures.append({"project": str(root), "provider": None, "component": None, "error": str(exc), "returncode": None})
             continue
@@ -72,6 +77,7 @@ def fleet_impact_command(argv: list[str]) -> int:
             yarn_plans=yarn_plans,
             cargo_plans=cargo_plans,
             uv_plans=uv_plans,
+            python_lock_plans=python_lock_plans,
         )
         for skip in go_skips:
             if skip.component not in handled_components:
@@ -162,6 +168,19 @@ def fleet_impact_command(argv: list[str]) -> int:
                     **impact.to_dict(),
                 })
 
+        for plan in python_lock_plans:
+            result = execute_validated_python_lock_graph(graph, plan)
+            provider = python_lock_provider_name(plan)
+            if not result.succeeded:
+                failures.append({
+                    "project": str(root), "provider": provider, "component": plan.component,
+                    "error": result.error, "returncode": None,
+                })
+                continue
+            query = query_python_lock_result(result, args.package)
+            if query.matched:
+                impacts.append({"project": str(root), **query.to_dict()})
+
     impacts.sort(key=lambda item: (
         str(item["project"]), str(item["provider"]), str(item["component"]),
         str(item.get("workspace_project", "")), str(item.get("ref", "")),
@@ -209,6 +228,20 @@ def fleet_impact_command(argv: list[str]) -> int:
                 print(f"{impact['project']} [{impact['component']}] [cargo]: {impact['name']}@{impact['version']}")
                 for path in impact.get("workspace_paths", []):
                     print("  workspace path: " + " -> ".join(path))
+            elif impact["provider"] in {"poetry-lock", "pdm-lock"}:
+                print(f"{impact['project']} [{impact['component']}] [{impact['provider']}]")
+                for package in impact.get("packages", []):
+                    certainty = "unconditional" if package.get("unconditional") else "conditional"
+                    print(f"  {package['name']}@{package['version']} [{certainty}]")
+                    for path in package.get("paths", []):
+                        print("    project path: " + " -> ".join(path.get("nodes", [])))
+                        if path.get("markers"):
+                            print("    markers: " + " && ".join(path["markers"]))
+                        if path.get("optional_edges"):
+                            print(f"    optional edges: {path['optional_edges']}")
+                for ambiguity in impact.get("ambiguities", []):
+                    candidates = ", ".join(ambiguity.get("candidate_ids", []))
+                    print(f"  ? {ambiguity['source']} -> {ambiguity['dependency_name']} [ambiguous: {candidates}]")
             else:
                 print(f"{impact['project']} [{impact['component']}] [uv]: {impact['name']}@{impact['version']}")
                 for path in impact.get("project_paths", []):
