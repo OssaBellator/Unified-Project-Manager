@@ -4,71 +4,29 @@ These notes capture the current review boundary for `feature/initial-control-pla
 
 ## Public native providers
 
-The public native-provider surface consists of:
-
-- Go;
-- npm;
-- pnpm;
-- Yarn Berry 2+;
-- Cargo;
-- uv;
-- Poetry;
-- PDM.
-
-Public graph/why/impact/fleet/SBOM/advisory behavior is documented in `NATIVE_PROVIDERS.md`. Poetry/PDM's structured-lock uncertainty contract is detailed in `PYTHON_LOCK_PROVIDERS.md`.
-
-Yarn Classic remains outside the Berry provider.
+The public native-provider surface consists of Go, npm, pnpm, Yarn Berry 2+, Cargo, uv, Poetry, and PDM. Public graph/why/impact/fleet/SBOM/advisory behavior is documented in `NATIVE_PROVIDERS.md`; Poetry/PDM's conservative structured-lock contract is detailed in `PYTHON_LOCK_PROVIDERS.md`. Yarn Classic remains outside the Berry provider.
 
 ## Yarn Berry boundary
 
-The Berry provider preserves exact descriptor/locator and workspace/virtual identity. Network access is disabled inside Berry, install state is redirected outside the project, telemetry is suppressed, and supported cache mutation is blocked.
-
-The provider does not force `YARN_ENABLE_HARDENED_MODE`; execution and preview share `yarn_execution_policy.py`, and preview reports hardened mode as `unchanged`.
-
-SBOM/advisory/fleet inventory includes only locators reachable from active project/workspace roots. Stored but inactive Yarn records are not promoted merely because `yarn info --all --recursive` returned them.
+The Berry provider preserves exact descriptor/locator and workspace/virtual identity. Network access is disabled inside Berry, install state is redirected outside the project, telemetry is suppressed, and supported cache mutation is blocked. Hardened mode is left unchanged. SBOM/advisory/fleet inventory includes only locators reachable from active project/workspace roots.
 
 ## Poetry/PDM public uncertainty model
 
-Poetry/PDM are public as `poetry-lock` and `pdm-lock`, sharing `structured-lock-dependency-graph` scope.
+Poetry/PDM are public as `poetry-lock` and `pdm-lock`, sharing `structured-lock-dependency-graph` scope. Public routing includes graph, why, project/fleet impact, CycloneDX/SPDX, project/fleet advisory, provider status, and fleet native inventory/duplicate correlation.
 
-Public routing includes graph, why, project/fleet impact, CycloneDX/SPDX, project/fleet advisory, provider status, and fleet native inventory/duplicate correlation.
-
-The shared reachability model:
-
-- distinguishes resolved `packages` from ambiguity-derived `possible_packages`;
-- renders every unresolved hop as `?dependency`;
-- conservatively traverses all ambiguous candidates and propagates possible state through descendants;
-- preserves marker/optional conditions and ambiguity-hop count on every path;
-- preserves distinct same-condition parent paths;
-- uses explicit path/search budgets (`64` paths per package, `10000` traversal states by default);
-- surfaces `paths_truncated` / `search_truncated` rather than hiding incomplete explanations;
-- shares one text renderer across why/project impact/fleet impact.
-
-Advisory correlation reuses the same validated structured-lock result that produced the exact scanned BOM. Direct or transitive ambiguity-derived findings are labeled `possible-via-ambiguous-lock-reference`. If one locked package occurrence has both a resolved path and a possible alternative path, UPM emits one consolidated advisory impact containing both path classes.
-
-Unsupported lock relationship shapes or package-record-level conditions remain explicit provider failures.
+The shared reachability model distinguishes resolved `packages` from ambiguity-derived `possible_packages`, renders unresolved hops as `?dependency`, propagates possible state through candidate descendants, preserves marker/optional conditions and distinct paths, uses explicit path/search budgets, and surfaces truncation rather than hiding incomplete explanations. Advisory correlation reuses the exact validated structured-lock result that produced the scanned BOM.
 
 ## All-provider fleet inventory
 
-`projects inventory --native` and `projects duplicates --native` cover all eight public provider families.
-
-Provider-specific occurrence evidence is preserved. In particular, pnpm retains workspace/alias/scope/depth/directness/dedupe metadata, Yarn uses active-root-reachable locators only, and Poetry/PDM use certainty-aware `unconditional` / `conditional` / `possible` rows while excluding orphan lock records.
-
-Cross-project duplicate groups remain observation-only. `reclaimable=false` is explicit.
+`projects inventory --native` and `projects duplicates --native` cover all eight public provider families while preserving provider-specific occurrence evidence. Cross-project duplicate groups remain observation-only with `reclaimable=false`.
 
 ## Mixed-project SBOM topology
 
-Aggregate SBOMs include a deterministic project topology layer; see `SBOM_PROJECT_COMPONENTS.md`.
-
-CycloneDX uses one aggregate application root plus one application anchor per discovered component. SPDX mirrors that model with aggregate/component `APPLICATION` packages and aggregate `CONTAINS` relationships.
-
-Anchor identity and aggregate naming are clone-location-independent. The topology layer deliberately does **not** manufacture component→package edges from generic normalized inventory. Native/provider relationship evidence remains authoritative.
-
-Provider merge regressions cover Go/npm/pnpm/Yarn/Poetry-PDM CycloneDX/SPDX paths and a full static Poetry native inventory pipeline. Application anchors remain topology-only and do not inflate advisory package counts.
+Aggregate SBOMs include a deterministic project topology layer; see `SBOM_PROJECT_COMPONENTS.md`. CycloneDX uses one aggregate application root plus one application anchor per discovered component. SPDX mirrors that model with aggregate/component `APPLICATION` packages and aggregate `CONTAINS` relationships. Anchor identity is clone-location-independent and the topology layer does not manufacture component→package edges from generic normalized inventory.
 
 ## Public cache provenance boundary
 
-`upm cache provenance` is now public for Go and Cargo physical attribution over explicitly registered projects.
+`upm cache provenance` is public for Go and Cargo physical attribution over explicitly registered projects:
 
 ```sh
 upm cache provenance
@@ -81,28 +39,32 @@ This is an observation command, not a cleanup planner.
 
 ### Go
 
-Go physical identity starts from the selected module directory returned by the offline native graph. UPM does not recreate Go's module-cache escaping from logical package names.
+Go physical identity starts from selected module directories returned by the offline native graph. UPM does not recreate Go module-cache escaping from logical names.
 
-When the native directory has canonical escaped `name@version` form, UPM reuses that physical path to attribute existing selected-version `.info`, `.mod`, `.zip`, and `.ziphash` files under `GOMODCACHE/cache/download`. Lock/list metadata and other versions are not attributed to that selected occurrence.
+When a native directory has canonical escaped `name@version` form, UPM reuses that physical spelling to attribute existing selected-version `.info`, `.mod`, `.zip`, and `.ziphash` files under `GOMODCACHE/cache/download`. Lock/list metadata and other versions are excluded. Noncanonical physical paths fail closed. `GOCACHE` remains outside selected-module package attribution.
 
-Noncanonical physical paths fail closed for download-artifact mapping. `GOCACHE` build bytes remain outside selected-module package attribution.
+### Cargo physical-object model
 
-### Cargo
+Cargo physical identity starts from `manifest_path` returned by `cargo metadata --locked --offline` and is normalized to one canonical physical source object:
 
-Cargo physical source identity starts from `manifest_path` returned by `cargo metadata --locked --offline`.
+```text
+CARGO_HOME/registry/src/<index>/<crate-version>
+CARGO_HOME/git/checkouts/<repo>/<revision>
+```
 
-Attribution is restricted to exact source/check-out roots:
+This avoids recursive overlap when a Cargo git checkout contains several crates. One git checkout group may therefore legitimately contain several native Cargo package identities and is measured once.
 
-- `CARGO_HOME/registry/src`;
-- `CARGO_HOME/git/checkouts`.
+Registry source objects are different: one unpacked registry source object is expected to identify one package. Multiple package identities for one registry object are an explicit identity conflict.
 
-`registry/index`, `registry/cache`, `git/db`, workspace/path dependencies, and unrelated directories are not package-source attribution simply because they live below `CARGO_HOME`.
+`registry/index`, `registry/cache`, `git/db`, workspace/path dependencies, shallow noncanonical source objects, and unrelated directories remain outside package-source attribution.
 
-### Closure and reclaim semantics
+### Closure, consistency, and reclaim semantics
 
-The optional `--closed-universe` flag is an explicit user assertion that the registered project list represents the complete relevant project universe. Missing/unreadable registered projects invalidate that assertion.
+`--closed-universe` is an explicit user assertion that the registered project list is the complete relevant project universe. Missing/unreadable registered projects invalidate that assertion.
 
-Project-universe closure is separate from `observation_complete`: native/storage failures, applicable provider coverage gaps, missing/ambiguous cache roots, or inconsistent physical byte measurements make the observation incomplete even when the project registry itself is asserted closed.
+Project-universe closure is separate from `observation_complete`. Native/storage failures, applicable provider gaps, missing/ambiguous cache roots, byte-accounting inconsistencies, competing Go PURLs for one physical path, multi-identity Cargo registry objects, or incompatible groups for one physical path make the observation incomplete.
+
+Legitimate multi-crate Cargo git containers do **not** count as identity conflicts.
 
 The safety fields remain unconditional:
 
@@ -116,14 +78,7 @@ npm, pnpm, and uv physical package-cache provenance remains deliberately unsuppo
 
 ## Exact advisory evidence contract
 
-Project and fleet advisory flows share the same rule:
-
-- provider-backed inventory is constructed once for an applied native scan;
-- the exact CycloneDX document given to OSV-Scanner is retained;
-- persisted evidence fingerprints that exact document;
-- native inventory is not rebuilt after scanning;
-- successful scanner output without the exact scanned BOM is an evidence failure;
-- ordinary status never reruns scanner/providers merely to manufacture freshness.
+Project and fleet advisory flows retain and fingerprint the exact CycloneDX document scanned by OSV-Scanner. Native inventory is not rebuilt after scanning, successful scanner output without the exact scanned BOM is an evidence failure, and ordinary status never reruns scanner/providers merely to manufacture freshness.
 
 ## Local validation boundary
 
@@ -151,14 +106,13 @@ Focused reconstructed/local validation in this execution environment includes:
 - Poetry/PDM reachability hardening: **5/5**;
 - all-provider fleet core: **4/4**;
 - mixed-project SBOM anchors: **5/5**;
-- cache physical mapping: **5/5**;
-- cache provenance report semantics: **6/6**;
-- separate structured-lock advisory consolidation/text-rendering checks;
+- initial cache physical mapping: **5/5**;
+- additional Cargo multi-crate checkout/noncanonical-object checks passed;
+- cache provenance report semantics: **7/7**;
+- separate identity-precision checks passed for legitimate multi-package Cargo git containers, conflicting Cargo registry source identities, and competing Go PURLs on one physical path;
 - previously recorded Yarn/provider/security slices.
 
-The cache mapping slice covers native escaped Go selected-download mapping/noncanonical refusal/inode accounting and Cargo exact source-root admission versus index/cache/db/local rejection. The report-semantics slice covers manager totals/build-cache exclusion, no-reclaim invariants, closure invalidation, provider failure/skip incompleteness, and measurement inconsistency.
-
-The committed full regressions include additional public command routing and locked-provider coverage checks. This execution environment still cannot materialize the entire private branch as one checkout, so the full aggregate is not claimed as executed here.
+The committed full regressions include public cache-provenance routing, locked-provider coverage checks, and the richer Cargo physical-object model. This execution environment still cannot materialize the entire private branch as one checkout, so the full aggregate is not claimed as executed here.
 
 ## Merge hygiene
 
