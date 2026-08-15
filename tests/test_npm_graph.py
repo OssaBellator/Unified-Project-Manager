@@ -18,6 +18,7 @@ from unified_project_manager.npm_graph import (
     parse_npm_ls,
     plan_npm_graphs,
 )
+from unified_project_manager.npm_impact import analyze_npm_impact
 
 
 _NPM_LS = json.dumps({
@@ -36,6 +37,19 @@ _NPM_LS = json.dumps({
         },
     },
 })
+
+
+def _result(root: Path) -> NpmGraphResult:
+    root_name, root_version, packages, edges, problems = parse_npm_ls(_NPM_LS, ".:node")
+    return NpmGraphResult(
+        NpmGraphPlan(".:node", root),
+        packages,
+        edges,
+        0,
+        root_name=root_name,
+        root_version=root_version,
+        problems=problems,
+    )
 
 
 class NpmGraphTests(unittest.TestCase):
@@ -77,15 +91,7 @@ class NpmGraphTests(unittest.TestCase):
             root = Path(temporary)
             (root / "package.json").write_text('{"name":"app","version":"1.0.0","packageManager":"npm@11"}', encoding="utf-8")
             (root / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
-            plan = NpmGraphPlan(".:node", root)
-            result = NpmGraphResult(
-                plan,
-                parse_npm_ls(_NPM_LS, ".:node")[2],
-                parse_npm_ls(_NPM_LS, ".:node")[3],
-                0,
-                root_name="app",
-                root_version="1.0.0",
-            )
+            result = _result(root)
             output = io.StringIO()
             with patch("unified_project_manager.graph_entrypoint.execute_npm_graph", return_value=result), redirect_stdout(output):
                 code = main(["graph", str(root), "--native", "--json"])
@@ -94,6 +100,29 @@ class NpmGraphTests(unittest.TestCase):
             self.assertEqual(data["results"][0]["provider"], "npm-lock-tree")
             self.assertEqual(data["results"][0]["root"]["name"], "app")
             self.assertEqual(len(data["results"][0]["packages"]), 4)
+
+    def test_npm_impact_preserves_each_occurrence_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            impacts = analyze_npm_impact(_result(Path(temporary)), "c")
+            self.assertEqual(len(impacts), 2)
+            paths = {impact.root_path for impact in impacts}
+            self.assertIn(("app@1.0.0", "a@1.0.0", "c@1.0.0"), paths)
+            self.assertIn(("app@1.0.0", "b@1.0.0", "c@2.0.0"), paths)
+            self.assertEqual({impact.direct_parent for impact in impacts}, {"a@1.0.0", "b@1.0.0"})
+
+    def test_public_npm_impact_json_labels_logical_tree_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"name":"app","version":"1.0.0","packageManager":"npm@11"}', encoding="utf-8")
+            (root / "package-lock.json").write_text('{"lockfileVersion":3,"packages":{"":{}}}', encoding="utf-8")
+            output = io.StringIO()
+            with patch("unified_project_manager.impact_provider_entrypoint.execute_npm_graph", return_value=_result(root)), redirect_stdout(output):
+                code = main(["impact", "c", str(root), "--native", "--json"])
+            data = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual({item["provider"] for item in data["impacts"]}, {"npm-lock-tree"})
+            self.assertEqual({item["scope"] for item in data["impacts"]}, {"logical-dependency-tree"})
+            self.assertEqual(len(data["impacts"]), 2)
 
 
 if __name__ == "__main__":
