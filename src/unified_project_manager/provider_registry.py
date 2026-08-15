@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
@@ -8,6 +9,7 @@ from .models import Component, ProjectGraph
 from .npm_graph import npm_provider_component_keys, plan_npm_graphs
 from .pnpm_graph import plan_pnpm_graphs, pnpm_provider_component_keys
 from .uv_graph import plan_uv_graphs, uv_provider_component_keys
+from .yarn_graph import plan_yarn_graphs, yarn_provider_component_keys
 
 NetworkMode = Literal['none', 'offline', 'may-use-network']
 MutationMode = Literal['none', 'project-read-only']
@@ -101,6 +103,21 @@ PNPM_PROVIDER = NativeProviderCapability(
     supports_sbom_relationships=True,
 )
 
+YARN_PROVIDER = NativeProviderCapability(
+    provider='yarn-berry-resolution-graph',
+    ecosystem='node',
+    manager='yarn',
+    evidence='Yarn Berry stored locator/descriptor resolutions with virtual/workspace identity preserved',
+    graph_scope='berry-resolution-graph',
+    why_scope='berry-resolution-graph',
+    impact_scope='berry-resolution-graph',
+    source='yarn info --all --recursive --virtuals --json with network disabled and temporary install state',
+    execution=True,
+    network='none',
+    mutation='none',
+    supports_sbom_relationships=False,
+)
+
 CARGO_PROVIDER = NativeProviderCapability(
     provider='cargo-metadata',
     ecosystem='rust',
@@ -129,7 +146,15 @@ UV_PROVIDER = NativeProviderCapability(
     mutation='none',
 )
 
-PROVIDERS = (GO_PROVIDER, NPM_PROVIDER, PNPM_PROVIDER, CARGO_PROVIDER, UV_PROVIDER)
+PROVIDERS = (GO_PROVIDER, NPM_PROVIDER, PNPM_PROVIDER, YARN_PROVIDER, CARGO_PROVIDER, UV_PROVIDER)
+
+
+def _declared_yarn_berry(component: Component) -> bool:
+    value = component.metadata.get('package_manager_declared')
+    if not isinstance(value, str) or not value.startswith('yarn@'):
+        return False
+    match = re.search(r'\d+', value[len('yarn@'):])
+    return bool(match and int(match.group(0)) >= 2)
 
 
 def provider_for_component(component: Component) -> tuple[NativeProviderCapability | None, str | None]:
@@ -143,6 +168,12 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
         if 'pnpm-lock.yaml' not in component.lockfiles:
             return None, 'pnpm native graph requires pnpm-lock.yaml at the authoritative workspace/project root'
         return PNPM_PROVIDER, None
+    if component.ecosystem == 'node' and component.manager == 'yarn':
+        if 'yarn.lock' not in component.lockfiles:
+            return None, 'Yarn native graph requires yarn.lock at the authoritative project/workspace root'
+        if not _declared_yarn_berry(component):
+            return None, 'Yarn native graph currently requires an explicit packageManager declaration for Yarn Berry 2+'
+        return YARN_PROVIDER, None
     if component.ecosystem == 'rust' and component.manager == 'cargo':
         if 'Cargo.lock' not in component.lockfiles:
             return None, 'Cargo native graph requires Cargo.lock at the authoritative workspace/project root'
@@ -154,7 +185,7 @@ def provider_for_component(component: Component) -> tuple[NativeProviderCapabili
     return None, 'no authoritative native relationship provider is configured for this component'
 
 
-def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str], set[str]]:
+def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str], set[str], set[str]]:
     try:
         npm_plans = plan_npm_graphs(graph)
         npm_owned = npm_provider_component_keys(graph, npm_plans)
@@ -166,6 +197,11 @@ def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str]
     except ValueError:
         pnpm_owned = set()
     try:
+        yarn_plans = plan_yarn_graphs(graph)
+        yarn_owned = yarn_provider_component_keys(graph, yarn_plans)
+    except ValueError:
+        yarn_owned = set()
+    try:
         cargo_plans = plan_cargo_graphs(graph)
         cargo_owned = cargo_provider_component_keys(graph, cargo_plans)
     except ValueError:
@@ -175,11 +211,11 @@ def _owned_components(graph: ProjectGraph) -> tuple[set[str], set[str], set[str]
         uv_owned = uv_provider_component_keys(graph, uv_plans)
     except ValueError:
         uv_owned = set()
-    return npm_owned, pnpm_owned, cargo_owned, uv_owned
+    return npm_owned, pnpm_owned, yarn_owned, cargo_owned, uv_owned
 
 
 def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
-    npm_owned, pnpm_owned, cargo_owned, uv_owned = _owned_components(graph)
+    npm_owned, pnpm_owned, yarn_owned, cargo_owned, uv_owned = _owned_components(graph)
     result: list[ProviderCoverage] = []
     for component in graph.components:
         key = component.key(graph.root)
@@ -188,6 +224,8 @@ def provider_coverage(graph: ProjectGraph) -> list[ProviderCoverage]:
             provider, reason = NPM_PROVIDER, None
         elif key in pnpm_owned:
             provider, reason = PNPM_PROVIDER, None
+        elif key in yarn_owned:
+            provider, reason = YARN_PROVIDER, None
         elif key in cargo_owned:
             provider, reason = CARGO_PROVIDER, None
         elif key in uv_owned:
