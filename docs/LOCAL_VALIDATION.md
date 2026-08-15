@@ -26,6 +26,14 @@ This exercises the higher-risk cross-layer contracts added during the control-pl
 - local evidence/status behavior;
 - security/advisory evidence boundaries.
 
+## Yarn Berry execution compatibility
+
+```sh
+sh ./scripts/test-yarn-execution-compat.sh
+```
+
+This focused local check verifies that the Berry provider does not inject the optional hardened-mode configuration while still forcing network refusal, telemetry suppression, immutable cache behavior, temporary install-state isolation, and the resolved Yarn executable path. The same regression is included in `scripts/test-yarn-native.sh`.
+
 ## Native-security focused slice
 
 ```sh
@@ -37,10 +45,10 @@ This concentrates on provider-backed CycloneDX advisory inventory and the OSV sc
 ## Comprehensive local run
 
 ```sh
-sh ./scripts/check-all-local.sh
+sh ./scripts/check-all-local-latest.sh
 ```
 
-This runs the baseline check plus the integration/provider and native-security slices in sequence.
+This runs the baseline check plus the current integration/provider, native-security, Yarn Berry, and validated Python lock-provider slices in sequence.
 
 No command above requires or invokes GitHub Actions. Native relationship tests use mocks/fixtures where executing an external package manager is not part of the test contract; provider execution tests assert exact resolved executable paths and explicit network/mutation guarantees.
 
