@@ -4,6 +4,7 @@ import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .go_symbol_preflight import GovulncheckSymbolPreflight, preflight_govulncheck_symbol
@@ -63,17 +64,37 @@ class GovulncheckSymbolExecution:
 def _blocked_execution(
     plan: GovulncheckSymbolPlan,
     preflight: GovulncheckSymbolPreflight,
+    reason: str | None = None,
 ) -> GovulncheckSymbolExecution:
-    reason = "; ".join(preflight.reasons) or "govulncheck symbol preflight is not ready"
+    detail = reason or "; ".join(preflight.reasons) or "govulncheck symbol preflight is not ready"
     return GovulncheckSymbolExecution(
         plan=plan,
         preflight=preflight,
         returncode=None,
         report=None,
         stderr="",
-        error=f"govulncheck symbol execution blocked by preflight: {reason}",
+        error=f"govulncheck symbol execution blocked by preflight: {detail}",
         launched=False,
     )
+
+
+def _preflight_matches_plan(
+    plan: GovulncheckSymbolPlan,
+    preflight: GovulncheckSymbolPreflight,
+) -> str | None:
+    expected_project = str(Path(plan.cwd).expanduser().resolve())
+    expected_database = str(Path(plan.database).expanduser().resolve())
+    if preflight.project != expected_project:
+        return (
+            "preflight project does not match execution plan: "
+            f"expected {expected_project!r}, observed {preflight.project!r}"
+        )
+    if preflight.database != expected_database:
+        return (
+            "preflight vulnerability database does not match execution plan: "
+            f"expected {expected_database!r}, observed {preflight.database!r}"
+        )
+    return None
 
 
 def execute_govulncheck_symbol(
@@ -93,13 +114,16 @@ def execute_govulncheck_symbol(
     """
 
     checked = preflight if preflight is not None else preflight_fn(plan)
+    mismatch = _preflight_matches_plan(plan, checked)
+    if mismatch is not None:
+        return _blocked_execution(plan, checked, mismatch)
     if not checked.ready:
         return _blocked_execution(plan, checked)
     if not checked.govulncheck_executable:
-        return GovulncheckSymbolExecution(
-            plan, checked, None, None, "",
-            "govulncheck symbol preflight was marked ready without a resolved govulncheck executable",
-            False,
+        return _blocked_execution(
+            plan,
+            checked,
+            "preflight was marked ready without a resolved govulncheck executable",
         )
 
     argv = [checked.govulncheck_executable, *plan.argv[1:]]
