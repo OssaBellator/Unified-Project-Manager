@@ -208,6 +208,16 @@ def cache_provenance_command(argv: list[str]) -> int:
                 f"x {failure['manager']} {failure['project']} "
                 f"[{failure.get('component') or 'project'}]: {failure.get('error') or 'provider failed'}"
             )
+        for skip in report["provider_skips"]:
+            print(
+                f"- {skip['manager']} {skip['project']} "
+                f"[{skip.get('component') or 'project'}]: provider skipped ({skip.get('reason') or 'unsupported evidence'})."
+            )
+        for skip in report["attribution_skips"]:
+            print(
+                f"- {skip['manager']} {skip['project']} "
+                f"[{skip.get('component') or 'project'}]: not cache-attributed ({skip.get('reason') or 'no physical cache identity'})."
+            )
         for skip in report["storage_skips"]:
             print(f"- {skip['manager']}: storage skipped ({skip['reason']})")
         print("Unattributed bytes are not known unused, and this command makes no reclaim recommendation.")
