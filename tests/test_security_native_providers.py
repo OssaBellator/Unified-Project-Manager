@@ -44,7 +44,7 @@ class NativeProviderSecurityTests(unittest.TestCase):
             self.assertFalse(data["plan"]["provider_inventory_network"])
             self.assertTrue(data["plan"]["network_may_be_used"])
 
-    def test_execute_native_provider_scan_builds_bom_only_on_apply_and_removes_temp_file(self) -> None:
+    def test_execute_native_provider_scan_builds_once_with_path_graphs_and_removes_temp_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self._npm_project(root)
@@ -56,10 +56,11 @@ class NativeProviderSecurityTests(unittest.TestCase):
             }
             build_calls = []
             scanner_paths = []
+            inventory = NativeCycloneDxInventory(bom, [], [], [], [], [])
 
-            def build_native(_graph, **_kwargs):
-                build_calls.append(True)
-                return NativeCycloneDxInventory(bom, [], [], [], [], [])
+            def build_native(_graph, **kwargs):
+                build_calls.append(kwargs)
+                return inventory
 
             def run(argv, **kwargs):
                 scanner_paths.append(Path(argv[-1]))
@@ -76,9 +77,12 @@ class NativeProviderSecurityTests(unittest.TestCase):
                 which=lambda _name: "/tools/osv-scanner",
             )
 
-            self.assertEqual(build_calls, [True])
+            self.assertEqual(len(build_calls), 1)
+            self.assertTrue(build_calls[0]["include_path_graphs"])
             self.assertTrue(result.scanner_succeeded)
             self.assertEqual(result.bom, bom)
+            self.assertIs(result.native_inventory, inventory)
+            self.assertEqual(result.to_dict()["native_provider_counts"]["npm-path-graph"], 0)
             self.assertEqual(len(scanner_paths), 1)
             self.assertFalse(scanner_paths[0].exists())
 
