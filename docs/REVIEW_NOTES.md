@@ -26,47 +26,22 @@ Aggregate SBOMs include a deterministic project topology layer; see `SBOM_PROJEC
 
 ## Public cache provenance boundary
 
-`upm cache provenance` is public for Go and Cargo physical attribution over explicitly registered projects:
+`upm cache provenance` is public for Go and Cargo physical attribution over explicitly registered projects. It is an observation command, not a cleanup planner.
 
-```sh
-upm cache provenance
-upm cache provenance --manager go
-upm cache provenance --manager cargo
-upm cache provenance --closed-universe --json
-```
+Go physical identity starts from selected module directories returned by the offline native graph and may attribute selected-version `.info`, `.mod`, `.zip`, and `.ziphash` files only by reusing the already-escaped native physical path. Noncanonical paths are not guessed; `GOCACHE` remains outside selected-module attribution.
 
-This is an observation command, not a cleanup planner.
-
-### Go
-
-Go physical identity starts from selected module directories returned by the offline native graph. UPM does not recreate Go module-cache escaping from logical names.
-
-When a native directory has canonical escaped `name@version` form, UPM reuses that physical spelling to attribute existing selected-version `.info`, `.mod`, `.zip`, and `.ziphash` files under `GOMODCACHE/cache/download`. Lock/list metadata and other versions are excluded. Noncanonical physical paths fail closed. `GOCACHE` remains outside selected-module package attribution.
-
-### Cargo physical-object model
-
-Cargo physical identity starts from `manifest_path` returned by `cargo metadata --locked --offline` and is normalized to one canonical physical source object:
+Cargo physical identity starts from native `manifest_path` and is normalized to canonical registry or git source objects:
 
 ```text
 CARGO_HOME/registry/src/<index>/<crate-version>
 CARGO_HOME/git/checkouts/<repo>/<revision>
 ```
 
-This avoids recursive overlap when a Cargo git checkout contains several crates. One git checkout group may therefore legitimately contain several native Cargo package identities and is measured once.
+One multi-crate git checkout is a legitimate multi-package physical container and is measured once. One registry source object is expected to identify one package; multiple identities are an explicit conflict. Index/cache/db/shallow/noncanonical/path locations remain outside source-object attribution.
 
-Registry source objects are different: one unpacked registry source object is expected to identify one package. Multiple package identities for one registry object are an explicit identity conflict.
+`--closed-universe` is an explicit registry assertion and is separate from `observation_complete`. Missing projects, provider/storage failures, applicable provider gaps, contradictory physical identities, or byte inconsistencies make the observation incomplete.
 
-`registry/index`, `registry/cache`, `git/db`, workspace/path dependencies, shallow noncanonical source objects, and unrelated directories remain outside package-source attribution.
-
-### Closure, consistency, and reclaim semantics
-
-`--closed-universe` is an explicit user assertion that the registered project list is the complete relevant project universe. Missing/unreadable registered projects invalidate that assertion.
-
-Project-universe closure is separate from `observation_complete`. Native/storage failures, applicable provider gaps, missing/ambiguous cache roots, byte-accounting inconsistencies, competing Go PURLs for one physical path, multi-identity Cargo registry objects, or incompatible groups for one physical path make the observation incomplete.
-
-Legitimate multi-crate Cargo git containers do **not** count as identity conflicts.
-
-The safety fields remain unconditional:
+Safety fields remain unconditional:
 
 ```text
 unattributed_means_unused = false
@@ -75,6 +50,64 @@ reclaimable = false
 ```
 
 npm, pnpm, and uv physical package-cache provenance remains deliberately unsupported instead of heuristically reverse-engineering opaque cache/store layouts merely to claim coverage.
+
+## Go package-import advisory reachability
+
+The first public stronger-than-dependency reachability layer is Go-only and explicit:
+
+```sh
+upm audit . --native --go-import-reachability
+upm audit . --native --go-import-reachability --apply
+upm projects audit --native --go-import-reachability
+upm projects audit --native --go-import-reachability --apply
+```
+
+The flag requires full `--native` inventory. It is not accepted with compatibility-only `--native-go`, because source evidence must be tied to vulnerable Go module impacts already correlated to the retained native scan inventory.
+
+After an applied scan, UPM uses `go mod why -m` through the existing `GOPROXY=off` wrapper. Source-query states are explicit:
+
+- `package-import-reachable`;
+- `not-package-import-reachable`;
+- `query-failed`.
+
+Query failure is never converted to a successful negative. Multiple advisories for the same component/module share one source query.
+
+### Build-constraint boundary
+
+The current Go command implementation loads `why` with an any-build-tag package graph. Tests may also contribute imports. Every source row therefore records:
+
+```text
+build_constraints = any-tags
+current_build_configuration_reachability = not-evaluated
+test_imports_may_contribute = true
+api_reachability = not-evaluated
+runtime_reachability = not-evaluated
+exploitability = not-established
+persisted = false
+```
+
+A positive result is not relabeled as reachability in the current production build. A negative result is likewise only a negative in Go's queried any-build-tag package graph; it is not an exploitability verdict.
+
+### Execution/persistence boundary
+
+Preview remains non-executing. Source queries run only after an applied native scan and only for vulnerable Go impacts.
+
+The exact OSV-scanned CycloneDX document and scanner result keep their existing persisted evidence contract. Go package-import evidence is **report-only** and is not written into `.upm/audits/osv.json`; ordinary status does not replay it as durable evidence.
+
+Source-query failure does not invalidate an otherwise valid OSV scan/evidence record because advisory scan validity and source/import enrichment are separate evidence layers.
+
+See `REACHABILITY_EVIDENCE.md`.
+
+## Stronger reachability not claimed
+
+UPM still has no public provider for:
+
+- current-build-configuration reachability;
+- vulnerable API/symbol reachability;
+- runtime/data-flow reachability;
+- exploitability determination.
+
+Dependency paths and Go package-import paths must not be promoted into those stronger claims.
 
 ## Exact advisory evidence contract
 
@@ -99,6 +132,7 @@ sh ./scripts/test-python-lock-native-validated.sh
 sh ./scripts/test-fleet-providers.sh
 sh ./scripts/test-sbom-project-components.sh
 sh ./scripts/test-cache-provenance.sh
+sh ./scripts/test-go-import-reachability.sh
 ```
 
 Focused reconstructed/local validation in this execution environment includes:
@@ -109,10 +143,10 @@ Focused reconstructed/local validation in this execution environment includes:
 - initial cache physical mapping: **5/5**;
 - additional Cargo multi-crate checkout/noncanonical-object checks passed;
 - cache provenance report semantics: **7/7**;
-- separate identity-precision checks passed for legitimate multi-package Cargo git containers, conflicting Cargo registry source identities, and competing Go PURLs on one physical path;
-- previously recorded Yarn/provider/security slices.
+- separate cache identity-precision checks passed;
+- Go package-import reachability core: **6/6**, including the any-build-tag/current-build-not-evaluated evidence contract.
 
-The committed full regressions include public cache-provenance routing, locked-provider coverage checks, and the richer Cargo physical-object model. This execution environment still cannot materialize the entire private branch as one checkout, so the full aggregate is not claimed as executed here.
+The project/fleet Go import-reachability CLI regressions are committed and included in local scripts, but they are not represented as having run end-to-end in this constrained runtime. The full private checkout still cannot be materialized here.
 
 ## Merge hygiene
 
