@@ -62,9 +62,9 @@ GO_PROVIDER = NativeProviderCapability(
     graph_scope='module-requirement',
     why_scope='package-import-chain',
     impact_scope='module-requirement',
-    source='go list -m -json all + go mod graph / go mod why -m',
+    source='go list -m -json all + go mod graph / go mod why -m with GOPROXY=off',
     execution=True,
-    network='may-use-network',
+    network='offline',
     mutation='project-read-only',
 )
 
