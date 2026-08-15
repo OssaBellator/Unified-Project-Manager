@@ -11,6 +11,7 @@ from .discovery import discover
 from .go_offline_provider import execute_native_graph_offline
 from .native_graph import NativeGraphError, plan_native_graph
 from .npm_graph import NpmGraphError, execute_npm_graph, plan_npm_graphs
+from .pnpm_graph import PnpmGraphError, execute_pnpm_graph, plan_pnpm_graphs
 from .uv_graph import UvGraphError, execute_uv_graph, plan_uv_graphs
 
 
@@ -37,6 +38,7 @@ def native_graph_command(argv: list[str]) -> int:
         graph = discover(root)
         go_plans, go_skips = plan_native_graph(graph, selector=args.component)
         npm_plans = plan_npm_graphs(graph, selector=args.component)
+        pnpm_plans = plan_pnpm_graphs(graph, selector=args.component)
         cargo_plans = plan_cargo_graphs(graph, selector=args.component)
         uv_plans = plan_uv_graphs(graph, selector=args.component)
     except (
@@ -44,6 +46,7 @@ def native_graph_command(argv: list[str]) -> int:
         NotADirectoryError,
         NativeGraphError,
         NpmGraphError,
+        PnpmGraphError,
         CargoGraphError,
         UvGraphError,
         ValueError,
@@ -54,7 +57,7 @@ def native_graph_command(argv: list[str]) -> int:
             print(f"upm: {exc}", file=sys.stderr)
         return 2
 
-    handled_components = {plan.component for plan in [*npm_plans, *cargo_plans, *uv_plans]}
+    handled_components = {plan.component for plan in [*npm_plans, *pnpm_plans, *cargo_plans, *uv_plans]}
     skips = [skip for skip in go_skips if skip.component not in handled_components]
 
     if args.preview:
@@ -68,6 +71,8 @@ def native_graph_command(argv: list[str]) -> int:
             })
         for plan in npm_plans:
             plans.append({"provider": "npm-lock-tree", **plan.to_dict(root), "commands": [list(plan.argv)]})
+        for plan in pnpm_plans:
+            plans.append({"provider": "pnpm-lock-tree", **plan.to_dict(root), "commands": [list(plan.argv)]})
         for plan in cargo_plans:
             plans.append({"provider": "cargo-metadata", **plan.to_dict(root), "commands": [list(plan.argv)]})
         for plan in uv_plans:
@@ -89,12 +94,15 @@ def native_graph_command(argv: list[str]) -> int:
 
     go_results = [execute_native_graph_offline(plan) for plan in go_plans]
     npm_results = [execute_npm_graph(plan) for plan in npm_plans]
+    pnpm_results = [execute_pnpm_graph(plan) for plan in pnpm_plans]
     cargo_results = [execute_cargo_graph(plan) for plan in cargo_plans]
     uv_results = [execute_uv_graph(plan) for plan in uv_plans]
     results = [
         {"provider": "go-modules", **result.to_dict(root)} for result in go_results
     ] + [
         {"provider": "npm-lock-tree", **result.to_dict(root)} for result in npm_results
+    ] + [
+        {"provider": "pnpm-lock-tree", **result.to_dict(root)} for result in pnpm_results
     ] + [
         {"provider": "cargo-metadata", **result.to_dict(root)} for result in cargo_results
     ] + [
@@ -148,6 +156,31 @@ def native_graph_command(argv: list[str]) -> int:
             for problem in result.problems:
                 print(f"  ! {problem}")
 
+        for result in pnpm_results:
+            print(f"{result.plan.component} [pnpm-lock-tree]")
+            if not result.succeeded:
+                print(f"  x lock-only native graph failed: {result.stderr}")
+                continue
+            by_project: dict[str, list[object]] = {}
+            for package in result.packages:
+                by_project.setdefault(package.project_ref, []).append(package)
+            for project in result.projects:
+                label = project.name or project.path or "(project root)"
+                if project.version:
+                    label += f"@{project.version}"
+                print(f"  project: {label} [{project.path}]")
+                for package in sorted(by_project.get(project.ref, []), key=lambda item: item.ref):
+                    indent = "    " * package.depth
+                    version = f"@{package.version}" if package.version else ""
+                    alias = f" as {package.alias}" if package.alias != package.name else ""
+                    flags = []
+                    if package.direct:
+                        flags.append(package.scope)
+                    if package.deduped:
+                        flags.append("deduped")
+                    marker = f" [{' '.join(flags)}]" if flags else ""
+                    print(f"{indent}{package.name}{version}{alias}{marker}")
+
         for result in cargo_results:
             print(f"{result.plan.component} [cargo-metadata]")
             if not result.succeeded:
@@ -193,7 +226,7 @@ def native_graph_command(argv: list[str]) -> int:
         for skip in skips:
             print(f"- {skip.component}: skipped ({skip.reason})")
 
-    all_results = [*go_results, *npm_results, *cargo_results, *uv_results]
+    all_results = [*go_results, *npm_results, *pnpm_results, *cargo_results, *uv_results]
     return 0 if all_results and all(result.succeeded for result in all_results) else 1
 
 
