@@ -14,6 +14,9 @@ for test_file in \
   tests/test_receipt_post_verification.py \
   tests/test_receipt_entrypoint.py \
   tests/test_public_provider_integration.py \
+  tests/test_pnpm_graph.py \
+  tests/test_pnpm_provider_entrypoint.py \
+  tests/test_provider_registry.py \
   tests/test_fleet_provider_entrypoint.py \
   tests/test_fleet_status_entrypoint.py \
   tests/test_fleet_security.py \
