@@ -52,7 +52,7 @@ def _policy_parser() -> argparse.ArgumentParser:
 
 
 def _status_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="upm status", description="Summarize unified project state")
+    parser = argparse.ArgumentParser(prog="upm status", description="Summarize unified project state and persisted local evidence")
     parser.add_argument("path", nargs="?", default=".")
     parser.add_argument("--deep", action="store_true", help="Include installed-environment doctor checks")
     parser.add_argument("--storage", action="store_true", help="Measure known local package/environment/build storage")
@@ -92,7 +92,7 @@ def exec_command(argv: list[str]) -> int:
         print(json.dumps(result.to_dict(root), indent=2, sort_keys=True))
     else:
         print(f"Component: {plan.component} ({plan.manager})")
-        print(f"Command:   {shlex.join(plan.argv)}")
+        print(f"Command: {shlex.join(plan.argv)}")
         if result.stdout:
             print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
         if result.stderr:
@@ -197,12 +197,35 @@ def status_command(argv: list[str]) -> int:
             "Native verification coverage: "
             f"{coverage['planned_components']}/{coverage['total_components']} plannable"
         )
+        providers = data["relationship_providers"]
+        print(
+            "Relationship provider coverage: "
+            f"{providers['supported_components']}/{providers['total_components']} supported"
+        )
+        advisory = data["advisory_evidence"]
+        advisory_detail = advisory["state"]
+        if advisory.get("vulnerabilities") is not None:
+            advisory_detail += f" ({advisory['vulnerabilities']} vulnerabilities)"
+        print(f"Advisory evidence: {advisory_detail}")
+        receipts = data["mutation_receipts"]
+        receipt_detail = receipts["state"]
+        if receipts.get("changes"):
+            receipt_detail += f" ({len(receipts['changes'])} state changes)"
+        print(f"Mutation receipts: {receipt_detail}")
+        local_summary = data["local_evidence"]["summary"]
+        if local_summary["workspace_errors"] or local_summary["workspace_warnings"]:
+            print(
+                "Workspace health: "
+                f"{local_summary['workspace_errors']} errors, {local_summary['workspace_warnings']} warnings"
+            )
         policy = data["policy"]
         print("Policy: passed" if policy["passed"] else f"Policy: {len(policy['violations'])} violation(s)")
+        if summary["blockers"]:
+            print("Blockers: " + ", ".join(summary["blockers"]))
         if data["storage"] is not None:
             total = data["storage"]["summary"]["bytes"]
             print(f"Known local artifact storage: {total / (1024 * 1024):.2f} MiB")
-    return 1 if data["health"]["summary"]["errors"] or not data["policy"]["passed"] else 0
+    return 1 if data["summary"]["blockers"] else 0
 
 
 def dispatch_control_command(arguments: list[str]) -> int | None:
