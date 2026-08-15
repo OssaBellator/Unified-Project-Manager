@@ -64,8 +64,12 @@ def cargo_cache_uses(
 ) -> tuple[list[CargoCacheUse], list[dict[str, str]]]:
     project_root = Path(project).expanduser().resolve()
     home = Path(cargo_home).expanduser().resolve()
-    registry_root = home / 'registry'
-    git_root = home / 'git'
+    # Cargo metadata's manifest_path is source/check-out evidence. Restrict
+    # attribution to the exact CARGO_HOME trees that contain unpacked registry
+    # sources and git worktrees; registry index/cache metadata and git db state
+    # are not a package source directory merely because they live nearby.
+    registry_source_root = (home / 'registry' / 'src').resolve()
+    git_checkout_root = (home / 'git' / 'checkouts').resolve()
     uses: list[CargoCacheUse] = []
     skipped: list[dict[str, str]] = []
 
@@ -94,21 +98,25 @@ def cargo_cache_uses(
                 continue
             crate_dir = Path(manifest_path).expanduser().resolve().parent
             cache_kind = None
-            for kind, boundary in (('registry-source', registry_root), ('git-checkout', git_root)):
+            for kind, boundary in (
+                ('registry-source', registry_source_root),
+                ('git-checkout', git_checkout_root),
+            ):
                 try:
-                    crate_dir.relative_to(boundary.resolve())
+                    crate_dir.relative_to(boundary)
                 except ValueError:
                     continue
                 cache_kind = kind
                 break
             if cache_kind is None:
-                # Workspace/path dependencies and external checkout locations are
-                # not Cargo-home cache ownership evidence.
+                # Workspace/path dependencies, registry index/cache metadata,
+                # Cargo git db state, and external checkout locations are not
+                # package-source ownership evidence.
                 skipped.append({
                     'component': component,
                     'package': name,
                     'version': version,
-                    'reason': 'package source directory is outside CARGO_HOME registry/git roots',
+                    'reason': 'package source directory is outside CARGO_HOME registry/src and git/checkouts roots',
                 })
                 continue
             purl = None
