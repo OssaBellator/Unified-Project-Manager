@@ -66,7 +66,7 @@ cwd = "../outside"
             with self.assertRaisesRegex(TaskError, "array of strings"):
                 load_tasks(root)
 
-    def test_execute_task_uses_argv_without_shell(self) -> None:
+    def test_execute_task_uses_exact_resolved_argv_without_shell(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "upm.toml").write_text('[tasks.test]\ncommand = ["python", "-m", "unittest"]\n', encoding="utf-8")
@@ -77,10 +77,11 @@ cwd = "../outside"
                 calls.append((argv, kwargs))
                 return subprocess.CompletedProcess(argv, 0, "ok\n", "")
 
-            result = execute_task(task, run=fake_run, which=lambda _name: "/bin/python")
+            result = execute_task(task, run=fake_run, which=lambda _name: "/bin/python-exact")
             self.assertTrue(result.succeeded)
-            self.assertEqual(calls[0][0], ["python", "-m", "unittest"])
+            self.assertEqual(calls[0][0], ["/bin/python-exact", "-m", "unittest"])
             self.assertNotIn("shell", calls[0][1])
+            self.assertNotIn("env", calls[0][1])
 
 
 class NativeTaskTests(unittest.TestCase):
@@ -106,6 +107,24 @@ class NativeTaskTests(unittest.TestCase):
             self.assertEqual(plan.argv, ("cargo", "check"))
             tasks = list_native_tasks(graph)
             self.assertIn("test", {task["name"] for task in tasks})
+
+    def test_go_native_task_is_component_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph = ProjectGraph(root, [Component("go", root / "service", "go", metadata={"name": "example.com/service"})])
+            plan = plan_native_task(graph, "test")
+            self.assertEqual(plan.argv, ("go", "test", "./..."))
+            self.assertEqual(dict(plan.environment), {"GOWORK": "off"})
+            calls = []
+
+            def fake_run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                return subprocess.CompletedProcess(argv, 0, "ok\n", "")
+
+            result = execute_task(plan, run=fake_run, which=lambda _name: "/toolchains/go")
+            self.assertTrue(result.succeeded)
+            self.assertEqual(calls[0][0], ["/toolchains/go", "test", "./..."])
+            self.assertEqual(calls[0][1]["env"]["GOWORK"], "off")
 
     def test_ambiguous_native_task_requires_component(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
