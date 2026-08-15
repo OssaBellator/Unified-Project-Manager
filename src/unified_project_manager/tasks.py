@@ -151,6 +151,12 @@ def execute_task(
 
 
 _NATIVE_CARGO_TASKS = frozenset({"build", "check", "run", "test"})
+_NATIVE_GO_TASKS: dict[str, tuple[str, ...]] = {
+    "build": ("go", "build", "./..."),
+    "run": ("go", "run", "."),
+    "test": ("go", "test", "./..."),
+    "vet": ("go", "vet", "./..."),
+}
 
 
 def _select_component(graph: ProjectGraph, selector: str | None, task_name: str) -> Component:
@@ -162,6 +168,8 @@ def _select_component(graph: ProjectGraph, selector: str | None, task_name: str)
             supports = isinstance(scripts, dict) and task_name in scripts and component.manager in {"npm", "pnpm", "yarn", "bun"}
         elif component.ecosystem == "rust":
             supports = task_name in _NATIVE_CARGO_TASKS and component.manager == "cargo"
+        elif component.ecosystem == "go":
+            supports = task_name in _NATIVE_GO_TASKS and component.manager == "go"
         if not supports:
             continue
         if selector is None:
@@ -187,6 +195,8 @@ def plan_native_task(graph: ProjectGraph, name: str, selector: str | None = None
         argv = (manager, "run", name)
     elif component.ecosystem == "rust":
         argv = ("cargo", name)
+    elif component.ecosystem == "go":
+        argv = _NATIVE_GO_TASKS[name]
     else:
         raise TaskError(f"Native tasks are not configured for ecosystem '{component.ecosystem}'.")
     return TaskSpec(
@@ -223,4 +233,20 @@ def list_native_tasks(graph: ProjectGraph) -> list[dict[str, Any]]:
                     "native": f"cargo {name}",
                     "argv": ["cargo", name],
                 })
+        elif component.ecosystem == "go" and component.manager == "go":
+            for name, argv in sorted(_NATIVE_GO_TASKS.items()):
+                result.append({
+                    "name": name,
+                    "component": component.key(graph.root),
+                    "ecosystem": "go",
+                    "manager": "go",
+                    "native": shlex_join(argv),
+                    "argv": list(argv),
+                })
     return result
+
+
+def shlex_join(argv: tuple[str, ...]) -> str:
+    import shlex
+
+    return shlex.join(argv)
