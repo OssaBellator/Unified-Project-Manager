@@ -26,21 +26,35 @@ tests = false
 
 Build-tag ordering is normalized because the tag set, not comma-list ordering, controls selection.
 
-## Ambient `GOFLAGS` remains a promotion blocker
+## Effective `GOFLAGS` fails closed for real-runtime alignment
 
-The current comparator is deliberately a **command-line plan** comparison. It does not yet prove that the effective child-Go configuration is the same when `GOFLAGS` is inherited from the process environment or from values saved by `go env -w`.
+The command-line comparator is deliberately only an **argv plan** comparison. `GOFLAGS` can supply default Go command flags, including build tags, from either the process environment or values saved by `go env -w`.
 
-This matters because `GOFLAGS` can supply default Go command flags, including build tags. An empty operating-system `GOFLAGS` is not a sufficient normalization strategy: the Go command may then use a persisted `go env -w GOFLAGS=...` value. UPM therefore must not treat the current `tags = []` plan result as proof that no ambient build tags affected a real scanner run.
+An empty operating-system `GOFLAGS` variable is not by itself a sufficient normalization strategy because the Go command may then use a persisted value. UPM therefore does not treat argv-level `tags = []` as proof that no ambient build tags affected a real scanner run.
 
-A local Go 1.23.2 experiment showed that a non-empty process value such as:
+The candidate observation already retains the effective `GOFLAGS` value reported by its preceding `go env -json`. `go_symbol_effective_goflags_blocker(...)` now requires that retained value to be present and exactly empty before the optional real govulncheck alignment may continue.
+
+The promotion paths behave conservatively:
+
+```text
+GOFLAGS missing   -> real alignment blocked
+GOFLAGS non-empty -> real alignment blocked
+GOFLAGS empty     -> argv pattern/tag/test comparison may continue
+```
+
+`tests/test_go_symbol_real_alignment.py` skips rather than launches govulncheck when this effective-environment gate is not satisfied. The characterization command returns exit `2`, `status = blocked`, and phase `effective-goflags`; it records the source-observation side effects but does not launch govulncheck. Blocked is not a pass.
+
+UPM does **not** change or clear the user's `GOFLAGS` setting.
+
+A local Go 1.23.2 experiment separately showed that a non-empty process value such as:
 
 ```text
 GOFLAGS = -mod=readonly -tags=
 ```
 
-overrides a persisted `GOFLAGS=-tags=ambient` setting and keeps an ambient-tagged file out of the candidate `go list` selection. That is useful design evidence only. The normalization is **not promoted into the scanner plan yet**, because the real govulncheck runtime is unavailable in the current validation environment and UPM has not reviewed the resulting scanner/`go/packages` behavior end to end.
+overrides a persisted `GOFLAGS=-tags=ambient` setting and keeps an ambient-tagged file out of candidate `go list` selection. That remains design evidence only. UPM has not promoted this normalization into the scanner environment because real govulncheck/`go/packages` behavior with that override still needs end-to-end validation.
 
-Until that real-runtime check is completed, ambient/persisted `GOFLAGS` is an explicit remaining build-selection limitation and promotion blocker rather than hidden evidence.
+Thus the current safe promotion candidate is narrower: real-runtime validation is attempted only where effective `GOFLAGS` is already exactly empty.
 
 ## Test-enabled mode fails closed
 
@@ -55,21 +69,26 @@ This is deliberate. Govulncheck configures `go/packages` with test loading, whil
 
 ## Interpretation
 
-A successful default alignment means only:
+A successful argv-level default alignment means only:
 
 ```text
 scope = planned-go-symbol-build-selection-alignment
 patterns/tags/tests = planned consistently
-ambient_GOFLAGS_equivalence = not-established
 freshness = not-established
 govulncheck_runtime_equivalence = not-established
 ```
 
-It does **not** establish:
+The optional real-runtime gate additionally requires:
+
+```text
+effective_GOFLAGS = ""
+```
+
+Neither condition establishes:
 
 - identical `go/packages` runtime loading;
 - identical selected syntax/type information;
-- immunity from ambient or persisted `GOFLAGS` selection changes;
+- equivalence for non-empty ambient/persisted `GOFLAGS`;
 - unchanged source files;
 - unchanged GOOS/GOARCH/CGO/toolchain state;
 - identical call graphs;
@@ -85,4 +104,6 @@ sh ./scripts/test-go-symbol-build-selection.sh
 sh ./scripts/test-go-symbol-prepublic-all.sh
 ```
 
-Focused reconstructed validation in the constrained development environment passed **6/6** build-selection checks. The separate Go 1.23.2 `GOFLAGS` experiment described above is not counted as an additional passing build-selection regression because the scanner side has not run.
+Focused reconstructed validation in the constrained development environment passed **6/6** argv build-selection checks. The new effective-environment helper passed **3/3** focused cases (empty, non-empty, and missing `GOFLAGS`) and **14/14** when run together with the published source-observation hardening regressions.
+
+The separate Go 1.23.2 persisted-`GOFLAGS` experiment is not counted as scanner equivalence because govulncheck is unavailable in the current environment.
