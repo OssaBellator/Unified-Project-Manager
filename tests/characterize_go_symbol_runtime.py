@@ -20,6 +20,9 @@ from support_go_symbol_side_effects import diff_named_roots, snapshot_named_root
 from support_go_vulndb_fixture import FIXTURE_ALIAS, FIXTURE_ID, FIXTURE_SYMBOL
 from unified_project_manager.go_symbol_build_selection import compare_go_symbol_build_selection
 from unified_project_manager.go_symbol_correlation import correlate_govulncheck_symbols
+from unified_project_manager.go_symbol_effective_environment import (
+    go_symbol_effective_goflags_blocker,
+)
 from unified_project_manager.go_symbol_frame_source_alignment import (
     compare_positioned_govulncheck_frame_to_source_observation,
 )
@@ -184,6 +187,20 @@ def main() -> int:
                     "side_effects": observation_delta,
                 }, 1)
 
+            goflags_blocker = go_symbol_effective_goflags_blocker(observation.observation)
+            if goflags_blocker is not None:
+                return _emit({
+                    "status": "blocked",
+                    "phase": "effective-goflags",
+                    "effective_goflags": observation.observation.build_environment.get("GOFLAGS"),
+                    "reasons": [goflags_blocker],
+                    "side_effects": observation_delta,
+                    "interpretation": (
+                        "Source observation ran, but govulncheck was not launched because effective "
+                        "GOFLAGS selection equivalence is not established. Blocked is not a pass."
+                    ),
+                }, 2)
+
             symbol_plan = build_govulncheck_symbol_plan(
                 fixture.project, fixture.vulnerability_db, executable=govulncheck
             )
@@ -279,6 +296,7 @@ def main() -> int:
             "prerequisites": prerequisites,
             "checks": {
                 "planned_build_selection_matches": planned.matches,
+                "effective_goflags_empty": True,
                 "declared_inventory_match": alignment.declared_inventory_match,
                 "scanner_go_version_match": alignment.go_version_match,
                 "synthetic_symbol_finding": synthetic_finding,

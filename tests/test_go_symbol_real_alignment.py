@@ -19,6 +19,9 @@ from support_go_vulndb_fixture import FIXTURE_ID, FIXTURE_SYMBOL
 from unified_project_manager.go_symbol_build_selection import (
     compare_go_symbol_build_selection,
 )
+from unified_project_manager.go_symbol_effective_environment import (
+    go_symbol_effective_goflags_blocker,
+)
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
 from unified_project_manager.go_symbol_frame_source_alignment import (
     compare_positioned_govulncheck_frame_to_source_observation,
@@ -82,6 +85,11 @@ class GoSymbolRealAlignmentTests(unittest.TestCase):
                     observation_execution.succeeded,
                     observation_execution.error or observation_execution.stderr,
                 )
+                goflags_blocker = go_symbol_effective_goflags_blocker(
+                    observation_execution.observation
+                )
+                if goflags_blocker is not None:
+                    self.skipTest(goflags_blocker)
 
                 symbol_plan = build_govulncheck_symbol_plan(
                     fixture.project,
