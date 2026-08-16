@@ -33,7 +33,7 @@ class GoSymbolExecutionTests(unittest.TestCase):
         return GovulncheckSymbolPreflight(
             ready=ready,
             project=project or str(plan.cwd),
-            go_executable="/tools/go",
+            go_executable=str(Path("tools/go").resolve()),
             govulncheck_executable=executable,
             telemetry_mode="off" if ready else "local",
             database=database or str(plan.database),
