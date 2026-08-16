@@ -11,6 +11,7 @@ from typing import Any
 BUILD_ENV_KEYS = (
     "GOOS",
     "GOARCH",
+    "GOROOT",
     "CGO_ENABLED",
     "GOFLAGS",
     "GOEXPERIMENT",

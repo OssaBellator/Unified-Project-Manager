@@ -52,7 +52,7 @@ Unavailable or too-old Go returns `status = blocked` / exit 2. A behavioral mism
 
 `scripts/characterize-go-symbol-build-env-defaults.sh` and its PowerShell equivalent separately characterize whether explicitly empty process values reproduce the unset/default `go env` resolution for the retained build-input keys under `GOENV=off`.
 
-The local Go 1.23.2 run passed **22/22** retained keys. That is design evidence for a possible broader future freeze; it is deliberately **not** a decision to serialize arbitrary compiler, pkg-config, or CGO values into plans because those values may contain machine-local or user-specific paths/data.
+The local Go 1.23.2 run passed **23/23** retained keys, including GOROOT. That is design evidence for a possible broader future freeze; it is deliberately **not** a decision to serialize arbitrary compiler, pkg-config, or CGO values into plans because those values may contain machine-local or user-specific paths/data.
 
 A separate local Go 1.23.2 GOROOT check established:
 

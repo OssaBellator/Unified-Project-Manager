@@ -4,7 +4,7 @@ This is **pre-public design evidence** for the Go vulnerable-symbol promotion ga
 
 ## Purpose
 
-`GOENV=off` removes persisted `go env -w` configuration, and the current plans separately capture/fail-close process `GOFLAGS`. Other process-level Go build inputs can still affect package/source selection or compilation behavior, including target OS/architecture, CGO mode, architecture tuning, experiments, compiler selection, and CGO flags.
+`GOENV=off` removes persisted `go env -w` configuration. The current plans also capture/fail-close process `GOFLAGS` and `GOROOT`. Other process-level Go build inputs can still affect package/source selection or compilation behavior, including target OS/architecture, CGO mode, architecture tuning, experiments, compiler selection, and CGO flags.
 
 Before UPM considers freezing a broader set of those values into scanner/observation execution, it needs to know whether an **explicit empty process value** behaves like the variable being absent. That distinction matters because an execution plan can override later ambient mutations only if the plan has an explicit value for the key.
 
@@ -37,11 +37,13 @@ It removes each retained process build key to obtain the baseline `go env -json`
 The retained keys characterized are:
 
 ```text
-GOOS GOARCH CGO_ENABLED GOFLAGS GOEXPERIMENT
+GOOS GOARCH GOROOT CGO_ENABLED GOFLAGS GOEXPERIMENT
 GOAMD64 GOARM64 GOARM GO386 GOMIPS GOMIPS64 GOPPC64 GORISCV64 GOWASM
 CC CXX PKG_CONFIG
 CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_FFLAGS CGO_LDFLAGS
 ```
+
+The local Go 1.23.2 run passed **23/23** retained keys. GOROOT is now additionally controlled by the production plans: each plan captures the process value, planned alignment requires it to be empty, and the source observation retains the effective `go env` GOROOT. The remaining compiler/CGO/target inputs are still characterization-only.
 
 The command never runs `go env -w`, never installs Go, never changes telemetry, and does not mutate a project. Unavailable/too-old Go is `status = blocked` / exit 2; a mismatch is `status = failed` / exit 1. Blocked is not a pass.
 
