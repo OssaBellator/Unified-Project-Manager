@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from unified_project_manager.go_symbol_build_selection import (
     GoSymbolBuildSelectionError,
@@ -23,10 +25,11 @@ class GoSymbolBuildSelectionTests(unittest.TestCase):
         database = root / "vulndb"
         project.mkdir()
         database.mkdir()
-        return (
-            build_govulncheck_symbol_plan(project, database),
-            build_go_symbol_source_observation_plan(project),
-        )
+        with patch.dict(os.environ, {"GOFLAGS": ""}, clear=False):
+            return (
+                build_govulncheck_symbol_plan(project, database),
+                build_go_symbol_source_observation_plan(project),
+            )
 
     def test_current_default_plans_match_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

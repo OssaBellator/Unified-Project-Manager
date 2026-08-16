@@ -253,6 +253,7 @@ def build_go_symbol_source_observation_plan(
             "GOSUMDB": "off",
             "GOTOOLCHAIN": "local",
             "GOENV": "off",
+            "GOFLAGS": os.environ.get("GOFLAGS", ""),
         },
     )
 

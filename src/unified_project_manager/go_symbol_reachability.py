@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -442,6 +443,7 @@ def build_govulncheck_symbol_plan(
             "GOSUMDB": "off",
             "GOTOOLCHAIN": "local",
             "GOENV": "off",
+            "GOFLAGS": os.environ.get("GOFLAGS", ""),
         },
     )
 
