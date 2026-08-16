@@ -23,12 +23,16 @@ from unified_project_manager.go_symbol_source_observation import (
 
 
 class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
-    def _plans(self, root: Path, *, goflags: str = ""):
+    def _plans(self, root: Path, *, goflags: str = "", goroot: str = ""):
         project = root / "project"
         database = root / "vulndb"
         project.mkdir()
         database.mkdir()
-        with patch.dict(os.environ, {"GOFLAGS": goflags}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"GOFLAGS": goflags, "GOROOT": goroot},
+            clear=False,
+        ):
             return (
                 build_govulncheck_symbol_plan(project, database, executable="/tools/govulncheck"),
                 build_go_symbol_source_observation_plan(project, executable="/tools/go"),
@@ -41,6 +45,8 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             self.assertEqual(observation.environment["GOENV"], "off")
             self.assertEqual(scanner.environment["GOFLAGS"], "")
             self.assertEqual(observation.environment["GOFLAGS"], "")
+            self.assertEqual(scanner.environment["GOROOT"], "")
+            self.assertEqual(observation.environment["GOROOT"], "")
             self.assertTrue(compare_go_symbol_build_selection(scanner, observation).matches)
 
     def test_build_selection_requires_goenv_match_and_normalization(self) -> None:
@@ -78,11 +84,15 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             database = root / "vulndb"
             project.mkdir()
             database.mkdir()
-            with patch.dict(os.environ, {"GOFLAGS": ""}, clear=False):
+            with patch.dict(os.environ, {"GOFLAGS": "", "GOROOT": ""}, clear=False):
                 observation = build_go_symbol_source_observation_plan(
                     project, executable="/tools/go"
                 )
-            with patch.dict(os.environ, {"GOFLAGS": "-tags=ambient"}, clear=False):
+            with patch.dict(
+                os.environ,
+                {"GOFLAGS": "-tags=ambient", "GOROOT": ""},
+                clear=False,
+            ):
                 scanner = build_govulncheck_symbol_plan(
                     project, database, executable="/tools/govulncheck"
                 )
@@ -100,6 +110,39 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             self.assertFalse(alignment.matches)
             self.assertIn("GOFLAGS environment is not normalized", alignment.differences)
 
+    def test_build_selection_detects_process_goroot_drift_between_plan_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            database = root / "vulndb"
+            project.mkdir()
+            database.mkdir()
+            with patch.dict(os.environ, {"GOFLAGS": "", "GOROOT": ""}, clear=False):
+                observation = build_go_symbol_source_observation_plan(
+                    project, executable="/tools/go"
+                )
+            with patch.dict(
+                os.environ,
+                {"GOFLAGS": "", "GOROOT": "/custom/go"},
+                clear=False,
+            ):
+                scanner = build_govulncheck_symbol_plan(
+                    project, database, executable="/tools/govulncheck"
+                )
+
+            alignment = compare_go_symbol_build_selection(scanner, observation)
+            self.assertFalse(alignment.matches)
+            self.assertIn("GOROOT environment differs", alignment.differences)
+
+    def test_nonempty_captured_process_goroot_remains_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            scanner, observation = self._plans(
+                Path(temporary), goroot="/custom/go"
+            )
+            alignment = compare_go_symbol_build_selection(scanner, observation)
+            self.assertFalse(alignment.matches)
+            self.assertIn("GOROOT environment is not normalized", alignment.differences)
+
     def test_source_observation_uses_planned_goflags_and_disables_ambient_goenv(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -107,7 +150,11 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             project.mkdir()
             with patch.dict(
                 os.environ,
-                {"GOENV": "/tmp/persisted-goenv", "GOFLAGS": "-tags=planned"},
+                {
+                    "GOENV": "/tmp/persisted-goenv",
+                    "GOFLAGS": "-tags=planned",
+                    "GOROOT": "",
+                },
                 clear=False,
             ):
                 plan = build_go_symbol_source_observation_plan(
@@ -119,6 +166,7 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
                 "GOOS": "linux",
                 "GOARCH": "amd64",
                 "GOVERSION": "go1.24.0",
+                "GOROOT": "/tools",
                 "GOFLAGS": "-tags=planned",
             })
             package_payload = json.dumps({
@@ -138,7 +186,11 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"GOENV": "/tmp/later-goenv", "GOFLAGS": "-tags=later"},
+                {
+                    "GOENV": "/tmp/later-goenv",
+                    "GOFLAGS": "-tags=later",
+                    "GOROOT": "/tmp/later-goroot",
+                },
                 clear=False,
             ):
                 result = execute_go_symbol_source_observation(
@@ -152,6 +204,11 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             for environment in calls:
                 self.assertEqual(environment["GOENV"], "off")
                 self.assertEqual(environment["GOFLAGS"], "-tags=planned")
+                self.assertEqual(environment["GOROOT"], "")
+            self.assertEqual(
+                result.observation.build_environment.get("GOROOT"),
+                "/tools",
+            )
 
     def test_scanner_execution_uses_planned_goflags_and_disables_ambient_goenv(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -162,7 +219,11 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             database.mkdir()
             with patch.dict(
                 os.environ,
-                {"GOENV": "/tmp/persisted-goenv", "GOFLAGS": "-tags=planned"},
+                {
+                    "GOENV": "/tmp/persisted-goenv",
+                    "GOFLAGS": "-tags=planned",
+                    "GOROOT": "",
+                },
                 clear=False,
             ):
                 scanner = build_govulncheck_symbol_plan(
@@ -206,7 +267,11 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"GOENV": "/tmp/later-goenv", "GOFLAGS": "-tags=later"},
+                {
+                    "GOENV": "/tmp/later-goenv",
+                    "GOFLAGS": "-tags=later",
+                    "GOROOT": "/tmp/later-goroot",
+                },
                 clear=False,
             ):
                 result = execute_govulncheck_symbol(scanner, preflight=preflight, run=run)
@@ -215,6 +280,7 @@ class GoSymbolGoEnvPlanNormalizationTests(unittest.TestCase):
             self.assertEqual(len(captured), 1)
             self.assertEqual(captured[0]["GOENV"], "off")
             self.assertEqual(captured[0]["GOFLAGS"], "-tags=planned")
+            self.assertEqual(captured[0]["GOROOT"], "")
 
 
 if __name__ == "__main__":

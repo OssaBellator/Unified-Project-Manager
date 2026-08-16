@@ -444,6 +444,7 @@ def build_govulncheck_symbol_plan(
             "GOTOOLCHAIN": "local",
             "GOENV": "off",
             "GOFLAGS": os.environ.get("GOFLAGS", ""),
+            "GOROOT": os.environ.get("GOROOT", ""),
         },
     )
 

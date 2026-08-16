@@ -21,6 +21,7 @@ BUILD_ENV_KEYS = (
     "GOOS",
     "GOARCH",
     "GOVERSION",
+    "GOROOT",
     "CGO_ENABLED",
     "GOFLAGS",
     "GOEXPERIMENT",
@@ -254,6 +255,7 @@ def build_go_symbol_source_observation_plan(
             "GOTOOLCHAIN": "local",
             "GOENV": "off",
             "GOFLAGS": os.environ.get("GOFLAGS", ""),
+            "GOROOT": os.environ.get("GOROOT", ""),
         },
     )
 

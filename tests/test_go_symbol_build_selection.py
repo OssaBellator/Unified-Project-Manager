@@ -25,7 +25,7 @@ class GoSymbolBuildSelectionTests(unittest.TestCase):
         database = root / "vulndb"
         project.mkdir()
         database.mkdir()
-        with patch.dict(os.environ, {"GOFLAGS": ""}, clear=False):
+        with patch.dict(os.environ, {"GOFLAGS": "", "GOROOT": ""}, clear=False):
             return (
                 build_govulncheck_symbol_plan(project, database),
                 build_go_symbol_source_observation_plan(project),

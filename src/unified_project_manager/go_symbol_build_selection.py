@@ -18,6 +18,7 @@ EXPECTED_BUILD_SELECTION_ENVIRONMENT = (
     ("GOTOOLCHAIN", "local"),
     ("GOENV", "off"),
     ("GOFLAGS", ""),
+    ("GOROOT", ""),
 )
 
 
