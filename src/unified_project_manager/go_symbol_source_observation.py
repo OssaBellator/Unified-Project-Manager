@@ -365,10 +365,16 @@ def _module_input(value: object, package: str) -> GoSymbolModuleInput | None:
 
 def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...]:
     packages: list[GoSymbolPackageInput] = []
+    seen_import_paths: set[str] = set()
     for record in _decode_json_stream(text):
         import_path = record.get("ImportPath")
         if not isinstance(import_path, str) or not import_path:
             raise GoSymbolSourceObservationError("Go package record is missing ImportPath")
+        if import_path in seen_import_paths:
+            raise GoSymbolSourceObservationError(
+                f"`go list -json` source observation contains duplicate ImportPath {import_path!r}"
+            )
+        seen_import_paths.add(import_path)
         if record.get("Incomplete"):
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} is incomplete")
         if record.get("Error") is not None:
@@ -407,7 +413,16 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
             ignored_files=ignored_files,
             imports=_string_list(record.get("Imports"), field="Imports", package=import_path),
         ))
-    return tuple(sorted(packages, key=lambda package: package.import_path))
+    normalized = tuple(sorted(packages, key=lambda package: package.import_path))
+    if not normalized:
+        raise GoSymbolSourceObservationError(
+            "`go list -json` source observation contains no package records"
+        )
+    if not any(not package.dep_only for package in normalized):
+        raise GoSymbolSourceObservationError(
+            "`go list -json` source observation contains no root package selected by ./..."
+        )
+    return normalized
 
 
 def execute_go_symbol_source_observation(
@@ -464,7 +479,9 @@ def execute_go_symbol_source_observation(
     try:
         packages = parse_go_symbol_package_inputs(package_result.stdout or "")
     except GoSymbolSourceObservationError as exc:
-        return GoSymbolSourceObservationExecution(plan, 1, None, "", str(exc))
+        return GoSymbolSourceObservationExecution(
+            plan, 1, None, (package_result.stderr or "").strip(), str(exc)
+        )
 
     return GoSymbolSourceObservationExecution(
         plan=plan,
