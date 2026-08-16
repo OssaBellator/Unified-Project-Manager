@@ -441,6 +441,7 @@ def build_govulncheck_symbol_plan(
             "GOWORK": "off",
             "GOSUMDB": "off",
             "GOTOOLCHAIN": "local",
+            "GOENV": "off",
         },
     )
 

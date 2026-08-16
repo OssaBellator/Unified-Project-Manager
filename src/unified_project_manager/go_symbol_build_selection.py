@@ -16,6 +16,7 @@ EXPECTED_BUILD_SELECTION_ENVIRONMENT = (
     ("GOWORK", "off"),
     ("GOSUMDB", "off"),
     ("GOTOOLCHAIN", "local"),
+    ("GOENV", "off"),
 )
 
 

@@ -252,6 +252,7 @@ def build_go_symbol_source_observation_plan(
             "GOWORK": "off",
             "GOSUMDB": "off",
             "GOTOOLCHAIN": "local",
+            "GOENV": "off",
         },
     )
 
