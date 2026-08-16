@@ -26,13 +26,13 @@ class GoSymbolEffectiveEnvironmentTests(unittest.TestCase):
         self.assertEqual(environment["OTHER"], "kept")
         self.assertNotIn("GOENV", original)
 
-    def test_preserves_existing_goenv_key_casing_without_duplicates(self) -> None:
+    def test_canonicalizes_goenv_key_and_removes_case_variants(self) -> None:
         environment = environment_with_persisted_go_config_disabled(
             {"GoEnv": "/tmp/persisted", "GOENV": "/tmp/duplicate"}
         )
         goenv_keys = [key for key in environment if key.upper() == "GOENV"]
-        self.assertEqual(goenv_keys, ["GoEnv"])
-        self.assertEqual(environment["GoEnv"], GO_SYMBOL_GOENV_DISABLED)
+        self.assertEqual(goenv_keys, ["GOENV"])
+        self.assertEqual(environment["GOENV"], GO_SYMBOL_GOENV_DISABLED)
 
     def test_explicit_empty_goflags_allows_real_alignment_gate(self) -> None:
         self.assertIsNone(

@@ -20,11 +20,10 @@ def environment_with_persisted_go_config_disabled(
     """
 
     result = dict(environment)
-    goenv_keys = [key for key in result if key.upper() == "GOENV"]
-    goenv_key = goenv_keys[0] if goenv_keys else "GOENV"
-    for duplicate in goenv_keys[1:]:
-        result.pop(duplicate, None)
-    result[goenv_key] = GO_SYMBOL_GOENV_DISABLED
+    for key in tuple(result):
+        if key.upper() == "GOENV":
+            result.pop(key, None)
+    result["GOENV"] = GO_SYMBOL_GOENV_DISABLED
     return result
 
 
