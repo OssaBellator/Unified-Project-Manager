@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
+from unified_project_manager.go_symbol_plan_authorization import (
+    govulncheck_symbol_plan_authorization_identity,
+)
 from unified_project_manager.go_symbol_preflight import GovulncheckSymbolPreflight
 from unified_project_manager.go_symbol_reachability import (
     GOVULNCHECK_PROTOCOL_VERSION,
@@ -35,6 +38,7 @@ class GoSymbolExecutionTests(unittest.TestCase):
             telemetry_mode="off" if ready else "local",
             database=database or str(plan.database),
             reasons=tuple(reasons),
+            plan_authorization_identity=govulncheck_symbol_plan_authorization_identity(plan),
         )
 
     def _stream(self, plan, *, symbol=True, database_uri=None):

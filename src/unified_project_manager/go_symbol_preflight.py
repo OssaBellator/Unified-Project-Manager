@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .go_symbol_plan_authorization import govulncheck_symbol_plan_authorization_identity
 from .go_symbol_reachability import GovulncheckSymbolPlan
 
 
@@ -20,6 +21,7 @@ class GovulncheckSymbolPreflight:
     telemetry_mode: str | None
     database: str
     reasons: tuple[str, ...]
+    plan_authorization_identity: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -29,6 +31,8 @@ class GovulncheckSymbolPreflight:
             "executes_govulncheck": False,
             "mutates_telemetry_configuration": False,
             "project_mutation": "none",
+            "authorization_only": True,
+            "freshness": "not-established",
         })
         return data
 
@@ -56,6 +60,8 @@ def preflight_govulncheck_symbol(
     This function never launches govulncheck and never changes Go telemetry
     configuration. It performs only local filesystem/executable checks plus
     ``go env GOTELEMETRY`` under the plan's no-network/single-module guards.
+    The resulting authorization identity binds a later execution to this exact
+    safety-relevant plan; it is not freshness or vulnerability evidence.
     """
 
     reasons: list[str] = []
@@ -115,4 +121,5 @@ def preflight_govulncheck_symbol(
         telemetry_mode=telemetry_mode,
         database=str(database),
         reasons=tuple(reasons),
+        plan_authorization_identity=govulncheck_symbol_plan_authorization_identity(plan),
     )

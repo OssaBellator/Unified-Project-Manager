@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .go_symbol_plan_authorization import govulncheck_symbol_plan_authorization_identity
 from .go_symbol_preflight import GovulncheckSymbolPreflight, preflight_govulncheck_symbol
 from .go_symbol_reachability import (
     GoSymbolReachabilityError,
@@ -98,6 +99,11 @@ def _preflight_matches_plan(
             "preflight vulnerability database does not match execution plan: "
             f"expected {expected_database!r}, observed {preflight.database!r}"
         )
+    if preflight.plan_authorization_identity is None:
+        return "preflight is missing its execution-plan authorization identity"
+    expected_authorization = govulncheck_symbol_plan_authorization_identity(plan)
+    if preflight.plan_authorization_identity != expected_authorization:
+        return "preflight authorization identity does not match the execution plan"
     return None
 
 
