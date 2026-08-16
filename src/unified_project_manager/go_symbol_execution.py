@@ -14,6 +14,10 @@ from .go_symbol_reachability import (
     GovulncheckSymbolPlan,
     parse_govulncheck_symbol_stream,
 )
+from .go_symbol_toolchain_path import (
+    GoSymbolToolchainPathError,
+    environment_with_preflight_go_path,
+)
 
 
 @dataclass(frozen=True)
@@ -119,6 +123,12 @@ def execute_govulncheck_symbol(
         return _blocked_execution(plan, checked, mismatch)
     if not checked.ready:
         return _blocked_execution(plan, checked)
+    if not checked.go_executable:
+        return _blocked_execution(
+            plan,
+            checked,
+            "preflight was marked ready without a resolved Go executable",
+        )
     if not checked.govulncheck_executable:
         return _blocked_execution(
             plan,
@@ -129,6 +139,17 @@ def execute_govulncheck_symbol(
     argv = [checked.govulncheck_executable, *plan.argv[1:]]
     environment = dict(os.environ)
     environment.update(plan.environment)
+    try:
+        environment = environment_with_preflight_go_path(
+            environment,
+            checked.go_executable,
+        )
+    except GoSymbolToolchainPathError as exc:
+        return _blocked_execution(
+            plan,
+            checked,
+            f"could not bind preflight-resolved Go executable to scanner PATH: {exc}",
+        )
     try:
         completed = run(
             argv,
