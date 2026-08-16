@@ -14,7 +14,7 @@ UPM's candidate source/build observation uses `go list` to observe Go-selected p
 
 ## Current supported candidate
 
-The current UPM pre-public plans both select:
+The current UPM pre-public command lines both declare:
 
 ```text
 patterns = ["./..."]
@@ -25,6 +25,22 @@ tests = false
 `compare_go_symbol_build_selection(...)` parses both planned command lines and requires package patterns and build tags to agree.
 
 Build-tag ordering is normalized because the tag set, not comma-list ordering, controls selection.
+
+## Ambient `GOFLAGS` remains a promotion blocker
+
+The current comparator is deliberately a **command-line plan** comparison. It does not yet prove that the effective child-Go configuration is the same when `GOFLAGS` is inherited from the process environment or from values saved by `go env -w`.
+
+This matters because `GOFLAGS` can supply default Go command flags, including build tags. An empty operating-system `GOFLAGS` is not a sufficient normalization strategy: the Go command may then use a persisted `go env -w GOFLAGS=...` value. UPM therefore must not treat the current `tags = []` plan result as proof that no ambient build tags affected a real scanner run.
+
+A local Go 1.23.2 experiment showed that a non-empty process value such as:
+
+```text
+GOFLAGS = -mod=readonly -tags=
+```
+
+overrides a persisted `GOFLAGS=-tags=ambient` setting and keeps an ambient-tagged file out of the candidate `go list` selection. That is useful design evidence only. The normalization is **not promoted into the scanner plan yet**, because the real govulncheck runtime is unavailable in the current validation environment and UPM has not reviewed the resulting scanner/`go/packages` behavior end to end.
+
+Until that real-runtime check is completed, ambient/persisted `GOFLAGS` is an explicit remaining build-selection limitation and promotion blocker rather than hidden evidence.
 
 ## Test-enabled mode fails closed
 
@@ -44,6 +60,7 @@ A successful default alignment means only:
 ```text
 scope = planned-go-symbol-build-selection-alignment
 patterns/tags/tests = planned consistently
+ambient_GOFLAGS_equivalence = not-established
 freshness = not-established
 govulncheck_runtime_equivalence = not-established
 ```
@@ -52,6 +69,7 @@ It does **not** establish:
 
 - identical `go/packages` runtime loading;
 - identical selected syntax/type information;
+- immunity from ambient or persisted `GOFLAGS` selection changes;
 - unchanged source files;
 - unchanged GOOS/GOARCH/CGO/toolchain state;
 - identical call graphs;
@@ -67,4 +85,4 @@ sh ./scripts/test-go-symbol-build-selection.sh
 sh ./scripts/test-go-symbol-prepublic-all.sh
 ```
 
-Focused reconstructed validation in the constrained development environment passed **6/6** build-selection checks.
+Focused reconstructed validation in the constrained development environment passed **6/6** build-selection checks. The separate Go 1.23.2 `GOFLAGS` experiment described above is not counted as an additional passing build-selection regression because the scanner side has not run.
