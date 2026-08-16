@@ -109,6 +109,7 @@ class GoSymbolRealAlignmentTests(unittest.TestCase):
             self.assertTrue(alignment.roots_match, alignment.to_dict())
             self.assertTrue(alignment.modules_match, alignment.to_dict())
             self.assertTrue(alignment.declared_inventory_match, alignment.to_dict())
+            self.assertTrue(alignment.go_version_match, alignment.to_dict())
             data = alignment.to_dict()
             self.assertEqual(data["freshness"], "not-established")
             self.assertEqual(data["source_selection_equivalence"], "not-established")

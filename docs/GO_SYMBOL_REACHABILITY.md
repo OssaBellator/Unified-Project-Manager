@@ -221,7 +221,7 @@ When runnable, it:
 
 That test is committed but **has not run here** because the current prerequisites do not allow it.
 
-For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner declaration alignment; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; requires its numeric byte position to agree with the current matched syntax-file bytes; and requires strict UPM correlation exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
+For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner root/module declaration alignment and separately requires exact agreement among observation `GOVERSION`, govulncheck `Config.GoVersion`, and govulncheck SBOM `GoVersion`; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; requires its numeric byte position to agree with the current matched syntax-file bytes; and requires strict UPM correlation exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
 
 ## Persistence/freshness boundary
 
@@ -284,7 +284,7 @@ Do not add a public symbol route until all remaining items are satisfied atomica
 
 1. run the optional real-runtime regression after govulncheck is already installed and telemetry is already `off`;
 2. run the committed characterization command and review its exact isolated-cache deltas without treating unobserved machine state as clean;
-3. prove scanner declaration alignment, positioned finding-frame/source correspondence, current-source numeric byte-position consistency, and strict correlation against the real govulncheck stream generated from the deterministic fixture without claiming complete source-selection equivalence or call-graph freshness;
+3. prove scanner declaration alignment, exact Go-version agreement, positioned finding-frame/source correspondence, current-source numeric byte-position consistency, and strict correlation against the real govulncheck stream generated from the deterministic fixture without claiming complete source-selection equivalence or call-graph freshness;
 4. define a conservative source/build-state fingerprint and separate symbol persistence/freshness semantics;
 5. keep ordinary status free of hidden symbol analysis.
 

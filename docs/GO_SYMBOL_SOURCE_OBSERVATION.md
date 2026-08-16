@@ -93,12 +93,13 @@ This observation is intentionally more precise than blindly hashing every source
 
 ## Scanner-SBOM alignment
 
-`compare_go_symbol_observation_to_scan_sbom(...)` compares only normalized root packages and effective non-standard module/version inventory against govulncheck's retained native scan SBOM.
+`compare_go_symbol_observation_to_scan_sbom(...)` keeps two consistency signals separate: normalized root packages/effective non-standard module-version inventory, and exact Go toolchain version agreement. `go_version_match` is true only when the observation's retained `GOVERSION`, govulncheck `Config.GoVersion`, and govulncheck SBOM `GoVersion` are all present and exactly equal.
 
-Even when both match:
+Even when both signals match:
 
 ```text
 declared_inventory_match = true
+go_version_match = true
 freshness = not-established
 source_selection_equivalence = not-established
 build_configuration_equivalence = not-established
@@ -166,7 +167,7 @@ This proves the candidate command is locally executable on Go 1.23.2. It does **
 
 `tests/test_go_symbol_real_alignment.py` skips unless `go` and `govulncheck` already exist and `GOTELEMETRY` is already `off`. It never installs a tool or changes telemetry.
 
-When runnable it uses the same generated local DB, versioned module proxy, app, and isolated caches for both the Go-native observation and real govulncheck. Before launching the scanner it requires planned build-selection alignment; afterwards it requires root/module declaration alignment, requires the synthetic vulnerable `Danger` frame's positioned source to correspond to the observed dependency package/syntax file, and requires the frame's numeric byte position to agree with the current matched source bytes.
+When runnable it uses the same generated local DB, versioned module proxy, app, and isolated caches for both the Go-native observation and real govulncheck. Before launching the scanner it requires planned build-selection alignment; afterwards it separately requires root/module declaration alignment and exact agreement among observation `GOVERSION`, govulncheck `Config.GoVersion`, and govulncheck SBOM `GoVersion`, requires the synthetic vulnerable `Danger` frame's positioned source to correspond to the observed dependency package/syntax file, and requires the frame's numeric byte position to agree with the current matched source bytes.
 
 Passing that future check still does not establish complete source-selection equivalence and does not by itself create a persisted freshness fingerprint.
 

@@ -261,6 +261,8 @@ def main() -> int:
             failures.append("immutable validation roots changed: " + ", ".join(immutable))
         if not alignment.declared_inventory_match:
             failures.append("real scanner SBOM does not align with the Go-native declared inventory")
+        if not alignment.go_version_match:
+            failures.append("real scanner Go version does not align with the Go-native observation")
         if not synthetic_finding:
             failures.append("real scanner stream does not contain exactly one expected synthetic vulnerable symbol")
         elif frame_source_alignment is None or not frame_source_alignment.matched:
@@ -278,6 +280,7 @@ def main() -> int:
             "checks": {
                 "planned_build_selection_matches": planned.matches,
                 "declared_inventory_match": alignment.declared_inventory_match,
+                "scanner_go_version_match": alignment.go_version_match,
                 "synthetic_symbol_finding": synthetic_finding,
                 "positioned_frame_source_match": (
                     frame_source_alignment.matched if frame_source_alignment is not None else False

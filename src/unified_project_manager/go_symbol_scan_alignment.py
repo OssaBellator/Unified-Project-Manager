@@ -13,6 +13,9 @@ class GoSymbolScanAlignment:
     scanner_roots: tuple[str, ...]
     observation_modules: tuple[tuple[str, str | None], ...]
     scanner_modules: tuple[tuple[str, str | None], ...]
+    observation_go_version: str | None
+    scanner_config_go_version: str | None
+    scanner_sbom_go_version: str | None
 
     @property
     def roots_match(self) -> bool:
@@ -26,6 +29,14 @@ class GoSymbolScanAlignment:
     def declared_inventory_match(self) -> bool:
         return self.roots_match and self.modules_match
 
+    @property
+    def go_version_match(self) -> bool:
+        return (
+            self.observation_go_version is not None
+            and self.observation_go_version == self.scanner_config_go_version
+            and self.observation_go_version == self.scanner_sbom_go_version
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "observation_roots": list(self.observation_roots),
@@ -38,16 +49,21 @@ class GoSymbolScanAlignment:
                 {"path": path, "version": version}
                 for path, version in self.scanner_modules
             ],
+            "observation_go_version": self.observation_go_version,
+            "scanner_config_go_version": self.scanner_config_go_version,
+            "scanner_sbom_go_version": self.scanner_sbom_go_version,
             "roots_match": self.roots_match,
             "modules_match": self.modules_match,
             "declared_inventory_match": self.declared_inventory_match,
+            "go_version_match": self.go_version_match,
             "scope": "go-observation-vs-govulncheck-scan-declaration",
             "freshness": "not-established",
             "source_selection_equivalence": "not-established",
             "build_configuration_equivalence": "not-established",
             "interpretation": (
-                "agreement compares Go-native root/module inventory with govulncheck's declared scan SBOM only; "
-                "it does not establish identical source-file selection, build configuration, call graph, or freshness"
+                "agreement separately compares Go-native root/module inventory and exact Go toolchain version "
+                "with govulncheck's declared scan evidence; it does not establish identical source-file selection, "
+                "build configuration, call graph, or freshness"
             ),
         }
 
@@ -69,11 +85,11 @@ def compare_go_symbol_observation_to_scan_sbom(
 ) -> GoSymbolScanAlignment:
     """Compare two declared inventories without upgrading the result to freshness.
 
-    The Go-native observation and govulncheck scan SBOM come from different
-    package-loading paths. This function only compares normalized root package
-    and effective module/version sets. A match is useful evidence that the two
-    declarations agree at that level; it is not proof of identical compiled
-    files, build flags, or call-graph inputs.
+    The Go-native observation and govulncheck scan evidence come from different
+    package-loading paths. This function separately compares normalized root
+    package/effective module-version sets and exact Go toolchain versions. Those
+    matches are useful consistency evidence; they are not proof of identical
+    compiled files, build flags, source selection, or call-graph inputs.
     """
 
     if report.sbom is None:
@@ -89,4 +105,7 @@ def compare_go_symbol_observation_to_scan_sbom(
         scanner_roots=tuple(sorted(set(report.sbom.roots))),
         observation_modules=_observation_modules(observation),
         scanner_modules=scanner_modules,
+        observation_go_version=observation.build_environment.get("GOVERSION"),
+        scanner_config_go_version=report.config.go_version,
+        scanner_sbom_go_version=report.sbom.go_version,
     )

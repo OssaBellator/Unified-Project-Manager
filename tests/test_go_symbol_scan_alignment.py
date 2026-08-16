@@ -28,6 +28,7 @@ class GoSymbolScanAlignmentTests(unittest.TestCase):
         dep_effective_path="example.com/dep",
         dep_effective_version="v1.2.3",
         roots=("example.com/app",),
+        go_version="go1.24.0",
     ) -> GoSymbolSourceObservation:
         root_set = set(roots)
         packages = [
@@ -81,25 +82,33 @@ class GoSymbolScanAlignmentTests(unittest.TestCase):
             ),
         ]
         return GoSymbolSourceObservation(
-            GoSymbolBuildEnvironment((("GOOS", "linux"), ("GOARCH", "amd64"), ("GOVERSION", "go1.24.0"))),
+            GoSymbolBuildEnvironment((("GOOS", "linux"), ("GOARCH", "amd64"), ("GOVERSION", go_version))),
             tuple(packages),
         )
 
-    def _report(self, *, modules=None, roots=("example.com/app",), include_sbom=True):
+    def _report(
+        self,
+        *,
+        modules=None,
+        roots=("example.com/app",),
+        include_sbom=True,
+        config_go_version="go1.24.0",
+        sbom_go_version="go1.24.0",
+    ):
         config = GovulncheckConfig(
             protocol_version=GOVULNCHECK_PROTOCOL_VERSION,
             scanner_name="govulncheck",
             scanner_version="v1.6.0",
             database="file:///tmp/vulndb",
             database_last_modified=None,
-            go_version="go1.24.0",
+            go_version=config_go_version,
             scan_level="symbol",
             scan_mode="source",
         )
         sbom = None
         if include_sbom:
             sbom = GovulncheckSBOM(
-                go_version="go1.24.0",
+                go_version=sbom_go_version,
                 modules=tuple(modules or (
                     GovulncheckModule("example.com/app", None),
                     GovulncheckModule("example.com/dep", "v1.2.3"),
@@ -115,14 +124,50 @@ class GoSymbolScanAlignmentTests(unittest.TestCase):
         self.assertTrue(alignment.roots_match)
         self.assertTrue(alignment.modules_match)
         self.assertTrue(alignment.declared_inventory_match)
+        self.assertTrue(alignment.go_version_match)
+        self.assertEqual(alignment.observation_go_version, "go1.24.0")
+        self.assertEqual(alignment.scanner_config_go_version, "go1.24.0")
+        self.assertEqual(alignment.scanner_sbom_go_version, "go1.24.0")
         self.assertEqual(alignment.observation_modules, (
             ("example.com/app", None),
             ("example.com/dep", "v1.2.3"),
         ))
         data = alignment.to_dict()
+        self.assertTrue(data["go_version_match"])
+        self.assertEqual(data["observation_go_version"], "go1.24.0")
+        self.assertEqual(data["scanner_config_go_version"], "go1.24.0")
+        self.assertEqual(data["scanner_sbom_go_version"], "go1.24.0")
         self.assertEqual(data["freshness"], "not-established")
         self.assertEqual(data["source_selection_equivalence"], "not-established")
         self.assertEqual(data["build_configuration_equivalence"], "not-established")
+
+    def test_config_go_version_mismatch_is_separate_from_inventory(self) -> None:
+        alignment = compare_go_symbol_observation_to_scan_sbom(
+            self._observation(), self._report(config_go_version="go1.24.1")
+        )
+        self.assertFalse(alignment.go_version_match)
+        self.assertTrue(alignment.declared_inventory_match)
+
+    def test_sbom_go_version_mismatch_is_separate_from_inventory(self) -> None:
+        alignment = compare_go_symbol_observation_to_scan_sbom(
+            self._observation(), self._report(sbom_go_version="go1.24.1")
+        )
+        self.assertFalse(alignment.go_version_match)
+        self.assertTrue(alignment.declared_inventory_match)
+
+    def test_missing_config_go_version_fails_version_match_only(self) -> None:
+        alignment = compare_go_symbol_observation_to_scan_sbom(
+            self._observation(), self._report(config_go_version=None)
+        )
+        self.assertFalse(alignment.go_version_match)
+        self.assertTrue(alignment.declared_inventory_match)
+
+    def test_missing_sbom_go_version_fails_version_match_only(self) -> None:
+        alignment = compare_go_symbol_observation_to_scan_sbom(
+            self._observation(), self._report(sbom_go_version=None)
+        )
+        self.assertFalse(alignment.go_version_match)
+        self.assertTrue(alignment.declared_inventory_match)
 
     def test_root_mismatch_is_visible_without_changing_module_match(self) -> None:
         alignment = compare_go_symbol_observation_to_scan_sbom(
@@ -131,6 +176,7 @@ class GoSymbolScanAlignmentTests(unittest.TestCase):
         self.assertFalse(alignment.roots_match)
         self.assertTrue(alignment.modules_match)
         self.assertFalse(alignment.declared_inventory_match)
+        self.assertTrue(alignment.go_version_match)
 
     def test_module_or_version_mismatch_is_visible(self) -> None:
         wrong_module = compare_go_symbol_observation_to_scan_sbom(
