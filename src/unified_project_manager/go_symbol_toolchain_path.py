@@ -8,11 +8,18 @@ class GoSymbolToolchainPathError(ValueError):
     """Raised when the preflight-resolved Go executable cannot be bound to PATH."""
 
 
+_ENVIRONMENT_KEYS_CASE_INSENSITIVE = os.name == "nt"
+
+
 def environment_with_preflight_go_path(
     environment: Mapping[str, str],
     go_executable: str,
 ) -> dict[str, str]:
     """Return an environment whose PATH resolves `go` from the preflight directory first."""
+    if not os.path.isabs(go_executable):
+        raise GoSymbolToolchainPathError(
+            "preflight-resolved Go executable path is not absolute"
+        )
     directory = os.path.dirname(go_executable)
     if not directory:
         raise GoSymbolToolchainPathError(
@@ -20,10 +27,13 @@ def environment_with_preflight_go_path(
         )
 
     result = dict(environment)
-    path_keys = [key for key in result if key.upper() == "PATH"]
-    path_key = path_keys[0] if path_keys else "PATH"
-    existing = result.get(path_key, "")
-    for duplicate in path_keys[1:]:
-        result.pop(duplicate, None)
-    result[path_key] = directory if not existing else directory + os.pathsep + existing
+    existing = result.get("PATH", "")
+    if _ENVIRONMENT_KEYS_CASE_INSENSITIVE:
+        path_keys = [key for key in result if key.upper() == "PATH"]
+        if "PATH" not in result and path_keys:
+            existing = result[path_keys[0]]
+        for key in path_keys:
+            if key != "PATH":
+                result.pop(key, None)
+    result["PATH"] = directory if not existing else directory + os.pathsep + existing
     return result
