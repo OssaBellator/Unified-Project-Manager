@@ -413,9 +413,19 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
             )
         if deps_errors:
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} contains dependency errors")
+        raw_name = record.get("Name")
+        if raw_name is not None and (not isinstance(raw_name, str) or not raw_name):
+            raise GoSymbolSourceObservationError(
+                f"Go package {import_path!r} field Name is not a non-empty string"
+            )
         directory = record.get("Dir")
         if not isinstance(directory, str) or not directory:
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} is missing Dir")
+        directory_path = Path(directory)
+        if not directory_path.is_absolute():
+            raise GoSymbolSourceObservationError(
+                f"Go package {import_path!r} field Dir is not an absolute path"
+            )
 
         compiled_go_files = _string_list(
             record.get("CompiledGoFiles"),
@@ -434,10 +444,10 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
         )
         packages.append(GoSymbolPackageInput(
             import_path=import_path,
-            name=record.get("Name") if isinstance(record.get("Name"), str) else None,
+            name=raw_name,
             standard=_optional_bool(record.get("Standard"), field="Standard", package=import_path),
             dep_only=_optional_bool(record.get("DepOnly"), field="DepOnly", package=import_path),
-            directory=str(Path(directory).expanduser().resolve()),
+            directory=str(directory_path.resolve()),
             module=_module_input(record.get("Module"), import_path),
             compiled_go_files=compiled_go_files,
             source_files=source_files,
