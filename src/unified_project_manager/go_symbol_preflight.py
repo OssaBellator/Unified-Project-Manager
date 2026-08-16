@@ -42,11 +42,15 @@ def _resolve_executable(
     which: Callable[[str], str | None],
 ) -> str | None:
     resolved = which(value)
-    if resolved:
-        # shutil.which already selected the executable from PATH. Preserve that
-        # exact spelling instead of reinterpreting foreign paths on this host.
-        return str(resolved)
-    return None
+    if not resolved:
+        return None
+    text = str(resolved)
+    if not os.path.isabs(text):
+        # A relative PATH entry can make shutil.which return a relative result.
+        # Pin it against the current UPM process directory now so a later
+        # subprocess cwd cannot reinterpret the executable identity.
+        text = os.path.abspath(text)
+    return text
 
 
 def preflight_govulncheck_symbol(
