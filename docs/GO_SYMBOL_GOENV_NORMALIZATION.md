@@ -1,10 +1,10 @@
-# Go symbol GOENV normalization characterization
+# Go symbol environment normalization characterization
 
 This is **pre-public design evidence** for the Go vulnerable-symbol promotion gate. It does not create a public provider, persisted symbol evidence, or a freshness claim.
 
 ## Why this exists
 
-The candidate source observation and govulncheck executor inherit most of the calling process environment. Go can also read per-user defaults written by `go env -w` from the Go environment configuration file. In particular, persisted `GOFLAGS` can change build tags and therefore package/source selection even when the operating-system `GOFLAGS` variable is empty.
+The candidate source observation and govulncheck executor inherit most of the calling process environment. Go can also read per-user defaults written by `go env -w` from the Go environment configuration file. Persisted or process-level build inputs can change package/source selection even when the command-line package patterns are identical.
 
 Go documents `GOENV=off` as disabling use of the default Go environment configuration file. UPM now sets `GOENV=off` in **both** pre-public plans, so persisted `go env -w` state is excluded from the candidate observation and scanner subprocess environments.
 
@@ -15,9 +15,11 @@ Process-level `GOFLAGS` is handled separately rather than erased. Each plan capt
 - a later process-environment mutation cannot override the already-authorized plan value at execution time;
 - the Go-native observation still checks the effective `GOFLAGS` reported by `go env -json` before a real scanner gate may continue.
 
-This closes the persisted-configuration and process-`GOFLAGS` plan/TOCTOU gaps. It does **not** prove complete govulncheck source/build equivalence.
+`GOROOT` is treated with the same captured-but-required-empty policy. An empty process `GOROOT` lets the selected Go executable use its own configured root. A non-empty custom root is not silently discarded: it is captured in the plan and causes planned alignment to fail closed. The source observation also retains the effective `GOROOT` reported by `go env -json` as semantic build/toolchain context.
 
-## Characterization
+This closes the persisted-configuration, process-`GOFLAGS`, and custom-`GOROOT` plan/TOCTOU gaps. It does **not** prove complete govulncheck source/build equivalence.
+
+## GOENV characterization
 
 Run either:
 
@@ -46,6 +48,21 @@ The command never installs Go, never changes telemetry, never writes the user's 
 
 Unavailable or too-old Go returns `status = blocked` / exit 2. A behavioral mismatch returns `status = failed` / exit 1. Blocked is not a pass.
 
+## Build-environment default characterization
+
+`scripts/characterize-go-symbol-build-env-defaults.sh` and its PowerShell equivalent separately characterize whether explicitly empty process values reproduce the unset/default `go env` resolution for the retained build-input keys under `GOENV=off`.
+
+The local Go 1.23.2 run passed **22/22** retained keys. That is design evidence for a possible broader future freeze; it is deliberately **not** a decision to serialize arbitrary compiler, pkg-config, or CGO values into plans because those values may contain machine-local or user-specific paths/data.
+
+A separate local Go 1.23.2 GOROOT check established:
+
+```text
+GOROOT unset  -> /usr/local/go
+GOROOT=""     -> /usr/local/go
+```
+
+and `go list fmt` resolved under `/usr/local/go/src/fmt`. An invalid non-empty custom GOROOT failed rather than falling back. The production gate therefore requires planned GOROOT to be empty instead of silently overriding a custom root.
+
 ## Implemented plan contract
 
 Both pre-public plans now carry:
@@ -57,20 +74,23 @@ GOSUMDB = off
 GOTOOLCHAIN = local
 GOENV = off
 GOFLAGS = captured process value, required empty for planned alignment
+GOROOT = captured process value, required empty for planned alignment
 ```
 
-`GOFLAGS` is included in the exact plan authorization identity because that identity already binds the complete sorted plan environment. The scanner executor therefore cannot silently run a plan whose captured GOFLAGS differs from the preflight-authorized plan.
+`GOFLAGS` and `GOROOT` are included in the exact plan authorization identity because that identity already binds the complete sorted plan environment. The scanner executor therefore cannot silently run a plan whose captured values differ from the preflight-authorized plan.
 
 The local Go 1.23.2 characterization also confirmed that `GOENV=off` does not mask `GOTELEMETRY`; the existing preflight still requires telemetry to already be exactly `off` and never changes it.
 
 ## Interpretation boundary
 
-The implemented normalization establishes a narrower plan/executor property only:
+The implemented normalization establishes narrower plan/executor properties only:
 
 ```text
 persisted_go_env_configuration = disabled
 process_GOFLAGS = captured-and-fail-closed
 planned_GOFLAGS_alignment = exact-empty-required
+process_GOROOT = captured-and-fail-closed
+planned_GOROOT_alignment = exact-empty-required
 ```
 
 It still does not establish:
@@ -84,4 +104,4 @@ public = false
 persisted = false
 ```
 
-The next promotion work remains a real govulncheck alignment/side-effect run where `go` and `govulncheck` already exist and telemetry is already exactly `off`, followed by conservative treatment of any other build-environment inputs shown to affect scanner loading. The GOENV/GOFLAGS controls must not be treated as a substitute for that runtime evidence.
+The next promotion work remains a real govulncheck alignment/side-effect run where `go` and `govulncheck` already exist and telemetry is already exactly `off`, followed by conservative treatment of the remaining build-environment inputs shown to affect scanner loading. The GOENV/GOFLAGS/GOROOT controls must not be treated as a substitute for that runtime evidence.
