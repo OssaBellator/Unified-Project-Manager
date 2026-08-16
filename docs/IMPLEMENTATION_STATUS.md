@@ -42,8 +42,9 @@ Vulnerable-symbol reachability is still **not public**. Current groundwork inclu
 10. Go-native candidate source/build observation;
 11. planned package-pattern/tag/test alignment guard;
 12. fail-closed positioned finding-frame/source correspondence against observed package `CompiledGoFiles`;
-13. deterministic filesystem snapshot/delta support plus a prerequisite-gated real-runtime characterization command;
-14. public-boundary regression keeping govulncheck out of the eight-provider registry.
+13. fail-closed current-source numeric byte-position consistency against the already-matched syntax file;
+14. deterministic filesystem snapshot/delta support plus a prerequisite-gated real-runtime characterization command;
+15. public-boundary regression keeping govulncheck out of the eight-provider registry.
 
 Everything remains:
 
@@ -134,6 +135,27 @@ persisted = false
 
 Focused reconstructed validation: **11/11**.
 
+### Current-source numeric byte-position consistency
+
+After filename/source correspondence, a separate fail-closed witness checks the scanner's zero-based byte offset and reported line/byte-column against current bytes of that one observed syntax file. Non-null protocol Position objects must carry complete numeric coordinates. Unknown column zero remains protocol-valid but cannot satisfy this exact-byte witness. Possible Go line-directive markers before the position, unstable/non-regular/symlink/reparse files, path replacement, and coordinate disagreement withhold the witness.
+
+This remains point-in-time evidence only:
+
+```text
+source_selection_equivalence = not-established
+build_configuration_equivalence = not-established
+freshness = not-established
+call_graph_freshness = not-established
+source_state_fingerprint = false
+symbol_text_correspondence = not-established
+runtime_reachability = not-evaluated
+exploitability = not-established
+public = false
+persisted = false
+```
+
+Focused Windows validation: Position protocol **9/9**; source-location witness **28/28**, including the Windows path-stat/open-handle ctime regression.
+
 ### Self-contained real-runtime fixture
 
 The repo generates a synthetic Go vulnerability DB v1, versioned `example.com/dep@v1.2.3` file module proxy, app calling the synthetic vulnerable `Danger` symbol, and isolated Go caches. Fixture setup contacts only the generated `file://` proxy; analysis switches to `GOPROXY=off`.
@@ -147,7 +169,7 @@ govulncheck executable = present
 GOTELEMETRY = off
 ```
 
-They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment. A separate local characterization command returns `blocked`/exit `2` rather than a unittest skip when prerequisites are absent; when runnable it records project/proxy/DB/module-cache/build-cache deltas and requires real scanner declaration alignment, exactly one expected synthetic symbol finding, positioned `Danger` frame/source correspondence, and exact UPM correlation.
+They never install govulncheck or mutate telemetry. Before scanner launch they now also require planned build-selection alignment. A separate local characterization command returns `blocked`/exit `2` rather than a unittest skip when prerequisites are absent; when runnable it records project/proxy/DB/module-cache/build-cache deltas and requires real scanner declaration alignment, exactly one expected synthetic symbol finding, positioned `Danger` frame/source correspondence, current-source numeric byte-position consistency, and exact UPM correlation.
 
 The Go-native fixture evidence above was produced with these remaining scanner prerequisites unmet:
 
@@ -192,15 +214,17 @@ The private branch is materialized locally and its full Python regression suite 
 - scan-declaration identity: **5/5**;
 - planned build-selection alignment: **6/6**;
 - positioned finding-frame/source correspondence: **11/11**;
+- govulncheck Position protocol validation: **9/9**;
+- current-source numeric byte-position consistency: **28/28**;
 - deterministic Go-symbol side-effect snapshot/delta helpers: **4/4**;
 - real Go normalized source-observation command: successful on Go 1.23.2 with project snapshot unchanged;
-- Windows PowerShell aggregate: **760 tests, 0 failures, 7 environment-dependent skips**;
+- Windows PowerShell aggregate: **797 tests, 0 failures, 7 environment-dependent skips**;
 - optional real govulncheck execution/alignment: committed and prerequisite-gated.
 
 ## Important remaining gaps
 
 1. run real govulncheck against the generated local fixture when the executable exists and telemetry is already `off`;
-2. validate scanner declaration alignment, positioned finding-frame/source correspondence, and strict correlation against that real stream without upgrading full source-selection equivalence;
+2. validate scanner declaration alignment, positioned finding-frame/source correspondence, current-source numeric byte-position consistency, and strict correlation against that real stream without upgrading full source-selection equivalence or call-graph freshness;
 3. run the committed characterization command, inspect its exact isolated-cache deltas, and separately account for any machine/tool state outside the observed roots before claiming side-effect safety;
 4. only then define conservative persisted symbol freshness semantics;
 5. add runtime/data-flow or exploitability evidence only where ecosystem-native evidence supports it;

@@ -71,13 +71,13 @@ class GoSymbolReachabilityTests(unittest.TestCase):
                             "package": "example.com/dep/pkg",
                             "function": "Danger",
                             "receiver": "*Thing",
-                            "position": {"filename": "pkg/danger.go", "line": 17, "column": 3},
+                            "position": {"filename": "pkg/danger.go", "offset": 123, "line": 17, "column": 3},
                         },
                         {
                             "module": "example.com/app",
                             "package": "example.com/app",
                             "function": "main",
-                            "position": {"filename": "main.go", "line": 9, "column": 2},
+                            "position": {"filename": "main.go", "offset": 456, "line": 9, "column": 2},
                         },
                     ],
                 }

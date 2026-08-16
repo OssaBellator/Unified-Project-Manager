@@ -50,6 +50,8 @@ The complete local stack covers:
 - candidate Go-native source/build observation;
 - Go-native vs scanner-SBOM declaration alignment;
 - fail-closed positioned finding-frame/source correspondence against observed package syntax files;
+- strict govulncheck Position protocol coordinate validation;
+- fail-closed current-source numeric byte-position consistency against the already-matched syntax file;
 - deterministic filesystem side-effect snapshot/delta support;
 - optional real govulncheck execution, alignment, strict correlation, and isolated-cache characterization.
 
@@ -131,7 +133,7 @@ or on Unix-like hosts:
 sh ./scripts/characterize-go-symbol-runtime.sh
 ```
 
-The characterization command returns exit code `2` with `status = blocked` when Go, govulncheck, or already-off telemetry prerequisites are unavailable. When runnable, it snapshots the project, generated local proxy/DB, isolated `GOMODCACHE`, and isolated `GOCACHE` after fixture preparation; records separate source-observation and govulncheck deltas; requires the real scanner SBOM to align with the Go-native observation; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; and requires strict UPM correlation exactly once. Project/proxy/DB mutation fails the command. Cache changes are reported, not reclassified as safe or reclaimable. Filesystem effects outside those observed roots remain explicitly `not-observed`.
+The characterization command returns exit code `2` with `status = blocked` when Go, govulncheck, or already-off telemetry prerequisites are unavailable. When runnable, it snapshots the project, generated local proxy/DB, isolated `GOMODCACHE`, and isolated `GOCACHE` after fixture preparation; records separate source-observation and govulncheck deltas; requires the real scanner SBOM to align with the Go-native observation; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; requires its numeric byte position to agree with the current matched source bytes; and requires strict UPM correlation exactly once. Project/proxy/DB mutation fails the command. Cache changes are reported, not reclassified as safe or reclaimable. Filesystem effects outside those observed roots remain explicitly `not-observed`.
 
 Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanner alignment is still necessary; local Go 1.23.2 observation is not treated as scanner-runtime proof.
 
@@ -156,7 +158,9 @@ Govulncheck v1.6.0 itself declares Go 1.25.0 and x/tools v0.48.0, so real scanne
 - scan-declaration identity: **5/5**;
 - planned build-selection alignment: **6/6**;
 - positioned finding-frame/source correspondence: **11/11**;
+- govulncheck Position protocol validation: **9/9**;
+- current-source numeric byte-position consistency: **28/28**;
 - normalized Go source-observation command: real Go 1.23.2 success with unchanged project snapshot;
 - optional real govulncheck execution/alignment: **committed but prerequisite-gated**.
 
-Current Windows checkout validation: **760 tests run, 0 failures, 7 skips**. The skips are limited to unavailable Go/govulncheck prerequisites and Windows symlink-creation privilege, so they remain explicit environment gaps rather than hidden passes. The Linux sandbox available here lacks `python3`, so the Unix aggregate could only be checked through shell startup/line-ending handling, not executed end-to-end in that container.
+Current Windows checkout validation: **797 tests run, 0 failures, 7 skips**. The skips are limited to unavailable Go/govulncheck prerequisites and Windows symlink-creation privilege, so they remain explicit environment gaps rather than hidden passes. The Linux sandbox available here lacks `python3`, so the Unix aggregate could only be checked through shell startup/line-ending handling, not executed end-to-end in that container.

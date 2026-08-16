@@ -23,6 +23,9 @@ from unified_project_manager.go_symbol_correlation import correlate_govulncheck_
 from unified_project_manager.go_symbol_frame_source_alignment import (
     compare_positioned_govulncheck_frame_to_source_observation,
 )
+from unified_project_manager.go_symbol_frame_source_location import (
+    validate_positioned_govulncheck_frame_source_location,
+)
 from unified_project_manager.go_symbol_execution import execute_govulncheck_symbol
 from unified_project_manager.go_symbol_preflight import preflight_govulncheck_symbol
 from unified_project_manager.go_symbol_reachability import build_govulncheck_symbol_plan
@@ -99,6 +102,47 @@ def _changed(deltas: dict[str, dict[str, object]]) -> list[str]:
     return sorted(name for name, value in deltas.items() if value["changed"])
 
 
+def _build_side_effects(
+    baseline,
+    after_observation,
+    after_scan,
+    after_frame_source_location=None,
+) -> dict[str, object]:
+    observation_delta = _deltas(baseline, after_observation)
+    scanner_delta = _deltas(after_observation, after_scan)
+    final_snapshot = after_frame_source_location or after_scan
+    combined_delta = _deltas(baseline, final_snapshot)
+    changed_roots = {
+        "source_observation": _changed(observation_delta),
+        "govulncheck": _changed(scanner_delta),
+        "combined": _changed(combined_delta),
+    }
+    side_effects: dict[str, object] = {
+        "baseline": "after local file-proxy module-cache preparation",
+        "source_observation": observation_delta,
+        "govulncheck": scanner_delta,
+        "combined": combined_delta,
+        "changed_roots": changed_roots,
+        "observed_non_project_roots": [
+            "local_module_proxy",
+            "local_vulnerability_db",
+            "go_module_cache",
+            "go_build_cache",
+        ],
+        "content_snapshot_scope": "file-path-size-sha256-only",
+        "filesystem_metadata_side_effects": "atime-ctime-permissions-not-observed",
+        "outside_observed_roots": "not-observed",
+        "non_project_cache_tool_mutation": (
+            "characterized only for the isolated roots above; other user/tool state side effects remain possible"
+        ),
+    }
+    if after_frame_source_location is not None:
+        location_delta = _deltas(after_scan, after_frame_source_location)
+        side_effects["frame_source_location"] = location_delta
+        changed_roots["frame_source_location"] = _changed(location_delta)
+    return side_effects
+
+
 def main() -> int:
     prerequisites, reasons = _prerequisites()
     if reasons:
@@ -163,29 +207,7 @@ def main() -> int:
             execution = execute_govulncheck_symbol(symbol_plan, preflight=preflight)
             after_scan = snapshot_named_roots(roots)
 
-        scanner_delta = _deltas(after_observation, after_scan)
-        combined_delta = _deltas(baseline, after_scan)
-        side_effects = {
-            "baseline": "after local file-proxy module-cache preparation",
-            "source_observation": observation_delta,
-            "govulncheck": scanner_delta,
-            "combined": combined_delta,
-            "changed_roots": {
-                "source_observation": _changed(observation_delta),
-                "govulncheck": _changed(scanner_delta),
-                "combined": _changed(combined_delta),
-            },
-            "observed_non_project_roots": [
-                "local_module_proxy",
-                "local_vulnerability_db",
-                "go_module_cache",
-                "go_build_cache",
-            ],
-            "outside_observed_roots": "not-observed",
-            "non_project_cache_tool_mutation": (
-                "characterized only for the isolated roots above; other user/tool state side effects remain possible"
-            ),
-        }
+        side_effects = _build_side_effects(baseline, after_observation, after_scan)
         if not execution.succeeded:
             return _emit({
                 "status": "failed",
@@ -209,11 +231,26 @@ def main() -> int:
         )
         synthetic_finding = len(synthetic_findings) == 1
         frame_source_alignment = None
+        frame_source_location = None
         if synthetic_finding:
             frame_source_alignment = compare_positioned_govulncheck_frame_to_source_observation(
                 synthetic_findings[0].vulnerable_frame,
                 observation.observation,
             )
+            if frame_source_alignment.matched:
+                frame_source_location = validate_positioned_govulncheck_frame_source_location(
+                    synthetic_findings[0].vulnerable_frame,
+                    observation.observation,
+                )
+
+        after_frame_source_location = snapshot_named_roots(roots)
+        combined_delta = _deltas(baseline, after_frame_source_location)
+        side_effects = _build_side_effects(
+            baseline,
+            after_observation,
+            after_scan,
+            after_frame_source_location,
+        )
         immutable = [
             label
             for label in ("project", "local_module_proxy", "local_vulnerability_db")
@@ -228,6 +265,10 @@ def main() -> int:
             failures.append("real scanner stream does not contain exactly one expected synthetic vulnerable symbol")
         elif frame_source_alignment is None or not frame_source_alignment.matched:
             failures.append("expected synthetic vulnerable frame does not correspond to the observed package/syntax file")
+        elif frame_source_location is None or not frame_source_location.validated:
+            failures.append(
+                "expected synthetic vulnerable frame byte position does not agree with the current observed syntax file"
+            )
         if len(correlation.matches) != 1 or correlation.unmatched:
             failures.append("real scanner stream did not produce exactly one strict UPM correlation")
 
@@ -241,6 +282,9 @@ def main() -> int:
                 "positioned_frame_source_match": (
                     frame_source_alignment.matched if frame_source_alignment is not None else False
                 ),
+                "positioned_frame_source_location_validated": (
+                    frame_source_location.validated if frame_source_location is not None else False
+                ),
                 "strict_correlation_matches": len(correlation.matches),
                 "strict_correlation_unmatched": len(correlation.unmatched),
                 "immutable_root_changes": immutable,
@@ -248,6 +292,9 @@ def main() -> int:
             "alignment": alignment.to_dict(),
             "frame_source_correspondence": (
                 frame_source_alignment.to_dict() if frame_source_alignment is not None else None
+            ),
+            "frame_source_location": (
+                frame_source_location.to_dict() if frame_source_location is not None else None
             ),
             "side_effects": side_effects,
             "public": False,

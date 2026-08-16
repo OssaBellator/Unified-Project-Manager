@@ -255,14 +255,47 @@ def _parse_position(value: object) -> dict[str, Any] | None:
         return None
     if not isinstance(value, dict):
         raise GoSymbolReachabilityError("govulncheck frame position is not an object")
+
+    allowed = {"filename", "offset", "line", "column"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise GoSymbolReachabilityError(
+            "govulncheck frame position contains unsupported field(s): "
+            + ", ".join(sorted(unknown))
+        )
+
     position: dict[str, Any] = {}
-    filename = value.get("filename")
-    if isinstance(filename, str) and filename:
+    if "filename" in value:
+        filename = value.get("filename")
+        if not isinstance(filename, str) or not filename:
+            raise GoSymbolReachabilityError(
+                "govulncheck frame position filename must be a non-empty string when present"
+            )
         position["filename"] = filename
+
     for name in ("offset", "line", "column"):
+        if name not in value:
+            raise GoSymbolReachabilityError(
+                f"govulncheck frame position is missing required {name}"
+            )
         item = value.get(name)
-        if isinstance(item, int) and not isinstance(item, bool):
-            position[name] = item
+        if not isinstance(item, int) or isinstance(item, bool):
+            raise GoSymbolReachabilityError(
+                f"govulncheck frame position {name} is not an integer"
+            )
+        if name == "offset" and item < 0:
+            raise GoSymbolReachabilityError(
+                "govulncheck frame position offset must be >= 0"
+            )
+        if name == "line" and item <= 0:
+            raise GoSymbolReachabilityError(
+                "govulncheck frame position line must be > 0"
+            )
+        if name == "column" and item < 0:
+            raise GoSymbolReachabilityError(
+                "govulncheck frame position column must be >= 0"
+            )
+        position[name] = item
     return position
 
 

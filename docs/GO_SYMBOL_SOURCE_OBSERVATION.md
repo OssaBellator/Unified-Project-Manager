@@ -126,6 +126,25 @@ persisted = false
 
 This is evidence only that a particular positioned scanner frame corresponds to an observed package/syntax file. It does not prove complete `go/packages` versus `go list` source selection or call-graph freshness.
 
+## Current-source numeric byte-position consistency
+
+`validate_positioned_govulncheck_frame_source_location(...)` is an additional narrower witness after filename/source correspondence. It streams only the already-matched syntax-file prefix through govulncheck's zero-based byte offset and compares its 1-based line/byte-column to current source bytes. Unknown column zero cannot support an exact byte-column witness. Possible Go line-directive markers before the scanner position fail closed because adjusted token line/column values need not equal raw source coordinates; markers strictly after the position do not retroactively block it.
+
+The read is guarded against path escape, non-regular/symlink/reparse files, parent/leaf path replacement, and observable file metadata/content changes during the read. Path-stat/open-handle comparisons use identity, size, and mtime, while ctime is compared only within repeated path-stat or repeated handle-stat observations so Windows cross-interface ctime representation does not create a false mutation. A successful result is still point-in-time single-file evidence only:
+
+```text
+freshness = not-established
+call_graph_freshness = not-established
+source_state_fingerprint = false
+symbol_text_correspondence = not-established
+source_selection_equivalence = not-established
+build_configuration_equivalence = not-established
+public = false
+persisted = false
+```
+
+Reading source may update access-time metadata depending on filesystem policy. Current content-tree side-effect snapshots cover path, size, and SHA-256 rather than atime/ctime/permissions.
+
 ## Real local Go evidence
 
 On the generated fully local fixture, the installed Go tool already proved offline package/source observation and project-state immutability.
@@ -147,7 +166,7 @@ This proves the candidate command is locally executable on Go 1.23.2. It does **
 
 `tests/test_go_symbol_real_alignment.py` skips unless `go` and `govulncheck` already exist and `GOTELEMETRY` is already `off`. It never installs a tool or changes telemetry.
 
-When runnable it uses the same generated local DB, versioned module proxy, app, and isolated caches for both the Go-native observation and real govulncheck. Before launching the scanner it requires planned build-selection alignment; afterwards it requires root/module declaration alignment and requires the synthetic vulnerable `Danger` frame's positioned source to correspond to the observed dependency package/syntax file.
+When runnable it uses the same generated local DB, versioned module proxy, app, and isolated caches for both the Go-native observation and real govulncheck. Before launching the scanner it requires planned build-selection alignment; afterwards it requires root/module declaration alignment, requires the synthetic vulnerable `Danger` frame's positioned source to correspond to the observed dependency package/syntax file, and requires the frame's numeric byte position to agree with the current matched source bytes.
 
 Passing that future check still does not establish complete source-selection equivalence and does not by itself create a persisted freshness fingerprint.
 
@@ -158,6 +177,7 @@ sh ./scripts/test-go-symbol-build-selection.sh
 sh ./scripts/test-go-symbol-source-observation.sh
 sh ./scripts/test-go-symbol-source-alignment.sh
 sh ./scripts/test-go-symbol-frame-source-alignment.sh
+sh ./scripts/test-go-symbol-frame-source-location.sh
 sh ./scripts/test-go-symbol-real-alignment.sh
 sh ./scripts/test-go-symbol-prepublic-all.sh
 ```

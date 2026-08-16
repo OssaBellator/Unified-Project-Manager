@@ -23,6 +23,9 @@ from unified_project_manager.go_symbol_execution import execute_govulncheck_symb
 from unified_project_manager.go_symbol_frame_source_alignment import (
     compare_positioned_govulncheck_frame_to_source_observation,
 )
+from unified_project_manager.go_symbol_frame_source_location import (
+    validate_positioned_govulncheck_frame_source_location,
+)
 from unified_project_manager.go_symbol_preflight import preflight_govulncheck_symbol
 from unified_project_manager.go_symbol_reachability import build_govulncheck_symbol_plan
 from unified_project_manager.go_symbol_scan_alignment import (
@@ -131,6 +134,23 @@ class GoSymbolRealAlignmentTests(unittest.TestCase):
             self.assertEqual(frame_data["freshness"], "not-established")
             self.assertEqual(frame_data["runtime_reachability"], "not-evaluated")
             self.assertEqual(frame_data["exploitability"], "not-established")
+
+            location = validate_positioned_govulncheck_frame_source_location(
+                synthetic_findings[0].vulnerable_frame,
+                observation_execution.observation,
+            )
+            self.assertTrue(location.validated, location.to_dict())
+            location_data = location.to_dict()
+            self.assertEqual(location_data["source_selection_equivalence"], "not-established")
+            self.assertEqual(location_data["build_configuration_equivalence"], "not-established")
+            self.assertEqual(location_data["freshness"], "not-established")
+            self.assertEqual(location_data["call_graph_freshness"], "not-established")
+            self.assertFalse(location_data["source_state_fingerprint"])
+            self.assertEqual(location_data["symbol_text_correspondence"], "not-established")
+            self.assertFalse(location_data["public"])
+            self.assertFalse(location_data["persisted"])
+            self.assertEqual(location_data["runtime_reachability"], "not-evaluated")
+            self.assertEqual(location_data["exploitability"], "not-established")
 
 
 if __name__ == "__main__":

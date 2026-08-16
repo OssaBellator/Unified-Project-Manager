@@ -22,8 +22,9 @@ The branch now contains:
 6. deterministic local vulnerability-DB and versioned-module runtime fixtures;
 7. deterministic filesystem snapshot/delta support for runtime side-effect characterization;
 8. fail-closed positioned finding-frame/source correspondence against the Go-native observed package/syntax-file set;
-9. an optional real govulncheck end-to-end regression plus explicit characterization command, both gated by existing tool/telemetry state;
-10. a public-boundary regression keeping govulncheck out of the eight-provider registry.
+9. fail-closed current-source byte-position consistency for scanner offset/line/column against the already-matched syntax file;
+10. an optional real govulncheck end-to-end regression plus explicit characterization command, both gated by existing tool/telemetry state;
+11. a public-boundary regression keeping govulncheck out of the eight-provider registry.
 
 There is still **no public CLI flag/provider route and no persisted symbol evidence**.
 
@@ -38,7 +39,7 @@ scan_level = symbol
 db = file://...
 ```
 
-Module-, package-, and symbol-level findings remain separate. Only a finding whose first trace frame contains a function/method is classified as vulnerable-symbol/call-graph evidence.
+Module-, package-, and symbol-level findings remain separate. Only a finding whose first trace frame contains a function/method is classified as vulnerable-symbol/call-graph evidence. Non-null native `Position` objects must contain integer `offset`, `line`, and `column` coordinates; offset must be non-negative, line must be positive, and column may be zero because Go token positions can represent an unknown column after a line directive.
 
 ## Strict correlation
 
@@ -70,6 +71,25 @@ Even a match remains only frame/source correspondence:
 source_selection_equivalence = not-established
 build_configuration_equivalence = not-established
 freshness = not-established
+runtime_reachability = not-evaluated
+exploitability = not-established
+public = false
+persisted = false
+```
+
+## Current-source numeric byte-position consistency
+
+After frame/source filename correspondence succeeds, UPM can optionally stream that one matched syntax-file prefix through govulncheck's zero-based byte offset and compare the reported line/byte-column to the bytes present at validation time. The read refuses missing or unstable files, symlink/reparse paths, path replacement, concurrent content metadata changes, coordinate mismatch, unknown column zero, and possible `//line ` or `/*line ` markers in the raw prefix before the scanner offset. A directive strictly after the position cannot retroactively change that earlier token position. Cross-view path-stat/open-handle consistency compares identity, size, and mtime; ctime remains checked only across repeated observations through the same stat interface because Windows can report different ctime values for the same unchanged file through `lstat` and `fstat`.
+
+A successful check is deliberately point-in-time evidence for one source file. It does **not** become a source-state fingerprint, does not prove source-selection/build equivalence or call-graph freshness, and is not persisted. Reading a file may update access-time metadata on some filesystems; the current characterization snapshots compare file path, size, and SHA-256, not atime/ctime/permissions.
+
+```text
+source_selection_equivalence = not-established
+build_configuration_equivalence = not-established
+freshness = not-established
+call_graph_freshness = not-established
+source_state_fingerprint = false
+symbol_text_correspondence = not-established
 runtime_reachability = not-evaluated
 exploitability = not-established
 public = false
@@ -201,7 +221,7 @@ When runnable, it:
 
 That test is committed but **has not run here** because the current prerequisites do not allow it.
 
-For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner declaration alignment; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; and requires strict UPM correlation exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
+For the promotion gate, `scripts/characterize-go-symbol-runtime.ps1` (or the `.sh` equivalent) is stricter than a skipped unittest: unavailable prerequisites return exit `2` with `status = blocked`. When runnable it snapshots the project, generated proxy/DB, isolated module cache, and isolated build cache after fixture preparation; records source-observation and govulncheck deltas separately; checks real scanner declaration alignment; requires exactly one expected synthetic `Danger` symbol finding; requires that positioned vulnerable frame to correspond to the observed dependency package/syntax file; requires its numeric byte position to agree with the current matched syntax-file bytes; and requires strict UPM correlation exactly once. It fails on project/proxy/DB mutation. Effects outside those observed roots remain `not-observed`, so a successful run still does not prove arbitrary machine-wide non-mutation.
 
 ## Persistence/freshness boundary
 
@@ -243,6 +263,8 @@ Focused reconstructed/local evidence:
 - deterministic vulnerability-DB fixture: **7/7**;
 - fully local versioned runtime fixture: **5/5**, including real Go file-proxy -> offline-cache resolution;
 - positioned finding-frame/source correspondence: **11/11**;
+- govulncheck Position protocol validation: **9/9**;
+- current-source numeric byte-position consistency: **28/28**;
 - deterministic side-effect snapshot/delta helpers: **4/4**;
 - public registry remains the same eight providers.
 
@@ -262,7 +284,7 @@ Do not add a public symbol route until all remaining items are satisfied atomica
 
 1. run the optional real-runtime regression after govulncheck is already installed and telemetry is already `off`;
 2. run the committed characterization command and review its exact isolated-cache deltas without treating unobserved machine state as clean;
-3. prove scanner declaration alignment, positioned finding-frame/source correspondence, and strict correlation against the real govulncheck stream generated from the deterministic fixture without claiming complete source-selection equivalence;
+3. prove scanner declaration alignment, positioned finding-frame/source correspondence, current-source numeric byte-position consistency, and strict correlation against the real govulncheck stream generated from the deterministic fixture without claiming complete source-selection equivalence or call-graph freshness;
 4. define a conservative source/build-state fingerprint and separate symbol persistence/freshness semantics;
 5. keep ordinary status free of hidden symbol analysis.
 
