@@ -4,11 +4,18 @@ This is **pre-public design evidence** for the Go vulnerable-symbol promotion ga
 
 ## Why this exists
 
-The candidate source observation and govulncheck executor intentionally inherit most of the calling process environment. Go can also read per-user defaults written by `go env -w` from the Go environment configuration file. In particular, persisted `GOFLAGS` can change build tags and therefore package/source selection even when the operating-system `GOFLAGS` variable is empty.
+The candidate source observation and govulncheck executor inherit most of the calling process environment. Go can also read per-user defaults written by `go env -w` from the Go environment configuration file. In particular, persisted `GOFLAGS` can change build tags and therefore package/source selection even when the operating-system `GOFLAGS` variable is empty.
 
-Go documents `GOENV=off` as disabling use of the default Go environment configuration file. A normalized `GOENV=off` therefore has a useful property for the promotion gate: persisted `go env -w` state is excluded, while an explicit process-level `GOFLAGS` value remains visible and can still be rejected by the existing fail-closed effective-`GOFLAGS` guard.
+Go documents `GOENV=off` as disabling use of the default Go environment configuration file. UPM now sets `GOENV=off` in **both** pre-public plans, so persisted `go env -w` state is excluded from the candidate observation and scanner subprocess environments.
 
-This characterization does **not** yet change the scanner or observation plans. It proves the Go-command behavior needed before that normalization is wired into both paths atomically.
+Process-level `GOFLAGS` is handled separately rather than erased. Each plan captures the process value at plan-construction time, defaulting an absent value to the explicit empty string. Planned build-selection alignment requires the two captured values to agree and requires the value to be empty. This means:
+
+- a non-empty user `GOFLAGS` remains fail-closed;
+- a change between observation-plan and scanner-plan construction is visible as plan drift;
+- a later process-environment mutation cannot override the already-authorized plan value at execution time;
+- the Go-native observation still checks the effective `GOFLAGS` reported by `go env -json` before a real scanner gate may continue.
+
+This closes the persisted-configuration and process-`GOFLAGS` plan/TOCTOU gaps. It does **not** prove complete govulncheck source/build equivalence.
 
 ## Characterization
 
@@ -39,20 +46,36 @@ The command never installs Go, never changes telemetry, never writes the user's 
 
 Unavailable or too-old Go returns `status = blocked` / exit 2. A behavioral mismatch returns `status = failed` / exit 1. Blocked is not a pass.
 
-## Interpretation boundary
+## Implemented plan contract
 
-A successful result supports this **candidate normalization direction**:
+Both pre-public plans now carry:
 
 ```text
+GOPROXY = off
+GOWORK = off
+GOSUMDB = off
+GOTOOLCHAIN = local
 GOENV = off
+GOFLAGS = captured process value, required empty for planned alignment
 ```
 
-for both the Go-native source observation and real govulncheck subprocess environment. It does not by itself prove the govulncheck path uses identical source/build inputs, because the real scanner must still be executed and compared after the same normalization is wired into both plans.
+`GOFLAGS` is included in the exact plan authorization identity because that identity already binds the complete sorted plan environment. The scanner executor therefore cannot silently run a plan whose captured GOFLAGS differs from the preflight-authorized plan.
 
-Even after this characterization succeeds:
+The local Go 1.23.2 characterization also confirmed that `GOENV=off` does not mask `GOTELEMETRY`; the existing preflight still requires telemetry to already be exactly `off` and never changes it.
+
+## Interpretation boundary
+
+The implemented normalization establishes a narrower plan/executor property only:
 
 ```text
-ambient_GOFLAGS_equivalence = not-established
+persisted_go_env_configuration = disabled
+process_GOFLAGS = captured-and-fail-closed
+planned_GOFLAGS_alignment = exact-empty-required
+```
+
+It still does not establish:
+
+```text
 source_selection_equivalence = not-established
 build_configuration_equivalence = not-established
 freshness = not-established
@@ -61,4 +84,4 @@ public = false
 persisted = false
 ```
 
-The next code change should add `GOENV=off` to **both** pre-public plan environments together, retain the effective-`GOFLAGS` blocker for explicit process flags, and rerun the real govulncheck alignment/side-effect gate where prerequisites already exist and telemetry is already exactly `off`.
+The next promotion work remains a real govulncheck alignment/side-effect run where `go` and `govulncheck` already exist and telemetry is already exactly `off`, followed by conservative treatment of any other build-environment inputs shown to affect scanner loading. The GOENV/GOFLAGS controls must not be treated as a substitute for that runtime evidence.
