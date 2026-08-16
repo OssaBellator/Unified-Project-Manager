@@ -102,6 +102,30 @@ class GoSymbolBuildSelectionTests(unittest.TestCase):
             self.assertFalse(result.matches)
             self.assertEqual(result.differences, ("package patterns differ",))
 
+    def test_offline_toolchain_environment_must_match_and_remain_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            scanner, observation = self._plans(Path(temporary))
+
+            mismatched = replace(
+                observation,
+                environment={**observation.environment, "GOPROXY": "https://proxy.invalid"},
+            )
+            result = compare_go_symbol_build_selection(scanner, mismatched)
+            self.assertFalse(result.matches)
+            self.assertIn("GOPROXY environment differs", result.differences)
+
+            unsafe_scanner = replace(
+                scanner,
+                environment={**scanner.environment, "GOPROXY": "https://proxy.invalid"},
+            )
+            unsafe_observation = replace(
+                observation,
+                environment={**observation.environment, "GOPROXY": "https://proxy.invalid"},
+            )
+            unsafe = compare_go_symbol_build_selection(unsafe_scanner, unsafe_observation)
+            self.assertFalse(unsafe.matches)
+            self.assertIn("GOPROXY environment is not normalized", unsafe.differences)
+
     def test_govulncheck_selection_requires_source_symbol_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             scanner, _observation = self._plans(Path(temporary))

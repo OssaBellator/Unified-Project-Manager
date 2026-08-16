@@ -11,6 +11,14 @@ class GoSymbolBuildSelectionError(ValueError):
     """Raised when planned source-analysis package selection cannot be interpreted safely."""
 
 
+EXPECTED_BUILD_SELECTION_ENVIRONMENT = (
+    ("GOPROXY", "off"),
+    ("GOWORK", "off"),
+    ("GOSUMDB", "off"),
+    ("GOTOOLCHAIN", "local"),
+)
+
+
 @dataclass(frozen=True)
 class GoSymbolBuildSelection:
     patterns: tuple[str, ...]
@@ -41,9 +49,9 @@ class GoSymbolBuildSelectionAlignment:
             "freshness": "not-established",
             "govulncheck_runtime_equivalence": "not-established",
             "interpretation": (
-                "planned package-pattern/build-tag/test-selection agreement only; "
-                "a match does not prove identical go/packages loading, selected syntax, call graph, "
-                "source freshness, runtime behavior, or exploitability"
+                "planned package-pattern/build-tag/test-selection plus normalized offline/toolchain "
+                "environment-overlay agreement only; a match does not prove identical go/packages "
+                "loading, selected syntax, call graph, source freshness, runtime behavior, or exploitability"
             ),
         }
 
@@ -168,12 +176,14 @@ def compare_go_symbol_build_selection(
     govulncheck_plan: GovulncheckSymbolPlan,
     source_observation_plan: GoSymbolSourceObservationPlan,
 ) -> GoSymbolBuildSelectionAlignment:
-    """Compare the package-selection knobs planned for scanner and observation.
+    """Compare planned package-selection and normalized environment knobs.
 
     Current govulncheck source loading uses package patterns, optional build tags,
     and optional test inclusion to configure go/packages. UPM keeps these knobs
-    aligned before treating the Go-native observation as candidate scanner input
-    evidence. This is plan-level agreement only, not runtime equivalence.
+    aligned and also requires the two plans to preserve the same expected
+    offline/single-toolchain environment overlay before treating the Go-native
+    observation as candidate scanner input evidence. This remains plan-level
+    agreement only, not runtime equivalence.
 
     Test-enabled selection deliberately fails closed even if both command lines
     request tests. packages.Config{Tests:true} and `go list -test` expand package
@@ -192,4 +202,13 @@ def compare_go_symbol_build_selection(
         differences.append("test inclusion differs")
     elif scanner.tests:
         differences.append("test-enabled selection equivalence is not established")
+
+    for key, expected in EXPECTED_BUILD_SELECTION_ENVIRONMENT:
+        scanner_value = govulncheck_plan.environment.get(key)
+        observation_value = source_observation_plan.environment.get(key)
+        if scanner_value != observation_value:
+            differences.append(f"{key} environment differs")
+        elif scanner_value != expected:
+            differences.append(f"{key} environment is not normalized")
+
     return GoSymbolBuildSelectionAlignment(scanner, observation, tuple(differences))
