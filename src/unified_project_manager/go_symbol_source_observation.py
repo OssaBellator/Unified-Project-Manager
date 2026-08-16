@@ -263,6 +263,15 @@ def parse_go_symbol_build_environment(text: str) -> GoSymbolBuildEnvironment:
         raise GoSymbolSourceObservationError(f"Could not parse `go env -json`: {exc}") from exc
     if not isinstance(value, dict):
         raise GoSymbolSourceObservationError("`go env -json` did not return an object")
+    invalid = [
+        key
+        for key in BUILD_ENV_KEYS
+        if key in value and not isinstance(value.get(key), str)
+    ]
+    if invalid:
+        raise GoSymbolSourceObservationError(
+            "`go env -json` contains non-string build inputs: " + ", ".join(invalid)
+        )
     required = ("GOOS", "GOARCH", "GOVERSION")
     missing = [key for key in required if not isinstance(value.get(key), str) or not value.get(key)]
     if missing:
@@ -328,6 +337,16 @@ def _string_list(value: object, *, field: str, package: str) -> tuple[str, ...]:
     return tuple(sorted(set(value)))
 
 
+def _optional_bool(value: object, *, field: str, package: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise GoSymbolSourceObservationError(
+            f"Go package {package!r} field {field} is not a boolean"
+        )
+    return value
+
+
 def _module_input(value: object, package: str) -> GoSymbolModuleInput | None:
     if value is None:
         return None
@@ -336,7 +355,12 @@ def _module_input(value: object, package: str) -> GoSymbolModuleInput | None:
     path = value.get("Path")
     if not isinstance(path, str) or not path:
         raise GoSymbolSourceObservationError(f"Go package {package!r} Module is missing Path")
-    version = value.get("Version") if isinstance(value.get("Version"), str) and value.get("Version") else None
+    raw_version = value.get("Version")
+    if raw_version is not None and (not isinstance(raw_version, str) or not raw_version):
+        raise GoSymbolSourceObservationError(
+            f"Go package {package!r} Module.Version is not a non-empty string"
+        )
+    version = raw_version
     effective_path = path
     effective_version = version
     replacement = value.get("Replace")
@@ -348,16 +372,19 @@ def _module_input(value: object, package: str) -> GoSymbolModuleInput | None:
             raise GoSymbolSourceObservationError(
                 f"Go package {package!r} replacement is missing Path identity"
             )
+        replacement_version = replacement.get("Version")
+        if replacement_version is not None and (
+            not isinstance(replacement_version, str) or not replacement_version
+        ):
+            raise GoSymbolSourceObservationError(
+                f"Go package {package!r} Module.Replace.Version is not a non-empty string"
+            )
         effective_path = replacement_path
-        effective_version = (
-            replacement.get("Version")
-            if isinstance(replacement.get("Version"), str) and replacement.get("Version")
-            else None
-        )
+        effective_version = replacement_version
     return GoSymbolModuleInput(
         path=path,
         version=version,
-        main=bool(value.get("Main")),
+        main=_optional_bool(value.get("Main"), field="Module.Main", package=package),
         effective_path=effective_path,
         effective_version=effective_version,
     )
@@ -375,12 +402,16 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
                 f"`go list -json` source observation contains duplicate ImportPath {import_path!r}"
             )
         seen_import_paths.add(import_path)
-        if record.get("Incomplete"):
+        if _optional_bool(record.get("Incomplete"), field="Incomplete", package=import_path):
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} is incomplete")
         if record.get("Error") is not None:
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} contains an Error record")
         deps_errors = record.get("DepsErrors")
-        if isinstance(deps_errors, list) and deps_errors:
+        if deps_errors is not None and not isinstance(deps_errors, list):
+            raise GoSymbolSourceObservationError(
+                f"Go package {import_path!r} field DepsErrors is not an array"
+            )
+        if deps_errors:
             raise GoSymbolSourceObservationError(f"Go package {import_path!r} contains dependency errors")
         directory = record.get("Dir")
         if not isinstance(directory, str) or not directory:
@@ -404,8 +435,8 @@ def parse_go_symbol_package_inputs(text: str) -> tuple[GoSymbolPackageInput, ...
         packages.append(GoSymbolPackageInput(
             import_path=import_path,
             name=record.get("Name") if isinstance(record.get("Name"), str) else None,
-            standard=bool(record.get("Standard")),
-            dep_only=bool(record.get("DepOnly")),
+            standard=_optional_bool(record.get("Standard"), field="Standard", package=import_path),
+            dep_only=_optional_bool(record.get("DepOnly"), field="DepOnly", package=import_path),
             directory=str(Path(directory).expanduser().resolve()),
             module=_module_input(record.get("Module"), import_path),
             compiled_go_files=compiled_go_files,
