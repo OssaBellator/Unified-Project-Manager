@@ -1,3 +1,4 @@
 """Unified Project Manager."""
 
-__version__ = "0.1.0"
+# Public provider release identity; keep in sync with pyproject.toml.
+__version__ = "0.2.0"

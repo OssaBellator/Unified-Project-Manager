@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import tempfile
+import tomllib
 import unittest
 import urllib.request
 from contextlib import redirect_stdout
@@ -29,6 +30,11 @@ from unified_project_manager.root_entrypoint import main as root_main
 
 
 class PackageContractTests(unittest.TestCase):
+    def test_provider_version_matches_package_release_metadata(self) -> None:
+        project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(PROVIDER_VERSION, __version__)
+        self.assertEqual(PROVIDER_VERSION, project["project"]["version"])
+
     def _node(self, root: Path, manager: str, lockfile: str, *, version: str = "10.0.0") -> None:
         (root / "package.json").write_text(
             json.dumps({"name": "fixture", "packageManager": f"{manager}@{version}"}),
