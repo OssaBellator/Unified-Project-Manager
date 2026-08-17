@@ -4,8 +4,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from .models import ProjectGraph
+from .models import Component, ProjectGraph
 from .node_workspace import NodeWorkspaceError, inspect_node_workspace
+from .package_planner import OperationError, yarn_sync_flag
 
 WorkspaceOperation = Literal["install", "sync"]
 
@@ -31,11 +32,16 @@ class WorkspaceOperationPlan:
         return data
 
 
-def _argv(manager: str, operation: WorkspaceOperation) -> tuple[str, ...]:
+def _argv(manager: str, operation: WorkspaceOperation, component: Component) -> tuple[str, ...]:
     if manager == "npm":
         return ("npm", "install") if operation == "install" else ("npm", "ci")
     if manager == "yarn":
-        return ("yarn", "install") if operation == "install" else ("yarn", "install", "--immutable")
+        if operation == "install":
+            return ("yarn", "install")
+        try:
+            return ("yarn", "install", yarn_sync_flag(component))
+        except OperationError as exc:
+            raise WorkspaceOperationError(str(exc)) from exc
     if manager == "bun":
         return ("bun", "install") if operation == "install" else ("bun", "install", "--frozen-lockfile")
     raise WorkspaceOperationError(
@@ -108,7 +114,7 @@ def plan_node_workspace_operations(
             operation=operation,
             manager=manager,
             cwd=root_path,
-            argv=_argv(manager, operation),
+            argv=_argv(manager, operation, root_component),
             workspace_root_component=root_key,
             member_components=tuple(sorted(member_keys)),
         ))

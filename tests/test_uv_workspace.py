@@ -105,6 +105,22 @@ class UvWorkspaceTests(unittest.TestCase):
             assert workspace is not None
             self.assertEqual(workspace.unmatched_patterns, ("missing/*",))
 
+    def test_member_and_exclude_patterns_refuse_external_paths_before_globbing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "root"
+            outside = base / "outside"
+            root.mkdir(); outside.mkdir()
+            (root / "uv.lock").write_text('version=1\n', encoding="utf-8")
+            self._project(outside, "outside")
+            for field, pattern in (("members", "../outside"), ("exclude", outside.as_posix()), ("members", r"..\outside")):
+                with self.subTest(field=field, pattern=pattern):
+                    self._project(root, "root", f'[tool.uv.workspace]\n{field}=[{pattern!r}]\n'.replace("'", '"'))
+                    graph = discover(root)
+                    root_component = next(component for component in graph.components if component.path == root)
+                    with self.assertRaisesRegex(UvWorkspaceError, "Unsafe uv workspace"):
+                        inspect_uv_workspace(graph, root_component)
+
 
 if __name__ == "__main__":
     unittest.main()

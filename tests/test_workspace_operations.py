@@ -60,6 +60,34 @@ class WorkspaceOperationTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkspaceOperationError, "not workspace manager"):
                 plan_node_workspace_operations(discover(root), "install")
 
+    def test_yarn_workspace_sync_uses_declared_major_semantics(self) -> None:
+        for declared, flag in (("yarn@1.22.22", "--frozen-lockfile"), ("yarn@4.9.2", "--immutable")):
+            with self.subTest(declared=declared), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "package.json").write_text(json.dumps({
+                    "name": "root",
+                    "private": True,
+                    "packageManager": declared,
+                    "workspaces": ["packages/*"],
+                }), encoding="utf-8")
+                (root / "yarn.lock").write_text("", encoding="utf-8")
+                member = root / "packages" / "app"
+                member.mkdir(parents=True)
+                (member / "package.json").write_text('{"name":"app"}', encoding="utf-8")
+                plans, consumed = plan_node_workspace_operations(discover(root), "sync")
+                self.assertEqual(plans[0].argv, ("yarn", "install", flag))
+                self.assertEqual(consumed, {".:node", "packages/app:node"})
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{"name":"root","private":true,"workspaces":["packages/*"]}', encoding="utf-8")
+            (root / "yarn.lock").write_text("", encoding="utf-8")
+            member = root / "packages" / "app"
+            member.mkdir(parents=True)
+            (member / "package.json").write_text('{"name":"app"}', encoding="utf-8")
+            with self.assertRaisesRegex(WorkspaceOperationError, "declared yarn major version"):
+                plan_node_workspace_operations(discover(root), "sync")
+
     def test_pnpm_package_json_workspaces_are_not_assumed_authoritative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

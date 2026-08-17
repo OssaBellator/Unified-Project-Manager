@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from support_platform_paths import platform_absolute_fixture
 from unified_project_manager.go_symbol_source_observation import (
     GoSymbolSourceObservationError,
     build_go_symbol_source_observation_plan,
@@ -94,13 +95,13 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
     def test_package_parser_preserves_compiled_selected_ignored_module_and_import_inputs(self) -> None:
         stream = "\n".join([
             json.dumps({
-                "Dir": "/tmp/dep/pkg",
+                "Dir": platform_absolute_fixture("dep", "pkg"),
                 "ImportPath": "example.com/dep/pkg",
                 "Name": "pkg",
                 "DepOnly": True,
                 "Module": {"Path": "example.com/dep", "Version": "v1.2.3"},
                 "GoFiles": ["dep_linux.go", "dep.go"],
-                "CompiledGoFiles": ["dep.go", "dep_linux.go", "/tmp/go-build/cgo_generated.go"],
+                "CompiledGoFiles": ["dep.go", "dep_linux.go", platform_absolute_fixture("go-build", "cgo_generated.go")],
                 "CgoFiles": ["cgo.go"],
                 "HFiles": ["dep.h"],
                 "IgnoredGoFiles": ["dep_windows.go"],
@@ -108,7 +109,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
                 "Imports": ["unsafe", "fmt", "fmt"],
             }),
             json.dumps({
-                "Dir": "/tmp/app",
+                "Dir": platform_absolute_fixture("app"),
                 "ImportPath": "example.com/app",
                 "Name": "main",
                 "Module": {"Path": "example.com/app", "Main": True},
@@ -138,7 +139,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
         )
         self.assertEqual(
             dep.syntax_go_files,
-            ("/tmp/go-build/cgo_generated.go", "dep.go", "dep_linux.go"),
+            (platform_absolute_fixture("go-build", "cgo_generated.go"), "dep.go", "dep_linux.go"),
         )
         data = dep.to_dict()
         self.assertEqual(data["compiled_go_files"], list(dep.syntax_go_files))
@@ -148,7 +149,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
 
     def test_compiled_go_files_may_be_absent_for_pseudo_packages(self) -> None:
         package = parse_go_symbol_package_inputs(json.dumps({
-            "Dir": "/usr/local/go/src/unsafe",
+            "Dir": platform_absolute_fixture("goroot", "src", "unsafe"),
             "ImportPath": "unsafe",
             "Name": "unsafe",
             "Standard": True,
@@ -160,7 +161,7 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
 
     def test_package_parser_retains_replacement_identity_and_rejects_incomplete_records(self) -> None:
         replacement = json.dumps({
-            "Dir": "/tmp/fork/pkg",
+            "Dir": platform_absolute_fixture("fork", "pkg"),
             "ImportPath": "example.com/original/pkg",
             "Module": {
                 "Path": "example.com/original",
@@ -176,9 +177,9 @@ class GoSymbolSourceObservationTests(unittest.TestCase):
         self.assertEqual(package.module.effective_version, "v1.2.3-fixed")
 
         for record, reason in (
-            ({"ImportPath": "x", "Dir": "/tmp/x", "Incomplete": True}, "incomplete"),
-            ({"ImportPath": "x", "Dir": "/tmp/x", "Error": {"Err": "bad"}}, "Error record"),
-            ({"ImportPath": "x", "Dir": "/tmp/x", "DepsErrors": [{"Err": "bad"}]}, "dependency errors"),
+            ({"ImportPath": "x", "Dir": platform_absolute_fixture("x"), "Incomplete": True}, "incomplete"),
+            ({"ImportPath": "x", "Dir": platform_absolute_fixture("x"), "Error": {"Err": "bad"}}, "Error record"),
+            ({"ImportPath": "x", "Dir": platform_absolute_fixture("x"), "DepsErrors": [{"Err": "bad"}]}, "dependency errors"),
         ):
             with self.subTest(reason=reason):
                 with self.assertRaisesRegex(GoSymbolSourceObservationError, reason):
