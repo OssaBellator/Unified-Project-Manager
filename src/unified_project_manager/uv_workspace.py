@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Component, ProjectGraph
+from .workspace_path_safety import WorkspacePathSafetyError, safe_workspace_candidate, validate_workspace_pattern
 
 
 class UvWorkspaceError(ValueError):
@@ -62,20 +63,25 @@ def _patterns(table: dict[str, Any], key: str) -> tuple[str, ...]:
         return ()
     if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise UvWorkspaceError(f"tool.uv.workspace.{key} must be an array of non-empty strings.")
-    return tuple(value)
+    try:
+        return tuple(validate_workspace_pattern(item) for item in value)
+    except WorkspacePathSafetyError as exc:
+        raise UvWorkspaceError(f"Unsafe uv workspace {key} pattern: {exc}") from exc
 
 
 def _expand(root: Path, pattern: str, candidates: set[Path]) -> set[Path]:
-    try:
-        matches = {path.resolve() for path in root.glob(pattern)}
-    except (OSError, ValueError):
-        return set()
     result: set[Path] = set()
-    for match in matches:
-        directory = match.parent if match.name == "pyproject.toml" else match
-        directory = directory.resolve()
-        if directory in candidates and (directory / "pyproject.toml").is_file():
-            result.add(directory)
+    try:
+        matches = root.glob(pattern)
+        for match in matches:
+            directory = match.parent if match.name == "pyproject.toml" else match
+            directory = safe_workspace_candidate(root, directory)
+            if directory in candidates and (directory / "pyproject.toml").is_file():
+                result.add(directory)
+    except WorkspacePathSafetyError as exc:
+        raise UvWorkspaceError(f"Unsafe uv workspace pattern {pattern!r}: {exc}") from exc
+    except (OSError, ValueError) as exc:
+        raise UvWorkspaceError(f"Could not expand uv workspace pattern {pattern!r} safely: {exc}") from exc
     return result
 
 

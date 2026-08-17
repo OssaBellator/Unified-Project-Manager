@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from support_platform_paths import platform_absolute_fixture
 from unified_project_manager.go_symbol_source_observation import (
     GoSymbolSourceObservationError,
     build_go_symbol_source_observation_plan,
@@ -21,7 +22,7 @@ class GoSymbolSourceObservationFailClosedTests(unittest.TestCase):
 
     def test_dependency_only_stream_is_refused_as_rootless(self) -> None:
         payload = json.dumps({
-            "Dir": "/tmp/dep",
+            "Dir": platform_absolute_fixture("dep"),
             "ImportPath": "example.com/dep",
             "DepOnly": True,
             "Module": {"Path": "example.com/dep", "Version": "v1.2.3"},
@@ -33,12 +34,12 @@ class GoSymbolSourceObservationFailClosedTests(unittest.TestCase):
     def test_duplicate_import_path_is_refused(self) -> None:
         payload = "\n".join([
             json.dumps({
-                "Dir": "/tmp/app-a",
+                "Dir": platform_absolute_fixture("app-a"),
                 "ImportPath": "example.com/app",
                 "GoFiles": ["main.go"],
             }),
             json.dumps({
-                "Dir": "/tmp/app-b",
+                "Dir": platform_absolute_fixture("app-b"),
                 "ImportPath": "example.com/app",
                 "GoFiles": ["main.go"],
             }),

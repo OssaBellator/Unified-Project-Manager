@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from support_platform_paths import platform_absolute_fixture
 from unified_project_manager.go_symbol_source_observation import (
     GoSymbolSourceObservationError,
     parse_go_symbol_build_environment,
@@ -24,7 +25,7 @@ class GoSymbolSourceObservationProtocolStrictTests(unittest.TestCase):
         for field in ("Incomplete", "Standard", "DepOnly"):
             with self.subTest(field=field):
                 record = {
-                    "Dir": "/tmp/app",
+                    "Dir": platform_absolute_fixture("app"),
                     "ImportPath": "example.com/app",
                     "GoFiles": ["main.go"],
                     field: 0,
@@ -33,7 +34,7 @@ class GoSymbolSourceObservationProtocolStrictTests(unittest.TestCase):
                     parse_go_symbol_package_inputs(json.dumps(record))
 
         module = {
-            "Dir": "/tmp/app",
+            "Dir": platform_absolute_fixture("app"),
             "ImportPath": "example.com/app",
             "GoFiles": ["main.go"],
             "Module": {"Path": "example.com/app", "Main": "false"},
@@ -50,7 +51,7 @@ class GoSymbolSourceObservationProtocolStrictTests(unittest.TestCase):
         ):
             with self.subTest(module=module):
                 record = {
-                    "Dir": "/tmp/app",
+                    "Dir": platform_absolute_fixture("app"),
                     "ImportPath": "example.com/app",
                     "GoFiles": ["main.go"],
                     "Module": module,
@@ -62,7 +63,7 @@ class GoSymbolSourceObservationProtocolStrictTests(unittest.TestCase):
         for malformed in ({}, "", 0, False):
             with self.subTest(malformed=malformed):
                 record = {
-                    "Dir": "/tmp/app",
+                    "Dir": platform_absolute_fixture("app"),
                     "ImportPath": "example.com/app",
                     "GoFiles": ["main.go"],
                     "DepsErrors": malformed,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Component, ProjectGraph
+from .workspace_path_safety import WorkspacePathSafetyError, safe_workspace_candidate, validate_workspace_pattern
 
 
 class CargoWorkspaceError(ValueError):
@@ -49,20 +50,26 @@ def _patterns(table: dict[str, Any], field: str) -> tuple[str, ...]:
     values = table.get(field)
     if not isinstance(values, list):
         return ()
-    return tuple(value for value in values if isinstance(value, str) and value)
+    patterns = tuple(value for value in values if isinstance(value, str) and value)
+    try:
+        return tuple(validate_workspace_pattern(pattern) for pattern in patterns)
+    except WorkspacePathSafetyError as exc:
+        raise CargoWorkspaceError(f"Unsafe Cargo workspace {field} pattern: {exc}") from exc
 
 
 def _expand_pattern(root: Path, pattern: str, candidates: set[Path]) -> set[Path]:
-    try:
-        matches = {path.resolve() for path in root.glob(pattern)}
-    except (OSError, ValueError):
-        return set()
     result: set[Path] = set()
-    for match in matches:
-        directory = match.parent if match.name == "Cargo.toml" else match
-        directory = directory.resolve()
-        if directory in candidates and (directory / "Cargo.toml").is_file():
-            result.add(directory)
+    try:
+        matches = root.glob(pattern)
+        for match in matches:
+            directory = match.parent if match.name == "Cargo.toml" else match
+            directory = safe_workspace_candidate(root, directory)
+            if directory in candidates and (directory / "Cargo.toml").is_file():
+                result.add(directory)
+    except WorkspacePathSafetyError as exc:
+        raise CargoWorkspaceError(f"Unsafe Cargo workspace pattern {pattern!r}: {exc}") from exc
+    except (OSError, ValueError) as exc:
+        raise CargoWorkspaceError(f"Could not expand Cargo workspace pattern {pattern!r} safely: {exc}") from exc
     return result
 
 

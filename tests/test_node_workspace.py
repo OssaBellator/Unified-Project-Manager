@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,36 @@ class NodeWorkspaceTests(unittest.TestCase):
             root = Path(temporary)
             (root / "package.json").write_text('{"workspaces":"packages/*"}', encoding="utf-8")
             with self.assertRaisesRegex(NodeWorkspaceError, "must be an array"):
+                inspect_node_workspace(root)
+
+    def test_workspace_patterns_cannot_escape_before_member_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "root"
+            outside = base / "outside"
+            root.mkdir(); outside.mkdir()
+            (outside / "package.json").write_text("not-json", encoding="utf-8")
+            for pattern in ("../outside", outside.as_posix(), r"..\outside"):
+                with self.subTest(pattern=pattern):
+                    (root / "package.json").write_text(json.dumps({"workspaces": [pattern]}), encoding="utf-8")
+                    with self.assertRaisesRegex(NodeWorkspaceError, "Unsafe package.json workspace pattern"):
+                        inspect_node_workspace(root)
+
+    def test_workspace_match_refuses_symlink_or_reparse_traversal_before_member_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "root"
+            outside = base / "outside"
+            packages = root / "packages"
+            packages.mkdir(parents=True); outside.mkdir()
+            (root / "package.json").write_text('{"workspaces":["packages/*"]}', encoding="utf-8")
+            (outside / "package.json").write_text("not-json", encoding="utf-8")
+            link = packages / "linked"
+            try:
+                os.symlink(outside, link, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlink/reparse creation unavailable: {exc}")
+            with self.assertRaisesRegex(NodeWorkspaceError, "symlink or reparse point"):
                 inspect_node_workspace(root)
 
 

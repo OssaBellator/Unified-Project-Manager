@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .workspace_path_safety import WorkspacePathSafetyError, safe_workspace_candidate, validate_workspace_pattern
+
 
 class NodeWorkspaceError(ValueError):
     """Raised when a package.json workspace declaration is invalid."""
@@ -80,7 +82,11 @@ def _workspace_patterns(data: dict[str, Any]) -> tuple[str, ...]:
         raise NodeWorkspaceError("package.json workspaces must be an array or an object with a packages array.")
     if not all(isinstance(item, str) and item.strip() for item in patterns):
         raise NodeWorkspaceError("package.json workspace patterns must be non-empty strings.")
-    return tuple(dict.fromkeys(item.strip() for item in patterns))
+    normalized = tuple(dict.fromkeys(item.strip() for item in patterns))
+    try:
+        return tuple(validate_workspace_pattern(pattern) for pattern in normalized)
+    except WorkspacePathSafetyError as exc:
+        raise NodeWorkspaceError(f"Unsafe package.json workspace pattern: {exc}") from exc
 
 
 def _member(directory: Path) -> NodeWorkspaceMember:
@@ -121,12 +127,16 @@ def inspect_node_workspace(root: str | Path) -> NodeWorkspace | None:
     for pattern in patterns:
         matched = False
         for candidate in root_path.glob(pattern):
-            if not candidate.is_dir() or candidate.is_symlink():
+            try:
+                candidate = safe_workspace_candidate(root_path, candidate)
+            except WorkspacePathSafetyError as exc:
+                raise NodeWorkspaceError(f"Unsafe package.json workspace match for {pattern!r}: {exc}") from exc
+            if not candidate.is_dir():
                 continue
             if candidate == root_path or "node_modules" in candidate.parts:
                 continue
             if (candidate / "package.json").is_file():
-                member_paths.add(candidate.resolve())
+                member_paths.add(candidate)
                 matched = True
         if not matched:
             issues.append(NodeWorkspaceIssue(

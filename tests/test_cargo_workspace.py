@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from unified_project_manager.cargo_graph import cargo_provider_component_keys, plan_cargo_graphs
-from unified_project_manager.cargo_workspace import cargo_workspace_ownership, inspect_cargo_workspace
+from unified_project_manager.cargo_workspace import CargoWorkspaceError, cargo_workspace_ownership, inspect_cargo_workspace
 from unified_project_manager.discovery import discover
 
 
@@ -99,6 +99,22 @@ class CargoWorkspaceTests(unittest.TestCase):
             model = inspect_cargo_workspace(graph, root_component)
             assert model is not None
             self.assertEqual(model.unmatched_member_patterns, ("missing/*",))
+
+    def test_member_and_exclude_patterns_refuse_external_paths_before_globbing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "root"
+            outside = base / "outside"
+            root.mkdir(); outside.mkdir()
+            (root / "Cargo.lock").write_text("version=4\n", encoding="utf-8")
+            (outside / "Cargo.toml").write_text("not-toml = [", encoding="utf-8")
+            for field, pattern in (("members", "../outside"), ("exclude", outside.as_posix()), ("members", r"..\outside")):
+                with self.subTest(field=field, pattern=pattern):
+                    (root / "Cargo.toml").write_text(f'[workspace]\n{field}=[{pattern!r}]\n'.replace("'", '"'), encoding="utf-8")
+                    graph = discover(root)
+                    root_component = next(component for component in graph.components if component.path == root)
+                    with self.assertRaisesRegex(CargoWorkspaceError, "Unsafe Cargo workspace"):
+                        inspect_cargo_workspace(graph, root_component)
 
 
 if __name__ == "__main__":
