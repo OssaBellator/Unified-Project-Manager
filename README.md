@@ -180,6 +180,18 @@ The chain is **tamper-evident but not externally authenticated**. UPM does not c
 
 UPM refuses mutation when manager/component/workspace ownership is ambiguous rather than choosing a plausible command and hoping it is correct.
 
+### Reusable package-operation planner contract
+
+Consumers that need UPM's native manager selection/argv semantics without giving UPM execution authority can use the versioned, read-only provider contract:
+
+```sh
+upm package-plan sync --root . --component frontend --json
+```
+
+The planner returns provider/contract compatibility metadata beside a Windows-Tester-compatible `schemaVersion: 1` execution payload. Planning is deterministic, networkless, and project-read-only: it never executes managers, installs tools, or writes project state. Ambiguous ownership and any working directory outside the selected project fail closed. Hardened consumers remain responsible for independently revalidating plans and enforcing their own permission, sandbox, network, mutation-journal, and recovery boundaries.
+
+See [`docs/PACKAGE_OPERATION_PROVIDER_CONTRACT.md`](docs/PACKAGE_OPERATION_PROVIDER_CONTRACT.md) for the Python/JSON/CLI API, schema, security responsibilities, and versioning rules.
+
 ## Workspace-aware batch operations
 
 For Node workspaces, `install --all` and `sync --all` avoid double-running every member as an independent project.
