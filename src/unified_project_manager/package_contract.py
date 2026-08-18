@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import re
+import xml.etree.ElementTree as ET
 from typing import Any
 
 from . import __version__ as PROVIDER_VERSION
@@ -13,10 +15,10 @@ from .package_workspace_scope import PackageWorkspaceScope, PackageWorkspaceScop
 
 PROVIDER_NAME = "unified-project-manager.package-operation-planner"
 CONTRACT_NAME = "upm.package-operation-plan"
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "2.0.0"
 REQUEST_SCHEMA_VERSION = 1
-ENVELOPE_SCHEMA_VERSION = 1
-EXECUTION_SCHEMA_VERSION = 1
+ENVELOPE_SCHEMA_VERSION = 2
+EXECUTION_SCHEMA_VERSION = 2
 SUPPORTED_OPERATIONS = ("install", "sync", "add", "remove")
 SUPPORTED_MANAGER_ECOSYSTEMS = {
     "npm": "node",
@@ -29,11 +31,32 @@ SUPPORTED_MANAGER_ECOSYSTEMS = {
     "pip": "python",
     "cargo": "rust",
     "go": "go",
+    "nuget": "dotnet",
 }
 MAX_PACKAGES = 32
 MAX_PACKAGE_LENGTH = 512
 MAX_SELECTOR_LENGTH = 512
 MAX_ERROR_MESSAGE = 512
+_NUGET_PACKAGE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_NUGET_VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$")
+_DOTNET_SOURCE_PROPERTIES = {
+    "RestoreSources",
+    "RestoreAdditionalProjectSources",
+}
+_DOTNET_OUTPUT_PATH_PROPERTIES = {
+    "RestorePackagesPath",
+    "NuGetPackageRoot",
+    "MSBuildProjectExtensionsPath",
+    "BaseIntermediateOutputPath",
+    "IntermediateOutputPath",
+    "RestoreOutputPath",
+    "ProjectAssetsFile",
+}
+_DOTNET_UNSAFE_BUILD_ELEMENTS = {"Target", "UsingTask"}
+_DOTNET_PROJECT_SUFFIXES = {".csproj", ".fsproj", ".vbproj"}
+_DOTNET_BUILD_FILES = ("Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props")
+_MANAGER_EXECUTABLES = {"pip": "python", "nuget": "dotnet"}
+_MANAGER_MINIMUM_VERSIONS = {"nuget": {"dotnet": "10.0.0"}}
 
 
 class PackageContractError(ValueError):
@@ -66,7 +89,7 @@ def contract_metadata() -> dict[str, Any]:
         "compatibility": {
             "requestSchemaVersions": [REQUEST_SCHEMA_VERSION],
             "executionSchemaVersions": [EXECUTION_SCHEMA_VERSION],
-            "executionConstraintKinds": ["environment"],
+            "executionConstraintKinds": ["environment", "filesystem", "network", "prerequisites", "sources"],
             "planningEffects": {
                 "managerExecution": False,
                 "toolInstallation": False,
@@ -89,6 +112,34 @@ class PackageOperationPlan:
     argv: tuple[str, ...]
     workspace_scope: PackageWorkspaceScope
 
+    def execution_constraints_dict(self) -> dict[str, Any]:
+        environment = {"GOWORK": "off"} if self.manager == "go" else {}
+        executable = _MANAGER_EXECUTABLES.get(self.manager, self.manager)
+        return {
+            "environment": environment,
+            "filesystem": {
+                "projectWrites": "workspace-only",
+                "externalProjectWrites": False,
+                "packageCache": "executor-isolated",
+                "ambientProjectConfiguration": "isolated",
+            },
+            "network": {"required": True, "egress": "allowlisted"},
+            "prerequisites": {
+                "executables": [executable],
+                "minimumVersions": dict(_MANAGER_MINIMUM_VERSIONS.get(self.manager, {})),
+                "provisioningAllowed": False,
+            },
+            "sources": {
+                "policy": "consumer-approved-registry-only",
+                "allowCallerOverrides": False,
+                "allowProjectOverrides": False,
+                "allowAmbientOverrides": False,
+                "allowLocalPaths": False,
+                "allowUrls": False,
+                "allowVcs": False,
+            },
+        }
+
     def execution_dict(self) -> dict[str, Any]:
         return {
             "schemaVersion": EXECUTION_SCHEMA_VERSION,
@@ -102,18 +153,14 @@ class PackageOperationPlan:
             "argv": list(self.argv),
             "mutationScope": {"workspace": True, "external": False},
             "networkRequired": True,
+            "executionConstraints": self.execution_constraints_dict(),
         }
-
-    def execution_constraints_dict(self) -> dict[str, Any]:
-        environment = {"GOWORK": "off"} if self.manager == "go" else {}
-        return {"environment": environment}
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **contract_metadata(),
             "ok": True,
             "workspaceScope": self.workspace_scope.to_dict(),
-            "executionConstraints": self.execution_constraints_dict(),
             "execution": self.execution_dict(),
         }
 
@@ -208,14 +255,231 @@ def _validate_pip_requirements(project_root: Path, component_path: Path, manifes
             if source_form:
                 raise PackageContractError(
                     "operation_not_safe",
-                    "pip requirements use an option, include, local path, URL, VCS reference, direct source, or continuation outside the portable v1 scope",
+                    "pip requirements use an option, include, local path, URL, VCS reference, direct source, or continuation outside the portable contract scope",
                 )
+
+
+def _validate_nuget_package_specs(selected: Component, operation: str, packages: tuple[str, ...], dev: bool) -> None:
+    if selected.manager != "nuget":
+        return
+    metadata = selected.metadata if isinstance(selected.metadata, dict) else {}
+    kind = metadata.get("dotnet_kind")
+    if kind == "ambiguous":
+        targets = metadata.get("dotnet_targets")
+        details = {"targets": sorted(str(item) for item in targets)} if isinstance(targets, list) else {}
+        raise PackageContractError(
+            "component_ambiguous",
+            "multiple .NET project or solution targets share the selected directory",
+            details=details,
+        )
+    if dev:
+        raise PackageContractError("dev_unsupported", "NuGet package operations do not have a native development-dependency scope")
+    if operation in {"add", "remove"} and kind != "project":
+        raise PackageContractError("operation_not_safe", "NuGet add/remove operations require a .NET project target, not a solution")
+    if operation in {"add", "remove"} and len(packages) != 1:
+        raise PackageContractError("invalid_packages", f"NuGet {operation} requires exactly one package per operation")
+    if operation == "add":
+        package = packages[0]
+        if "@" not in package:
+            raise PackageContractError("invalid_package", "NuGet add requires an exact package version using PackageId@Version")
+        package_id, version = package.rsplit("@", 1)
+        if not _NUGET_PACKAGE_ID_RE.fullmatch(package_id) or not _NUGET_VERSION_RE.fullmatch(version):
+            raise PackageContractError("invalid_package", "NuGet add requires a portable package id and exact version using PackageId@Version")
+    elif operation == "remove":
+        package = packages[0]
+        if "@" in package or not _NUGET_PACKAGE_ID_RE.fullmatch(package):
+            raise PackageContractError("invalid_package", "NuGet remove requires one unversioned portable package id")
+
+
+def _dotnet_ancestors(project_root: Path, component_path: Path) -> tuple[Path, ...]:
+    root = project_root.resolve()
+    current = component_path.resolve()
+    try:
+        current.relative_to(root)
+    except ValueError as exc:
+        raise PackageContractError("external_read_scope", ".NET component path escapes the selected project root") from exc
+    ancestors: list[Path] = []
+    while True:
+        ancestors.append(current)
+        if current == root:
+            break
+        current = current.parent
+    return tuple(ancestors)
+
+
+def _inspect_dotnet_xml(path: Path) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    try:
+        tree = ET.parse(path)
+    except (OSError, ET.ParseError) as exc:
+        raise PackageContractError("operation_not_safe", f"{path.name} cannot be inspected safely for .NET restore constraints") from exc
+    properties: set[str] = set()
+    imports: set[str] = set()
+    unsafe_elements: set[str] = set()
+    project_references: set[str] = set()
+    for element in tree.getroot().iter():
+        name = element.tag.rsplit("}", 1)[-1]
+        if name in (_DOTNET_SOURCE_PROPERTIES | _DOTNET_OUTPUT_PATH_PROPERTIES) and (element.text or "").strip():
+            properties.add(name)
+        if name == "Import":
+            imported = element.attrib.get("Project")
+            if isinstance(imported, str) and imported.strip():
+                imports.add(imported.strip())
+        if name in _DOTNET_UNSAFE_BUILD_ELEMENTS:
+            unsafe_elements.add(name)
+        if name == "ProjectReference":
+            referenced = element.attrib.get("Include")
+            if isinstance(referenced, str) and referenced.strip():
+                project_references.add(referenced.strip())
+    return (
+        tuple(sorted(properties)),
+        tuple(sorted(imports)),
+        tuple(sorted(unsafe_elements)),
+        tuple(sorted(project_references)),
+    )
+
+
+def _validate_dotnet_reference(project_root: Path, component_path: Path, raw_reference: str) -> Path:
+    reference = raw_reference.strip()
+    normalized = reference.replace("\\", "/")
+    if (
+        not reference
+        or any(character in reference for character in ("\x00", "\r", "\n"))
+        or "://" in reference
+        or "$(" in reference
+        or "%(" in reference
+        or PureWindowsPath(reference).is_absolute()
+        or Path(normalized).is_absolute()
+    ):
+        raise PackageContractError("external_mutation_scope", ".NET project/solution references must be literal workspace-relative project paths")
+    try:
+        resolved = (component_path / Path(normalized)).resolve()
+        resolved.relative_to(project_root.resolve())
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PackageContractError("external_mutation_scope", ".NET project/solution reference escapes the selected project root") from exc
+    if resolved.suffix.lower() not in _DOTNET_PROJECT_SUFFIXES or not resolved.is_file():
+        raise PackageContractError("operation_not_safe", ".NET project/solution reference must resolve to an existing project file inside the selected root")
+    return resolved
+
+
+def _validate_dotnet_directory_configuration(
+    project_root: Path,
+    directory: Path,
+    inspected_files: set[Path],
+) -> None:
+    for ancestor in _dotnet_ancestors(project_root, directory):
+        try:
+            entries = {entry.name.casefold(): entry for entry in ancestor.iterdir() if entry.is_file()}
+        except OSError as exc:
+            raise PackageContractError("discovery_failed", ".NET restore configuration could not be inspected safely") from exc
+        if "nuget.config" in entries:
+            raise PackageContractError(
+                "operation_not_safe",
+                "project-local NuGet.Config is outside the portable consumer-approved source contract",
+            )
+        for filename in _DOTNET_BUILD_FILES:
+            candidate = entries.get(filename.casefold())
+            if candidate is None:
+                continue
+            resolved_candidate = candidate.resolve()
+            if resolved_candidate in inspected_files:
+                continue
+            inspected_files.add(resolved_candidate)
+            properties, imports, unsafe_elements, _references = _inspect_dotnet_xml(resolved_candidate)
+            if imports:
+                raise PackageContractError(
+                    "operation_not_safe",
+                    f"{filename} uses explicit MSBuild imports outside the portable restore contract",
+                    details={"imports": list(imports)},
+                )
+            if unsafe_elements:
+                raise PackageContractError(
+                    "operation_not_safe",
+                    f"{filename} defines executable MSBuild elements outside the portable restore contract",
+                    details={"elements": list(unsafe_elements)},
+                )
+            if properties:
+                raise PackageContractError(
+                    "operation_not_safe",
+                    f"{filename} declares restore source/output properties outside the portable restore contract",
+                    details={"properties": list(properties)},
+                )
+
+
+def _validate_dotnet_project_graph(
+    project_root: Path,
+    project_file: Path,
+    visited_projects: set[Path],
+    inspected_files: set[Path],
+) -> None:
+    resolved_project = project_file.resolve()
+    try:
+        resolved_project.relative_to(project_root.resolve())
+    except ValueError as exc:
+        raise PackageContractError("external_mutation_scope", ".NET project graph escapes the selected project root") from exc
+    if resolved_project.suffix.lower() not in _DOTNET_PROJECT_SUFFIXES or not resolved_project.is_file():
+        raise PackageContractError("operation_not_safe", ".NET project graph contains a missing or unsupported project file")
+    if resolved_project in visited_projects:
+        return
+    visited_projects.add(resolved_project)
+
+    properties, imports, unsafe_elements, references = _inspect_dotnet_xml(resolved_project)
+    if properties:
+        raise PackageContractError(
+            "operation_not_safe",
+            ".NET project declares restore source/output properties outside the portable restore contract",
+            details={"properties": list(properties)},
+        )
+    if imports:
+        raise PackageContractError(
+            "operation_not_safe",
+            ".NET project uses explicit MSBuild imports outside the portable restore contract",
+            details={"imports": list(imports)},
+        )
+    if unsafe_elements:
+        raise PackageContractError(
+            "operation_not_safe",
+            ".NET project defines executable MSBuild elements outside the portable restore contract",
+            details={"elements": list(unsafe_elements)},
+        )
+
+    _validate_dotnet_directory_configuration(project_root, resolved_project.parent, inspected_files)
+    for reference in references:
+        referenced_project = _validate_dotnet_reference(project_root, resolved_project.parent, reference)
+        _validate_dotnet_project_graph(project_root, referenced_project, visited_projects, inspected_files)
+
+
+def _validate_dotnet_sources_and_paths(project_root: Path, selected: Component) -> None:
+    if selected.manager != "nuget":
+        return
+    metadata = selected.metadata if isinstance(selected.metadata, dict) else {}
+    kind = metadata.get("dotnet_kind")
+    target = metadata.get("dotnet_target")
+    if not isinstance(target, str) or not target:
+        raise PackageContractError("operation_not_safe", ".NET restore target is not explicit")
+
+    visited_projects: set[Path] = set()
+    inspected_files: set[Path] = set()
+    _validate_dotnet_directory_configuration(project_root, selected.path, inspected_files)
+    if kind == "project":
+        project_file = _validate_dotnet_reference(project_root, selected.path, target)
+        _validate_dotnet_project_graph(project_root, project_file, visited_projects, inspected_files)
+        return
+    if kind != "solution":
+        raise PackageContractError("operation_not_safe", ".NET restore target kind is not supported by the portable contract")
+
+    references = metadata.get("dotnet_project_references")
+    if not isinstance(references, list):
+        raise PackageContractError("operation_not_safe", ".NET solution membership could not be inspected safely")
+    for reference in sorted(str(item) for item in references):
+        project_file = _validate_dotnet_reference(project_root, selected.path, reference)
+        _validate_dotnet_project_graph(project_root, project_file, visited_projects, inspected_files)
 
 
 def _validate_preplan_contract_semantics(
     selected: Component,
     operation: str,
     packages: tuple[str, ...],
+    dev: bool,
 ) -> None:
     manager = selected.manager
     metadata = selected.metadata
@@ -241,13 +505,16 @@ def _validate_preplan_contract_semantics(
     if manager == "pip" and operation != "install":
         raise PackageContractError(
             "operation_not_safe",
-            "pip v1 supports only requirements-file install planning; sync/add/remove require a project-aware manager",
+            "pip supports only requirements-file install planning in this portable contract; sync/add/remove require a project-aware manager",
         )
+    _validate_nuget_package_specs(selected, operation, packages, dev)
 
 
 def _validate_postplan_contract_semantics(project_root: Path, selected: Component, operation: str) -> None:
     if selected.manager == "pip" and operation == "install":
         _validate_pip_requirements(project_root, selected.path, selected.manifests)
+    if selected.manager == "nuget":
+        _validate_dotnet_sources_and_paths(project_root, selected)
 
 
 def _resolve_root(root: str | Path) -> Path:
@@ -332,7 +599,7 @@ def plan_package_operation(
         raise _planning_error(exc, graph, selector, operation) from exc
 
     _validate_portable_package_specs(selected.ecosystem, package_tuple)
-    _validate_preplan_contract_semantics(selected, operation, package_tuple)
+    _validate_preplan_contract_semantics(selected, operation, package_tuple, dev)
     try:
         workspace_scope = resolve_package_workspace_scope(graph, selected)
     except PackageWorkspaceScopeError as exc:
@@ -345,6 +612,7 @@ def plan_package_operation(
             selector=selected.key(graph.root),
             packages=package_tuple,
             dev=dev,
+            provider_extensions=True,
         )
     except OperationError as exc:
         raise _planning_error(exc, graph, selected.key(graph.root), operation) from exc

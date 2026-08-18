@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import re
 
 from .models import CommandPlan, Component, Operation, ProjectGraph
+
+_NUGET_PACKAGE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_NUGET_VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$")
 
 
 class OperationError(ValueError):
@@ -76,7 +80,14 @@ def _require_lockfile(component: Component, operation: Operation) -> None:
         )
 
 
-def _plan_argv(component: Component, operation: Operation, packages: tuple[str, ...], dev: bool) -> tuple[str, ...]:
+def _plan_argv(
+    component: Component,
+    operation: Operation,
+    packages: tuple[str, ...],
+    dev: bool,
+    *,
+    provider_extensions: bool = False,
+) -> tuple[str, ...]:
     manager = component.manager
     if not manager:
         raise OperationError(f"Cannot {operation}: package manager is unknown for this component.")
@@ -186,6 +197,35 @@ def _plan_argv(component: Component, operation: Operation, packages: tuple[str, 
             return ("go", "get", *packages)
         return ("go", "get", *(f"{package}@none" for package in packages))
 
+    if manager == "nuget":
+        if not provider_extensions:
+            raise OperationError("Package manager 'nuget' is provider-only until an execution-constraint-aware executor is selected.")
+        if dev:
+            raise OperationError("NuGet package operations do not have a native development-dependency scope.")
+        target = component.metadata.get("dotnet_target")
+        kind = component.metadata.get("dotnet_kind")
+        if not isinstance(target, str) or not target or "/" in target or "\\" in target:
+            raise OperationError("Cannot plan NuGet operation without one unambiguous local .NET project or solution target.")
+        if operation == "install":
+            return ("dotnet", "restore", target)
+        if operation == "sync":
+            return ("dotnet", "restore", target, "--locked-mode")
+        if kind != "project":
+            raise OperationError("NuGet add/remove operations require a .NET project target, not a solution.")
+        if len(packages) != 1:
+            raise OperationError(f"NuGet {operation} requires exactly one package per operation.")
+        package = packages[0]
+        if operation == "add":
+            if "@" not in package:
+                raise OperationError("NuGet add requires an exact package version using PackageId@Version.")
+            package_id, version = package.rsplit("@", 1)
+            if not _NUGET_PACKAGE_ID_RE.fullmatch(package_id) or not _NUGET_VERSION_RE.fullmatch(version):
+                raise OperationError("NuGet add requires a portable package id and exact version using PackageId@Version.")
+            return ("dotnet", "package", "add", package_id, "--version", version, "--project", target)
+        if "@" in package or not _NUGET_PACKAGE_ID_RE.fullmatch(package):
+            raise OperationError("NuGet remove requires one unversioned portable package id.")
+        return ("dotnet", "package", "remove", package, "--project", target)
+
     raise OperationError(f"Package manager '{manager}' is not supported for delegated operations yet.")
 
 
@@ -195,10 +235,12 @@ def plan_operation(
     selector: str | None = None,
     packages: Sequence[str] = (),
     dev: bool = False,
+    *,
+    provider_extensions: bool = False,
 ) -> CommandPlan:
     component = select_component(graph, selector)
     package_tuple = tuple(packages)
-    argv = _plan_argv(component, operation, package_tuple, dev)
+    argv = _plan_argv(component, operation, package_tuple, dev, provider_extensions=provider_extensions)
     assert component.manager is not None
     return CommandPlan(
         operation=operation,

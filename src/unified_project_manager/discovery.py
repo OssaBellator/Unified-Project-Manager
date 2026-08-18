@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .adapters import DEFAULT_ADAPTERS, Adapter
+from .adapters.dotnet import dotnet_solution_files
 from .models import ProjectGraph, Workspace
 
 IGNORED_DIRECTORIES = {
@@ -29,6 +30,16 @@ def discover(root: str | Path, adapters: Iterable[Adapter] = DEFAULT_ADAPTERS) -
             if name not in IGNORED_DIRECTORIES and not name.startswith(".upm")
         )
         directory = Path(current)
+
+        solution_files = dotnet_solution_files(directory)
+        if solution_files:
+            workspaces.append(Workspace(
+                ecosystem="dotnet",
+                path=directory,
+                manager="nuget",
+                manifests=list(solution_files),
+                metadata={"kind": "solution", "ambiguous": len(solution_files) > 1},
+            ))
 
         if (directory / "go.work").is_file():
             workspaces.append(Workspace(

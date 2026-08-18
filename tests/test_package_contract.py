@@ -16,6 +16,7 @@ from unittest import mock
 from unified_project_manager import __version__
 import unified_project_manager.package_contract as package_contract_module
 import unified_project_manager.package_planner as package_planner_module
+from unified_project_manager.discovery import discover
 from unified_project_manager.models import CommandPlan, Component, ProjectGraph
 from unified_project_manager.package_contract import (
     CONTRACT_VERSION,
@@ -63,6 +64,17 @@ class PackageContractTests(unittest.TestCase):
         (root / "go.mod").write_text("module example.com/fixture\ngo 1.24\n", encoding="utf-8")
         (root / "go.sum").write_text("", encoding="utf-8")
 
+    def _dotnet(self, root: Path, *, project_name: str = "Fixture.csproj", locked: bool = True) -> None:
+        (root / project_name).write_text(
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+            "  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>\n"
+            "  <ItemGroup><PackageReference Include=\"Microsoft.Extensions.Logging\" Version=\"10.0.0\" /></ItemGroup>\n"
+            "</Project>\n",
+            encoding="utf-8",
+        )
+        if locked:
+            (root / "packages.lock.json").write_text('{"version":1,"dependencies":{}}', encoding="utf-8")
+
     def test_representative_execution_contracts(self) -> None:
         cases = [
             ("npm", "node", "install", (), False, ("npm", "install")),
@@ -102,6 +114,10 @@ class PackageContractTests(unittest.TestCase):
             ("go", "go", "sync", (), False, ("go", "mod", "download")),
             ("go", "go", "add", ("example.com/dep@v1.2.3",), False, ("go", "get", "example.com/dep@v1.2.3")),
             ("go", "go", "remove", ("example.com/dep",), False, ("go", "get", "example.com/dep@none")),
+            ("nuget", "dotnet", "install", (), False, ("dotnet", "restore", "Fixture.csproj")),
+            ("nuget", "dotnet", "sync", (), False, ("dotnet", "restore", "Fixture.csproj", "--locked-mode")),
+            ("nuget", "dotnet", "add", ("Newtonsoft.Json@13.0.3",), False, ("dotnet", "package", "add", "Newtonsoft.Json", "--version", "13.0.3", "--project", "Fixture.csproj")),
+            ("nuget", "dotnet", "remove", ("Newtonsoft.Json",), False, ("dotnet", "package", "remove", "Newtonsoft.Json", "--project", "Fixture.csproj")),
         ]
         node_locks = {"npm": "package-lock.json", "pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock", "bun": "bun.lock"}
         for manager, ecosystem, operation, packages, dev, argv in cases:
@@ -113,25 +129,27 @@ class PackageContractTests(unittest.TestCase):
                     self._python(root, manager)
                 elif ecosystem == "rust":
                     self._rust(root)
-                else:
+                elif ecosystem == "go":
                     self._go(root)
+                else:
+                    self._dotnet(root)
 
                 result = plan_package_operation(root, operation, packages=packages, dev=dev).to_dict()
-                self.assertEqual(result["schemaVersion"], 1)
+                self.assertEqual(result["schemaVersion"], 2)
                 self.assertIs(result["ok"], True)
                 self.assertEqual(result["provider"]["version"], PROVIDER_VERSION)
                 self.assertEqual(PROVIDER_VERSION, __version__)
                 self.assertEqual(result["contract"]["version"], CONTRACT_VERSION)
-                self.assertEqual(result["compatibility"]["executionSchemaVersions"], [1])
-                self.assertEqual(result["compatibility"]["executionConstraintKinds"], ["environment"])
-                expected_environment = {"GOWORK": "off"} if manager == "go" else {}
-                self.assertEqual(result["executionConstraints"], {"environment": expected_environment})
+                self.assertEqual(result["compatibility"]["executionSchemaVersions"], [2])
+                self.assertEqual(result["compatibility"]["executionConstraintKinds"], ["environment", "filesystem", "network", "prerequisites", "sources"])
+                self.assertNotIn("executionConstraints", result)
                 execution = result["execution"]
                 self.assertEqual(
                     set(execution),
-                    {"schemaVersion", "operation", "component", "ecosystem", "manager", "cwd", "packages", "dev", "argv", "mutationScope", "networkRequired"},
+                    {"schemaVersion", "operation", "component", "ecosystem", "manager", "cwd", "packages", "dev", "argv", "mutationScope", "networkRequired", "executionConstraints"},
                 )
                 self.assertEqual(execution["schemaVersion"], EXECUTION_SCHEMA_VERSION)
+                self.assertEqual(EXECUTION_SCHEMA_VERSION, 2)
                 self.assertEqual(execution["operation"], operation)
                 self.assertEqual(execution["component"], f".:{ecosystem}")
                 self.assertEqual(execution["ecosystem"], ecosystem)
@@ -142,6 +160,27 @@ class PackageContractTests(unittest.TestCase):
                 self.assertEqual(execution["argv"], list(argv))
                 self.assertEqual(execution["mutationScope"], {"workspace": True, "external": False})
                 self.assertIs(execution["networkRequired"], True)
+                constraints = execution["executionConstraints"]
+                expected_environment = {"GOWORK": "off"} if manager == "go" else {}
+                self.assertEqual(constraints["environment"], expected_environment)
+                self.assertEqual(constraints["filesystem"], {
+                    "projectWrites": "workspace-only",
+                    "externalProjectWrites": False,
+                    "packageCache": "executor-isolated",
+                    "ambientProjectConfiguration": "isolated",
+                })
+                self.assertEqual(constraints["network"], {"required": True, "egress": "allowlisted"})
+                expected_executable = "python" if manager == "pip" else "dotnet" if manager == "nuget" else manager
+                self.assertEqual(constraints["prerequisites"]["executables"], [expected_executable])
+                self.assertIs(constraints["prerequisites"]["provisioningAllowed"], False)
+                self.assertEqual(constraints["prerequisites"]["minimumVersions"], {"dotnet": "10.0.0"} if manager == "nuget" else {})
+                self.assertEqual(constraints["sources"]["policy"], "consumer-approved-registry-only")
+                self.assertIs(constraints["sources"]["allowCallerOverrides"], False)
+                self.assertIs(constraints["sources"]["allowProjectOverrides"], False)
+                self.assertIs(constraints["sources"]["allowAmbientOverrides"], False)
+                self.assertIs(constraints["sources"]["allowLocalPaths"], False)
+                self.assertIs(constraints["sources"]["allowUrls"], False)
+                self.assertIs(constraints["sources"]["allowVcs"], False)
 
     def test_nested_component_cwd_is_project_relative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -256,7 +295,7 @@ class PackageContractTests(unittest.TestCase):
                 code = root_main(["package-plan", "sync", "--root", str(root), "--json"])
             self.assertEqual(code, 0)
             payload = json.loads(output.getvalue())
-            self.assertEqual(payload["schemaVersion"], 1)
+            self.assertEqual(payload["schemaVersion"], 2)
             self.assertIs(payload["ok"], True)
             self.assertEqual(payload["execution"]["argv"], ["npm", "ci"])
             self.assertEqual(payload["compatibility"]["planningEffects"]["networkAccess"], False)
@@ -275,7 +314,7 @@ class PackageContractTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "component_ambiguous")
             self.assertLessEqual(len(caught.exception.message), 512)
             envelope = error_response(caught.exception)
-            self.assertEqual(envelope["schemaVersion"], 1)
+            self.assertEqual(envelope["schemaVersion"], 2)
             self.assertIs(envelope["ok"], False)
             self.assertNotIn("execution", envelope)
             self.assertEqual(envelope["error"]["details"]["components"], ["one:node", "two:rust"])
@@ -357,7 +396,10 @@ class PackageContractTests(unittest.TestCase):
             self._go(root)
             result = plan_package_operation(root, "add", packages=("example.com/dep@v1.2.3",))
             self.assertEqual(result.argv, ("go", "get", "example.com/dep@v1.2.3"))
-            self.assertEqual(result.execution_constraints_dict(), {"environment": {"GOWORK": "off"}})
+            constraints = result.execution_constraints_dict()
+            self.assertEqual(constraints["environment"], {"GOWORK": "off"})
+            self.assertEqual(constraints["network"], {"required": True, "egress": "allowlisted"})
+            self.assertIs(constraints["prerequisites"]["provisioningAllowed"], False)
 
     def test_go_scope_changing_targets_and_dev_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -392,6 +434,223 @@ class PackageContractTests(unittest.TestCase):
                 with self.assertRaises(PackageContractError) as caught:
                     plan_package_operation(root, "install")
                 self.assertEqual(caught.exception.code, "operation_not_safe")
+
+    def test_dotnet_project_and_solution_discovery_and_restore_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "src" / "App"
+            project.mkdir(parents=True)
+            self._dotnet(project)
+            (root / "App.sln").write_text(
+                "Microsoft Visual Studio Solution File, Format Version 12.00\n"
+                'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\Fixture.csproj", "{11111111-1111-1111-1111-111111111111}"\n'
+                "EndProject\n",
+                encoding="utf-8",
+            )
+            graph = discover(root)
+            self.assertEqual([component.key(root) for component in graph.components], [".:dotnet", "src/App:dotnet"])
+            self.assertEqual([workspace.key(root) for workspace in graph.workspaces], [".:dotnet-workspace"])
+            solution = plan_package_operation(root, "install", component=".:dotnet")
+            self.assertEqual(solution.argv, ("dotnet", "restore", "App.sln"))
+            self.assertEqual(solution.execution_constraints_dict()["prerequisites"], {
+                "executables": ["dotnet"],
+                "minimumVersions": {"dotnet": "10.0.0"},
+                "provisioningAllowed": False,
+            })
+            project_plan = plan_package_operation(root, "sync", component="src/App:dotnet")
+            self.assertEqual(project_plan.argv, ("dotnet", "restore", "Fixture.csproj", "--locked-mode"))
+
+    def test_dotnet_nuget_package_and_ambiguity_guards_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root)
+            with self.assertRaisesRegex(package_planner_module.OperationError, "provider-only"):
+                package_planner_module.plan_operation(discover(root), "install")
+            self.assertEqual(plan_package_operation(root, "install").argv, ("dotnet", "restore", "Fixture.csproj"))
+            rejected = (
+                ("add", ("Newtonsoft.Json",), False, "invalid_package"),
+                ("add", ("Newtonsoft.Json@13.0.3 --source",), False, "invalid_package"),
+                ("add", ("../Newtonsoft.Json@13.0.3",), False, "invalid_package"),
+                ("add", ("Newtonsoft.Json@https://example.invalid/pkg",), False, "invalid_package"),
+                ("add", ("Newtonsoft.Json@13.0.3", "Serilog@4.0.0"), False, "invalid_packages"),
+                ("add", ("Newtonsoft.Json@13.0.3",), True, "dev_unsupported"),
+                ("remove", ("Newtonsoft.Json@13.0.3",), False, "invalid_package"),
+            )
+            for operation, packages, dev, code in rejected:
+                with self.subTest(operation=operation, packages=packages, dev=dev), self.assertRaises(PackageContractError) as caught:
+                    plan_package_operation(root, operation, packages=packages, dev=dev)
+                self.assertEqual(caught.exception.code, code)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root, project_name="One.csproj")
+            (root / "Two.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk"></Project>', encoding="utf-8")
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "component_ambiguous")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root, locked=False)
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "sync")
+            self.assertEqual(caught.exception.code, "lock_required")
+
+    def test_dotnet_source_and_path_smuggling_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root)
+            (root / "NuGet.Config").write_text('<configuration><packageSources /></configuration>', encoding="utf-8")
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root)
+            (root / "Directory.Build.props").write_text(
+                '<Project><PropertyGroup><RestoreSources>https://example.invalid/v3/index.json</RestoreSources></PropertyGroup></Project>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Fixture.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk"><Import Project="..\\outside.props" /></Project>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root)
+            (root / "Directory.Build.props").write_text(
+                '<Project><Import Project="custom.restore.props" /></Project>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Fixture.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><RestoreOutputPath>..\\outside</RestoreOutputPath></PropertyGroup></Project>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Fixture.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk"><Target Name="BeforeRestore" BeforeTargets="Restore" /></Project>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+        with tempfile.TemporaryDirectory() as outer:
+            outer_root = Path(outer)
+            root = outer_root / "project"
+            outside = outer_root / "outside"
+            root.mkdir()
+            outside.mkdir()
+            (outside / "Outside.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk"></Project>', encoding="utf-8")
+            (root / "Fixture.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="..\\outside\\Outside.csproj" /></ItemGroup></Project>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "external_mutation_scope")
+
+        with tempfile.TemporaryDirectory() as outer:
+            outer_root = Path(outer)
+            root = outer_root / "project"
+            outside = outer_root / "outside"
+            root.mkdir()
+            outside.mkdir()
+            (outside / "Outside.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk"></Project>', encoding="utf-8")
+            (root / "App.sln").write_text(
+                "Microsoft Visual Studio Solution File, Format Version 12.00\n"
+                'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Outside", "..\\outside\\Outside.csproj", "{11111111-1111-1111-1111-111111111111}"\n'
+                "EndProject\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install")
+            self.assertEqual(caught.exception.code, "external_mutation_scope")
+
+        with tempfile.TemporaryDirectory() as outer:
+            outer_root = Path(outer)
+            root = outer_root / "project"
+            outside = outer_root / "outside"
+            app = root / "src" / "App"
+            app.mkdir(parents=True)
+            outside.mkdir()
+            (outside / "Outside.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk"></Project>', encoding="utf-8")
+            (app / "App.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="..\\..\\..\\outside\\Outside.csproj" /></ItemGroup></Project>',
+                encoding="utf-8",
+            )
+            (root / "App.sln").write_text(
+                "Microsoft Visual Studio Solution File, Format Version 12.00\n"
+                'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\App.csproj", "{11111111-1111-1111-1111-111111111111}"\n'
+                "EndProject\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install", component=".:dotnet")
+            self.assertEqual(caught.exception.code, "external_mutation_scope")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "src" / "App"
+            app.mkdir(parents=True)
+            (app / "App.csproj").write_text(
+                '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><RestoreSources>https://example.invalid/v3/index.json</RestoreSources></PropertyGroup></Project>',
+                encoding="utf-8",
+            )
+            (root / "App.sln").write_text(
+                "Microsoft Visual Studio Solution File, Format Version 12.00\n"
+                'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\App.csproj", "{11111111-1111-1111-1111-111111111111}"\n'
+                "EndProject\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(PackageContractError) as caught:
+                plan_package_operation(root, "install", component=".:dotnet")
+            self.assertEqual(caught.exception.code, "operation_not_safe")
+
+    def test_dotnet_planning_never_probes_or_provisions_sdk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._dotnet(root)
+            with mock.patch.object(subprocess, "run", side_effect=AssertionError("dotnet execution forbidden")), mock.patch.object(
+                subprocess, "Popen", side_effect=AssertionError("dotnet execution forbidden")
+            ), mock.patch("shutil.which", side_effect=AssertionError("tool probing forbidden")):
+                plan = plan_package_operation(root, "sync")
+            self.assertEqual(plan.argv, ("dotnet", "restore", "Fixture.csproj", "--locked-mode"))
+            self.assertEqual(plan.execution_constraints_dict()["prerequisites"]["executables"], ["dotnet"])
+            self.assertIs(plan.execution_constraints_dict()["prerequisites"]["provisioningAllowed"], False)
+
+    def test_dotnet_plan_is_byte_deterministic_across_absolute_roots(self) -> None:
+        payloads: list[str] = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._dotnet(root)
+                payload = plan_package_operation(root, "sync").to_dict()
+                payloads.append(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        self.assertEqual(payloads[0], payloads[1])
+        self.assertNotIn(tempfile.gettempdir().replace("\\", "/"), payloads[0].replace("\\", "/"))
 
     def test_same_fixture_is_byte_deterministic_across_absolute_roots(self) -> None:
         payloads = []

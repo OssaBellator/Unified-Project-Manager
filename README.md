@@ -2,7 +2,7 @@
 
 Unified Project Manager (`upm`) is an experimental **local-first control plane over native project and package managers**.
 
-UPM does not replace npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, Cargo, Go modules, or their native resolvers. Native manifests, lock/state files, tools, caches, and resolution semantics remain authoritative. UPM coordinates those systems through one project model for discovery, health, policy, preview-first mutation, dependency relationships, workspaces, security evidence, storage, and machine-wide project correlation.
+UPM does not replace npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, Cargo, Go modules, .NET/NuGet, or their native resolvers. Native manifests, lock/state files, tools, caches, and resolution semantics remain authoritative. UPM coordinates those systems through one project model for discovery, health, policy, preview-first mutation, dependency relationships, workspaces, security evidence, storage, and machine-wide project correlation.
 
 The implementation targets Python 3.11+ and has no runtime dependency outside the standard library.
 
@@ -16,6 +16,7 @@ The implementation targets Python 3.11+ and has no runtime dependency outside th
 | Python | uv, Poetry, PDM, pip | PEP 621/dependency groups/Poetry/requirements discovery, resolved lock inventory, operations, native verification, installed `.venv` checks, conservative uv universal-lock plus validated Poetry/PDM structured-lock graphs |
 | Rust | Cargo | package/workspace discovery, `Cargo.lock` inventory, operations/tasks, locked offline metadata graph, native verification, storage/provenance |
 | Go | Go modules/workspaces | `go.mod` + `go.work`, checksum/workspace state, offline selected-module graph, replacements, impact/why, cache verification, provenance, tasks, operations/workspace sync |
+| .NET | dotnet / NuGet | `.csproj`/`.fsproj`/`.vbproj` + `.sln` discovery, PackageReference inventory, solution observations, and deterministic restore/add/remove provider planning with explicit execution constraints |
 
 Across those ecosystems UPM provides:
 
@@ -188,7 +189,7 @@ Consumers that need UPM's native manager selection/argv semantics without giving
 upm package-plan sync --root . --component frontend --json
 ```
 
-The planner returns neutral provider/contract compatibility metadata beside a narrow `schemaVersion: 1` execution payload. Planning is deterministic, networkless, and project-read-only: it never executes managers, installs tools, or writes project state. Static package.json/Cargo/uv workspace roots are surfaced explicitly; member requests fail closed instead of being widened to root authority, and pnpm workspace ownership requires a separate native read-only inspection before a package plan can be trusted. Ambiguous ownership and any working directory outside the selected project fail closed. Hardened consumers remain responsible for independently revalidating plans and enforcing their own permission, sandbox, network, mutation-journal, and recovery boundaries.
+The planner returns neutral provider/contract compatibility metadata beside a narrow `schemaVersion: 2` execution payload. Required environment, filesystem/isolation, network, prerequisite/toolchain, and package-source constraints travel inside that execution payload and must be enforced or the plan is incompatible; Go still requires exact `GOWORK=off`, and missing tools are prerequisite evidence rather than permission to provision them. Planning is deterministic, networkless, and project-read-only: it never executes managers, installs tools, or writes project state. Static package.json/Cargo/uv workspace roots are surfaced explicitly; member requests fail closed instead of being widened to root authority, and pnpm workspace ownership requires a separate native read-only inspection before a package plan can be trusted. .NET/NuGet plans discover project/solution targets statically and emit exact .NET 10 restore/add/remove argv while recursively rejecting source/output overrides, executable MSBuild hooks, external project references, arbitrary flags/paths, and ambiguous targets. Ambiguous ownership and any working directory outside the selected project fail closed. Hardened consumers remain responsible for independently revalidating plans and enforcing their own permission, sandbox, network, mutation-journal, and recovery boundaries.
 
 See [`docs/PACKAGE_OPERATION_PROVIDER_CONTRACT.md`](docs/PACKAGE_OPERATION_PROVIDER_CONTRACT.md) for the Python/JSON/CLI API, schema, security responsibilities, and versioning rules.
 

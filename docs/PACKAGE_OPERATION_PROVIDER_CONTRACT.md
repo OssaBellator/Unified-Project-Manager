@@ -1,8 +1,8 @@
 # Package-operation provider contract
 
-UPM exposes a reusable package-operation planning contract for consumers that need ecosystem-specific native-manager argv without embedding UPM internals. The first contract is intentionally narrow: one discovered component and one of `install`, `sync`, `add`, or `remove` across the managers UPM already supports for delegated package operations: npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, Cargo, and Go modules.
+UPM exposes a reusable dependency-operation planning contract for consumers that need native package-manager semantics without granting UPM execution authority. Planning is deterministic, project-read-only, networkless, and toolchain-independent. It never executes a package manager, probes or installs an SDK/toolchain, writes project state, changes the process environment, or accesses the network.
 
-The planner is **read-only and networkless**. Planning performs static project discovery and reuses UPM's existing component/manager ownership and operation planning rules. Pure selection/argv logic lives in `package_planner.py`; the legacy `operations.py` execution adapter imports that planner rather than the public contract importing execution code. The provider never executes a manager, probes or installs a tool, writes project state, activates an environment, or accesses the network. Native managers remain authoritative for actual mutation and resolution.
+The current contract covers `install`, `sync`, `add`, and `remove` for npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, Cargo, Go modules, and .NET/NuGet. Native manifests, lock/state files, package managers, and resolvers remain authoritative for the eventual mutation.
 
 ## Public entrypoints
 
@@ -14,14 +14,13 @@ from unified_project_manager.package_contract import plan_package_operation
 plan = plan_package_operation(
     "/workspace/project",
     "add",
-    component="apps/web",
-    packages=("react@19",),
-    dev=True,
+    component="src/App:dotnet",
+    packages=("Newtonsoft.Json@13.0.3",),
 )
 payload = plan.to_dict()
 ```
 
-Structured embedding callers can use the JSON-compatible request function:
+Structured embedding callers use the JSON-compatible request function:
 
 ```python
 from unified_project_manager.package_contract import plan_package_operation_json
@@ -30,43 +29,42 @@ payload = plan_package_operation_json({
     "requestSchemaVersion": 1,
     "projectRoot": "/workspace/project",
     "operation": "sync",
-    "component": "apps/web",
+    "component": "src/App:dotnet",
     "packages": [],
     "dev": False,
 })
 ```
 
-Unknown request fields and incompatible request schema versions fail closed rather than being ignored.
-
-CLI callers can use the normal UPM executable or the module entrypoint:
+Unknown request fields and incompatible request-schema versions fail closed. CLI callers can use:
 
 ```text
-upm package-plan sync --root /workspace/project --component apps/web --json
-python -m unified_project_manager.package_contract_entrypoint sync --root /workspace/project --component apps/web --json
+upm package-plan sync --root /workspace/project --component src/App:dotnet --json
+python -m unified_project_manager.package_contract_entrypoint sync --root /workspace/project --component src/App:dotnet --json
 ```
 
-`--package` is repeatable for `add`/`remove`. `--dev` is only valid when the existing UPM operation planner permits it. `--json` emits the complete provider envelope suitable for another process.
+`--package` is repeatable where the native operation supports package arguments. `--dev` is accepted only where the selected native manager has a safe corresponding development-dependency operation.
 
-## Versioned envelope
+## Versioned execution contract
 
-Provider and contract versions are deliberately outside the execution payload:
+The current success envelope is schema version 2 and carries an execution schema version 2 payload. Request schema version 1 is retained because the request shape did not change. Contract version `2.0.0` marks the incompatible execution-payload extension: `executionConstraints` is now inside the execution object so an executor cannot detach the operation from constraints that are required for safe execution.
+
+A representative payload is:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "provider": {
     "name": "unified-project-manager.package-operation-planner",
-    "version": "0.1.0"
+    "version": "0.3.0"
   },
   "contract": {
     "name": "upm.package-operation-plan",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
-  "ok": true,
   "compatibility": {
     "requestSchemaVersions": [1],
-    "executionSchemaVersions": [1],
-    "executionConstraintKinds": ["environment"],
+    "executionSchemaVersions": [2],
+    "executionConstraintKinds": ["environment", "filesystem", "network", "prerequisites", "sources"],
     "planningEffects": {
       "managerExecution": false,
       "toolInstallation": false,
@@ -74,81 +72,148 @@ Provider and contract versions are deliberately outside the execution payload:
       "networkAccess": false
     }
   },
+  "ok": true,
   "workspaceScope": {
     "kind": "standalone",
     "rootComponent": null,
     "memberComponents": [],
     "issueCodes": []
   },
-  "executionConstraints": {
-    "environment": {}
-  },
   "execution": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "operation": "sync",
-    "component": "apps/web:node",
-    "ecosystem": "node",
-    "manager": "npm",
-    "cwd": "apps/web",
+    "component": "src/App:dotnet",
+    "ecosystem": "dotnet",
+    "manager": "nuget",
+    "cwd": "src/App",
     "packages": [],
     "dev": false,
-    "argv": ["npm", "ci"],
+    "argv": ["dotnet", "restore", "Fixture.csproj", "--locked-mode"],
     "mutationScope": {"workspace": true, "external": false},
-    "networkRequired": true
+    "networkRequired": true,
+    "executionConstraints": {
+      "environment": {},
+      "filesystem": {
+        "projectWrites": "workspace-only",
+        "externalProjectWrites": false,
+        "packageCache": "executor-isolated",
+        "ambientProjectConfiguration": "isolated"
+      },
+      "network": {"required": true, "egress": "allowlisted"},
+      "prerequisites": {
+        "executables": ["dotnet"],
+        "minimumVersions": {"dotnet": "10.0.0"},
+        "provisioningAllowed": false
+      },
+      "sources": {
+        "policy": "consumer-approved-registry-only",
+        "allowCallerOverrides": false,
+        "allowProjectOverrides": false,
+        "allowAmbientOverrides": false,
+        "allowLocalPaths": false,
+        "allowUrls": false,
+        "allowVcs": false
+      }
+    }
   }
 }
 ```
 
-`cwd` is always project-relative and POSIX-separated (`.` for the root). A plan whose working directory cannot be proven inside the selected project is rejected. `mutationScope.external` is therefore always `false` for a successful version-1 plan. Package inputs are limited to portable registry/module identifiers: manager options, control separators, local paths, URLs, VCS references/shorthands, and alias/source forms are rejected deterministically rather than being emitted as a supposedly workspace-only portable plan. Node slash syntax is limited to scoped package names; Go module paths remain valid.
+`cwd` is always project-relative and POSIX-separated (`.` for the selected root). A plan whose working directory cannot be proven inside that root is rejected. `mutationScope.external` is therefore always `false` for a successful contract-v2 plan.
 
-`networkRequired` is conservatively `true` for every execution plan and means an executor must use its approved package-network lane if it executes the plan. A native manager might satisfy a particular invocation from local state, but a consumer must not infer execution networklessness from UPM's planning phase. Planning itself remains network-free.
+`networkRequired` remains the conservative compatibility signal that execution may need package-network access. The nested `network` constraint is the enforceable policy: an executor must use an allowlisted egress boundary rather than unrestricted networking. Planning itself remains network-free.
 
-`workspaceScope` records ownership evidence without broadening the execution payload. `standalone` means no static package-workspace owner claims the selected component. `workspace_root` means the selected component is the authoritative static root of a package.json, Cargo, or uv workspace; `rootComponent`, sorted `memberComponents`, and bounded `issueCodes` make that ownership visible to consumers. Version 1 deliberately refuses a selected workspace member with `workspace_member_requires_owner` rather than silently rewriting a component-scoped request into a broader root operation. A relevant pnpm workspace returns `workspace_inspection_required`: package.json or YAML files alone are not treated as proof of pnpm's authoritative member set, and the public planner never runs pnpm to resolve that ambiguity. Conflicting static ownership returns `workspace_ambiguous`.
+The `sources` constraint is generic and consumer-neutral. Contract v2 authorizes only consumer-approved registry sources and denies caller, project, and ambient source overrides, local paths, URLs, and VCS sources. Executors must fail closed if they cannot enforce those restrictions. The provider also rejects source-like package arguments itself; that does not replace executor revalidation.
 
-Workspace pattern validation happens before globbing. Package.json, Cargo, and uv workspace patterns must be project-relative POSIX patterns and cannot use absolute/source paths, parent/dot segments, backslashes, symlink/reparse traversal, or matches that resolve outside the workspace root. This protects the planner's read boundary as well as its eventual mutation claim.
+The `filesystem` constraint separates project authority from package-cache mechanics. Native project writes must stay inside the selected workspace, external project writes are forbidden, package-cache activity must be redirected into an executor-isolated cache boundary, and ambient project configuration outside the selected workspace must be isolated. This is especially important for tools such as MSBuild/NuGet that otherwise search parent directories or user/machine state. These requirements are execution constraints; planning does not read parent/user configuration to make a plan succeed.
 
-Yarn `sync` is accepted only when the manifest declares a parseable Yarn major version, so both component and package.json-workspace planning choose Classic `--frozen-lockfile` versus modern `--immutable` deterministically. Go `remove` accepts only unversioned module targets, and Go `add` rejects the removal sentinel `@none`. Pip version 1 is install-only and rejects requirement-file include/options, local paths, URL/VCS/direct-source forms, and continuations that could escape the portable project contract.
+`prerequisites` describes what must already exist. `provisioningAllowed` is always `false`: a missing executable or unsupported version is prerequisite evidence, not permission to install an SDK, runtime, package manager, or image. For .NET/NuGet plans, the executable is `dotnet` with a minimum version of `10.0.0`, because the contract uses .NET 10 noun-first package commands. No tool presence/version probe occurs while planning.
 
-`executionConstraints` is beside, not inside, the schema-version-1 execution payload. Consumers must enforce every recognized constraint before executing that payload and fail closed on unknown constraint kinds. For Go module operations the provider emits `{"environment":{"GOWORK":"off"}}`, preserving UPM's existing component-scoped rule that ambient `go.work` state must not widen the selected module's execution scope. Other current managers emit an empty environment constraint. A consumer that cannot enforce the declared Go environment constraint must treat the Go plan as incompatible rather than execute only the schema-v1 payload.
+The `environment` object contains exact required environment overrides. Go module operations preserve the existing component-isolation invariant with:
+
+```json
+{"GOWORK":"off"}
+```
+
+An executor that cannot set that exact value must reject the Go plan. Other current managers emit an empty required environment map.
+
+Executors must reject unknown constraint kinds or unsupported constraint semantics rather than ignoring them.
+
+## .NET and NuGet
+
+UPM statically discovers `.csproj`, `.fsproj`, `.vbproj`, and classic `.sln` files. Project XML contributes target-framework, `PackageReference`, and `ProjectReference` observations without invoking MSBuild or `dotnet`. A solution is also represented as a .NET workspace observation.
+
+Planning is intentionally narrow:
+
+- project/solution install: `dotnet restore <target>`;
+- project sync: `dotnet restore <target> --locked-mode`, requiring a native `packages.lock.json` (or project-specific `packages.<Project>.lock.json`); solution sync is refused until lock ownership across every member can be proven without widening authority;
+- project add: one exact package per plan, expressed to UPM as `PackageId@Version`, rendered as `dotnet package add <PackageId> --version <Version> --project <project>`;
+- project remove: one unversioned package id, rendered as `dotnet package remove <PackageId> --project <project>`.
+
+Add/remove do not target solutions because solution-wide mutation would broaden authority across member projects. NuGet development-dependency scope is not invented; `dev=true` fails closed.
+
+A directory containing multiple .NET project files, or multiple solution files without a unique project target, is ambiguous and cannot produce a package plan. Callers must select an unambiguous component rather than relying on filename guessing.
+
+### .NET source and path containment
+
+Contract-v2 .NET plans must remain portable across hardened executors. UPM therefore refuses selected projects whose effective in-root configuration attempts to choose package sources/cache roots itself. This includes:
+
+- project properties such as `RestoreSources`, `RestoreAdditionalProjectSources`, `RestorePackagesPath`, or `NuGetPackageRoot`;
+- those restore source/cache properties in applicable `Directory.Build.props`, `Directory.Build.targets`, or `Directory.Packages.props` files between the component and selected root;
+- explicit MSBuild `<Import>` elements in the selected project or those ancestor build/package property files, because imported properties can alter restore semantics outside the statically proven contract;
+- project-local `NuGet.Config` in that ancestor chain.
+
+The contract does not serialize arbitrary `--source`, `--packages`, `--configfile`, restore-property, or caller-supplied manager flags. Source selection remains the executor's allowlisted policy responsibility.
+
+`ProjectReference` and solution member paths must be literal project paths that resolve inside the selected root. Absolute paths, URLs, MSBuild property/item expansion, missing project files, or `..` traversal that escapes the root fail closed. Solution planning recursively validates every member project and its transitive `ProjectReference` graph before emitting restore argv, so an in-root `.sln` cannot hide an out-of-root project edge or member-level source override.
+
+The selected project graph also rejects restore/output redirection properties such as `RestorePackagesPath`, `MSBuildProjectExtensionsPath`, `RestoreOutputPath`, and `ProjectAssetsFile`, plus explicit `Target`/`UsingTask` elements. Those constructs can redirect or execute restore-time behavior beyond what a static portable package-operation plan can prove. Common SDK-style implicit imports remain supported; arbitrary explicit imports do not.
+
+## Portable package grammar
+
+Package inputs are a conservative provider-owned subset, not arbitrary native-manager argv. Manager options, control separators, whitespace smuggling, local paths, URLs, VCS references, aliases/source forms, and other source-selection syntax are rejected deterministically.
+
+Additional manager-specific rules remain in force. Examples include Go remove targets being unversioned, Go add rejecting `@none`, Yarn sync requiring a declared major so immutable/frozen behavior is deterministic, pip being requirements-file install-only in this contract, and NuGet add requiring an exact `PackageId@Version` while remove requires an unversioned id.
+
+## Workspace ownership
+
+`workspaceScope` records ownership evidence without silently widening authority. Static package.json, Cargo, and uv workspace roots may be represented as authoritative roots. Selected members fail with `workspace_member_requires_owner` instead of being rewritten to a broader mutation. pnpm ownership remains `workspace_inspection_required` when native read-only inspection would be needed; the public planner never runs pnpm to resolve that ambiguity.
+
+.NET solution discovery is visible as a workspace observation, but contract-v2 add/remove remain project-scoped. A solution restore may reference only project files proven to remain inside the selected root.
+
+Workspace pattern validation and existing ownership hardening remain shared UPM security primitives; the package contract does not bypass them.
 
 ## Stable failure boundary
 
-Public failures raise `PackageContractError` with a stable bounded `code`, a message capped at 512 characters, and deterministic JSON-compatible `details` that never need absolute project paths. Machine callers should branch on the code rather than message text. Current version-1 codes include:
+Public failures raise `PackageContractError` with a stable bounded `code`, a message capped at 512 characters, and deterministic JSON-compatible details that avoid absolute host paths. Failure envelopes contain metadata plus `ok: false` and `error`, never `execution`.
 
-- `invalid_project_root`, `invalid_operation`, `invalid_component`, `invalid_packages`, `invalid_package`, `invalid_dev`, and `invalid_request` for malformed requests;
-- `incompatible_request_schema` for unsupported structured requests;
-- `no_component`, `component_ambiguous`, and `component_not_found` for selection failures;
-- `manifest_invalid`, `manager_unknown`, `manager_ambiguous`, `manager_conflict`, `manager_unsupported`, `lock_required`, `packages_required`, `packages_forbidden`, and `dev_unsupported` for stable native-planning refusal classes;
-- `operation_not_safe` for a conservative contract-specific refusal such as undeclared Yarn sync semantics or non-portable pip requirement directives;
-- `workspace_member_requires_owner`, `workspace_inspection_required`, and `workspace_ambiguous` for package-workspace authority that v1 cannot safely narrow or prove statically;
-- `manager_ecosystem_mismatch`, `external_read_scope`, `external_mutation_scope`, `discovery_failed`, and `planning_failed` for fail-closed integrity boundaries.
+Current failure classes include malformed requests/inputs, component selection ambiguity, manifest/manager/lock conflicts, unsupported manager semantics, unsafe package/source forms, workspace ownership ambiguity, and read/mutation scope escape. Consumers should branch on the code, not message wording.
 
-The serialized failure envelope has `schemaVersion: 1`, `ok: false`, and `error: {code, message, details}` and never includes `execution`. A success envelope has `ok: true` and never includes `error`. CLI planner failures return exit code `2`; with `--json`, failures retain provider/contract/compatibility metadata beside the structured error.
+## Consumer execution responsibilities
 
-## Consumer security responsibilities
+The provider plan is a narrow execution contract, not a substitute for an executor's security boundary. A conforming executor must independently:
 
-The provider contract is a planner, not an execution authorization. Consumers remain responsible for their own security boundary. In particular, consumers should:
+1. authenticate/pin an accepted provider and contract version;
+2. reject unknown envelope/execution versions and constraint kinds;
+3. enforce every execution constraint before launching a native manager;
+4. revalidate operation, ecosystem/manager pairing, component identity, root-relative `cwd`, package grammar, exact argv semantics, mutation scope, source policy, and network policy;
+5. enforce workspace filesystem confinement, `.git` protection, process isolation, network allowlists, and consumer-controlled authority;
+6. treat missing executables/toolchains as explicit prerequisite failure and never auto-provision them from a plan;
+7. journal mutations and execution outcomes so timeout/unknown outcomes are recoverable without blind replay;
+8. rediscover/revalidate native state after execution as needed.
 
-1. pin and authenticate an exact UPM release/provider contract version before trust promotion;
-2. reject unknown provider/contract/execution versions and unknown execution-constraint kinds rather than guessing compatibility;
-3. enforce declared execution constraints, then independently validate operation, ecosystem/manager pairing, component identity, project-relative `cwd`, package grammar, exact argv semantics, mutation scope, and requested network policy;
-4. enforce their own filesystem sandbox, permission model, `.git` protection, external-mutation denial, network allowlist/firewall, process isolation, and tool availability policy;
-5. never install a missing manager or tool merely because a plan names it;
-6. record execution and mutation evidence in the consumer's own journal/receipt boundary and recover unknown execution outcomes there;
-7. treat native manager output and native manifests/locks as authoritative after execution and re-discover/revalidate state as required.
-
-UPM does not claim that its planning metadata replaces those controls. The compatibility metadata states what the provider itself did during planning, not what an executor is allowed to do afterward.
+UPM deliberately does not publish consumer-specific sandbox, image, host allowlist, permission, request-id, or write-session fields. Provider/consumer validation remains defense-in-depth rather than a shared bypass token.
 
 ## Versioning policy
 
-`provider.version` is sourced from `unified_project_manager.__version__` and therefore identifies the actual UPM package/release that produced the plan. `contract.version` independently identifies the public envelope semantics. `execution.schemaVersion` is the narrow payload version intended for independently hardened executors.
+`provider.version` comes from `unified_project_manager.__version__` and identifies the UPM release that emitted the plan. `contract.version` independently versions the public contract. `execution.schemaVersion` versions the narrow executor-facing payload.
 
-A backward-compatible implementation fix can advance the provider version without changing the contract or execution schema. A change that adds/removes/renames public fields, changes their meaning, relaxes a fail-closed rule, or changes argv semantics in a way consumers must explicitly review requires an appropriate contract-version change. An execution-payload incompatibility requires a new execution schema version rather than silently changing schema version 1.
+The move from execution schema 1 to execution schema 2 is intentionally incompatible: required execution constraints moved into the execution object and expanded beyond environment-only metadata. Consumers that only accept execution schema 1 must reject schema 2 until they implement the new constraint model. Request schema 1 remains valid because no request-field semantics changed.
 
-Consumers should promote exact releases only after their own contract fixtures and security revalidation pass. They should not vendor private UPM planner code or infer compatibility from the package's general version alone.
+A compatible provider implementation fix can advance the provider release without changing the contract/execution schema. A public semantic or payload incompatibility requires a corresponding contract/execution version change rather than silently changing an existing schema.
 
 ## Non-goals
 
-This first contract does not execute managers, install tooling, perform workspace-wide batch planning, mutate Go workspaces, initialize projects, run arbitrary native `exec`, or replace UPM receipts/evidence with consumer journals. It does not broaden the ecosystem/manager set beyond UPM's existing delegated operation planner. Ambiguous ownership and any plan that cannot prove workspace-only mutation fail closed.
+Planning does not execute managers, download packages, install toolchains, initialize projects, grant network access, or replace consumer mutation journals/recovery. It does not accept arbitrary native flags, arbitrary package sources, filesystem paths, or VCS dependencies. It does not turn a selected workspace member into broader workspace authority.
 
-Version 1 may describe a statically proven package.json/Cargo/uv workspace root, but it does not turn an individual member request into a workspace-root mutation and it does not perform pnpm's native ownership inspection. Future owner-aware member or multi-plan batching belongs in a new reviewed contract capability rather than an implicit relaxation of this single-operation boundary.
+Execution readiness is achieved by making the safe native operation plus all required constraints explicit in the public payload; actual acquisition remains under a separately hardened, consumer-controlled executor.
