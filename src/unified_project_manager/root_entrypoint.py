@@ -7,12 +7,16 @@ from .exec_receipt_entrypoint import dispatch_exec_receipt_command
 from .fleet_status_entrypoint import dispatch_fleet_status_command
 from .init_receipt_entrypoint import dispatch_init_receipt_command
 from .operation_receipt_entrypoint import dispatch_operation_receipt_command
+from .package_plan import dispatch_package_plan_command
 from .receipt_entrypoint import dispatch_receipt_command
 from .repair_receipt_entrypoint import dispatch_repair_receipt_command
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    package_plan_result = dispatch_package_plan_command(arguments)
+    if package_plan_result is not None:
+        return package_plan_result
     batch_result = dispatch_batch_operation_command(arguments)
     if batch_result is not None:
         return batch_result
