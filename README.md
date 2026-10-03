@@ -17,16 +17,15 @@ The implementation targets Python 3.11+ and has no runtime dependency outside th
 ## Control-plane model
 
 ```mermaid
-flowchart LR
-    A[Native project managers] --> B[Discovery + ownership]
-    B --> C[Health / graph / policy]
-    C --> D[Preview operation]
-    D --> E{Apply?}
-    E -- no --> F[Plan only]
-    E -- yes --> G[Native manager execution]
-    G --> H[Verification]
-    H --> I[Mutation receipt]
-    I --> J[Project / fleet evidence]
+flowchart TD
+    A[Native project managers]
+    B[Discovery and ownership]
+    C[Health and policy]
+    D[Preview]
+    E[Native execution]
+    F[Verification and receipt]
+
+    A --> B --> C --> D --> E --> F
 ```
 
 ### Reviewer path
