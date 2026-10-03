@@ -14,6 +14,12 @@ The implementation targets Python 3.11+ and has no runtime dependency outside th
 - **Verification:** local compile/unit, integration/provider, native-security and ecosystem-specific regression drivers are documented below.
 - **Boundary:** receipt chains are tamper-evident but not independently authenticated, and provider-specific uncertainty is preserved rather than guessed away.
 
+## Live proof
+
+Captured from an actual local \`upm status .\` run on this repository on 2026-10-03. The machine-specific project path is intentionally omitted from the image.
+
+![Actual Unified Project Manager status output](./docs/assets/proof.svg)
+
 ## Control-plane model
 
 ```mermaid
