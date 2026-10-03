@@ -6,6 +6,14 @@ UPM does not replace npm, pnpm, Yarn, Bun, uv, Poetry, PDM, pip, Cargo, Go modul
 
 The implementation targets Python 3.11+ and has no runtime dependency outside the standard library.
 
+## At a glance
+
+- **Problem:** native package/project managers are authoritative but fragmented, which makes cross-ecosystem health, mutation evidence, policy and fleet reasoning inconsistent.
+- **Implemented:** discovery and health across Node, Python, Rust, Go and .NET; preview-first operations; mutation receipts; dependency graphs; SBOM export; advisory evidence; cache/store checks; registered-project fleet views.
+- **Safety model:** UPM never replaces native resolvers, refuses ambiguous ownership, separates observation from mutation, and does not silently go online for relationship queries.
+- **Verification:** local compile/unit, integration/provider, native-security and ecosystem-specific regression drivers are documented below.
+- **Boundary:** receipt chains are tamper-evident but not independently authenticated, and provider-specific uncertainty is preserved rather than guessed away.
+
 **No GitHub Actions workflows are used.** Validation is local and script-driven.
 
 ## Ecosystem coverage
