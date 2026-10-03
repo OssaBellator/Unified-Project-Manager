@@ -14,6 +14,31 @@ The implementation targets Python 3.11+ and has no runtime dependency outside th
 - **Verification:** local compile/unit, integration/provider, native-security and ecosystem-specific regression drivers are documented below.
 - **Boundary:** receipt chains are tamper-evident but not independently authenticated, and provider-specific uncertainty is preserved rather than guessed away.
 
+## Control-plane model
+
+```mermaid
+flowchart LR
+    A[Native project managers] --> B[Discovery + ownership]
+    B --> C[Health / graph / policy]
+    C --> D[Preview operation]
+    D --> E{Apply?}
+    E -- no --> F[Plan only]
+    E -- yes --> G[Native manager execution]
+    G --> H[Verification]
+    H --> I[Mutation receipt]
+    I --> J[Project / fleet evidence]
+```
+
+### Reviewer path
+
+- Architecture: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+- Package-operation contract: [`docs/PACKAGE_OPERATION_PROVIDER_CONTRACT.md`](./docs/PACKAGE_OPERATION_PROVIDER_CONTRACT.md)
+- Mutation receipts: [`docs/MUTATION_RECEIPTS.md`](./docs/MUTATION_RECEIPTS.md)
+- Provider registry: [`src/unified_project_manager/provider_registry.py`](./src/unified_project_manager/provider_registry.py)
+- Receipt execution: [`src/unified_project_manager/receipt_execution.py`](./src/unified_project_manager/receipt_execution.py)
+- Security-focused local tests: [`scripts/test-native-security.sh`](./scripts/test-native-security.sh)
+- Cross-provider integration: [`scripts/test-fleet-providers.sh`](./scripts/test-fleet-providers.sh)
+
 **No GitHub Actions workflows are used.** Validation is local and script-driven.
 
 ## Ecosystem coverage
